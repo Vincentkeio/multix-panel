@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V66.0 (IPv6 & Session Fix)
-# Fix 1: Changed Flask listen to '::' to support the user's IPv6 access.
-# Fix 2: Added AJAX error feedback to prevent "Loading..." hang.
-# Fix 3: Added Logout button and Session cleanup.
+# MultiX Pro Script V67.0 (Dual-Stack & UI Complete)
+# Fix 1: Added IPv6 Bracket Logic [] for Agent connection (Crucial for V6 users).
+# Fix 2: Restored "Demo Node" so UI is not empty on fresh install.
+# Fix 3: Display both IPv4 and IPv6 in the Web Header.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V66.0"
+SH_VER="V67.0"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -47,7 +47,7 @@ install_dependencies() {
     if [[ "${RELEASE}" == "centos" ]]; then yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git
     else apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git; fi
     
-    # 强制安装兼容版本 Flask (避免 500/503)
+    # 安装 Flask 套件 (锁定版本防崩)
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1 || \
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" >/dev/null 2>&1
     
@@ -123,23 +123,23 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V66 IPv6修复版) ] ---
+# --- [ 6. 主控安装 (V67 完整UI版) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
     
-    echo -e "${SKYBLUE}>>> 主控参数配置 (交互模式)${PLAIN}"
-    read -p "管理端口 [默认 7575]: " IN_PORT; M_PORT=${IN_PORT:-${M_PORT:-7575}}
-    read -p "管理用户 [默认 admin]: " IN_USER; M_USER=${IN_USER:-${M_USER:-admin}}
-    read -p "管理密码 [默认 admin]: " IN_PASS; M_PASS=${IN_PASS:-${M_PASS:-admin}}
+    echo -e "${SKYBLUE}>>> 主控配置${PLAIN}"
+    read -p "端口 [默认 7575]: " IN_PORT; M_PORT=${IN_PORT:-${M_PORT:-7575}}
+    read -p "用户 [默认 admin]: " IN_USER; M_USER=${IN_USER:-${M_USER:-admin}}
+    read -p "密码 [默认 admin]: " IN_PASS; M_PASS=${IN_PASS:-${M_PASS:-admin}}
     RAND=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
     read -p "Token [默认随机]: " IN_TOKEN; M_TOKEN=${IN_TOKEN:-${M_TOKEN:-$RAND}}
     
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V66.0 IPv6支持版)...${PLAIN}"
+    echo -e "${YELLOW}🛰️ 部署主控 (V67.0 双栈UI修正版)...${PLAIN}"
     
-    # 核心：使用 'EOF' 锁定，禁止 Shell 解析内部内容，确保 Python/JS 源码纯净
+    # 使用单引号 EOF 锁定，防止 Shell 干扰代码
     cat > $M_ROOT/master/app.py <<'EOF'
 import json, asyncio, psutil, os, socket, subprocess, base64, logging
 from flask import Flask, render_template_string, request, session, redirect, jsonify
@@ -149,7 +149,6 @@ from threading import Thread
 # 日志配置
 logging.basicConfig(level=logging.ERROR)
 
-# 动态配置读取
 def load_conf():
     c = {}
     try:
@@ -168,13 +167,16 @@ M_TOKEN = CONF.get('M_TOKEN', 'error')
 app = Flask(__name__)
 app.secret_key = M_TOKEN
 
-AGENTS = {}; LOOP_GLOBAL = None
+# 默认添加一个 Demo 节点，确保 UI 不为空
+AGENTS = {
+    "local-demo": {"alias": "Demo Node", "stats": {"cpu": 0, "mem": 0}, "nodes": [], "is_demo": True}
+}
+LOOP_GLOBAL = None
 
 def get_sys_info():
     try: return {"cpu": psutil.cpu_percent(), "mem": psutil.virtual_memory().percent, "ipv4": os.popen("curl -4s api.ipify.org").read().strip(), "ipv6": os.popen("curl -6s api64.ipify.org").read().strip()}
     except: return {"cpu":0,"mem":0, "ipv4":"N/A", "ipv6":"N/A"}
 
-# 密钥生成接口
 @app.route('/api/gen_key', methods=['POST'])
 def gen_key():
     t = request.json.get('type')
@@ -209,6 +211,7 @@ HTML_T = """
         .modal-header { border-bottom: 1px solid #222; }
         .modal-footer { border-top: 1px solid #222; }
         #error-banner { display: none; position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1050; }
+        .ipv6-badge { font-size: 0.7rem; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
     </style>
 </head>
 <body>
@@ -218,7 +221,10 @@ HTML_T = """
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h2 class="fw-bold fst-italic text-primary mb-0">MultiX <span class="text-white">Pro</span></h2>
-            <small class="text-secondary font-monospace" id="sys-info">Connecting...</small>
+            <div class="text-secondary font-monospace small">
+                <span class="badge bg-secondary">v4</span> <span id="ipv4">...</span> | 
+                <span class="badge bg-primary">v6</span> <span id="ipv6" class="ipv6-badge">...</span>
+            </div>
         </div>
         <div class="d-flex gap-2 align-items-center">
             <span class="badge bg-dark border border-secondary p-2">CPU: <span id="cpu">0</span>%</span>
@@ -228,11 +234,7 @@ HTML_T = """
     </div>
 
     <div class="row g-4" id="node-list">
-        <div class="col-12 text-center text-secondary py-5">
-            <div class="spinner-border text-primary" role="status"></div>
-            <div class="mt-2">Waiting for Agent Connection...</div>
         </div>
-    </div>
 </div>
 
 <div class="modal fade" id="configModal" tabindex="-1">
@@ -375,7 +377,6 @@ HTML_T = """
     let ACTIVE_IP = '';
     const TOKEN = '{{ token }}'; 
 
-    // Poll State with Error Handling
     function updateState() {
         $.ajax({
             url: '/api/state',
@@ -386,31 +387,30 @@ HTML_T = """
                 $('#error-banner').hide();
                 $('#cpu').text(data.master.stats.cpu);
                 $('#mem').text(data.master.stats.mem);
-                $('#sys-info').text('TOKEN: '+TOKEN+' | IP: '+data.master.ipv4);
+                $('#ipv4').text(data.master.ipv4);
+                $('#ipv6').text(data.master.ipv6);
                 AGENTS = data.agents;
                 renderGrid();
             },
             error: function(xhr, status, error) {
-                $('#error-banner').text('Connection Error: ' + error).fadeIn();
-                console.log("State fetch failed:", error);
+                // Only warn if not a timeout/abort
+                if(status !== 'abort') $('#error-banner').text('Connecting... ' + status).fadeIn();
             }
         });
     }
 
     function renderGrid() {
         $('#node-list').empty();
-        if (Object.keys(AGENTS).length === 0) {
-            $('#node-list').html('<div class="text-center text-secondary py-5"><h5>No Agents Connected</h5><p class="small">Check if your agent container is running and tokens match.</p></div>');
-            return;
-        }
         for (const [ip, agent] of Object.entries(AGENTS)) {
-            const statusClass = agent.stats.cpu !== undefined ? 'status-online' : 'status-offline';
+            const statusClass = (agent.is_demo || agent.stats.cpu !== undefined) ? 'status-online' : 'status-offline';
             const nodeCount = agent.nodes ? agent.nodes.length : 0;
+            const alias = agent.alias || 'Node';
+            
             const card = `
                 <div class="col-md-6 col-lg-4">
                     <div class="card h-100 p-4">
                         <div class="d-flex justify-content-between mb-3">
-                            <h5 class="fw-bold text-white mb-0">\${agent.alias || 'Node'}</h5>
+                            <h5 class="fw-bold text-white mb-0">\${alias}</h5>
                             <span class="status-dot \${statusClass}"></span>
                         </div>
                         <div class="small text-secondary font-monospace mb-3">\${ip}</div>
@@ -430,7 +430,10 @@ HTML_T = """
     function openManager(ip) {
         ACTIVE_IP = ip;
         const agent = AGENTS[ip];
-        if(agent.nodes && agent.nodes.length > 0) {
+        if(agent.is_demo) {
+            alert("This is a demo node. You can explore the UI, but settings won't be saved to a real server.");
+            resetForm();
+        } else if(agent.nodes && agent.nodes.length > 0) {
             loadForm(agent.nodes[0]); 
         } else {
             resetForm();
@@ -438,7 +441,6 @@ HTML_T = """
         $('#configModal').modal('show');
     }
 
-    // Logic for Dynamic Form
     function updateFormVisibility() {
         const p = $('#protocol').val();
         const n = $('#network').val();
@@ -449,7 +451,6 @@ HTML_T = """
             $('.group-ss').show();
         } else {
             $('.group-uuid').show(); $('.group-stream').show(); $('.group-ss').hide();
-            
             if (s === 'reality') $('.group-reality').show(); else $('.group-reality').hide();
             if (n === 'ws') $('.group-ws').show(); else $('.group-ws').hide();
         }
@@ -604,13 +605,16 @@ def logout():
 @app.route('/api/state')
 def api_state():
     s = get_sys_info()
-    return jsonify({"master": {"ipv4": s['ipv4'], "stats": {"cpu": s['cpu'], "mem": s['mem']}}, "agents": AGENTS})
+    # 同时返回 IPv4 和 IPv6 供前端显示
+    return jsonify({"master": {"ipv4": s['ipv4'], "ipv6": s['ipv6'], "stats": {"cpu": s['cpu'], "mem": s['mem']}}, "agents": AGENTS})
 
 @app.route('/api/sync', methods=['POST'])
 def api_sync():
     d = request.json
     target = d.get('ip')
     if target in AGENTS:
+        if AGENTS[target].get('is_demo'):
+            return jsonify({"status": "demo_skipped"})
         payload = json.dumps({"action": "sync_node", "token": M_TOKEN, "data": d.get('config')})
         asyncio.run_coroutine_threadsafe(AGENTS[target]['ws'].send(payload), LOOP_GLOBAL)
         return jsonify({"status": "sent"})
@@ -639,7 +643,7 @@ def start_ws():
 
 if __name__ == '__main__':
     Thread(target=start_ws, daemon=True).start()
-    # 关键修复：改为监听所有 IPv6/IPv4 地址
+    # 关键：双栈监听
     app.run(host='::', port=M_PORT)
 EOF
 
@@ -659,14 +663,14 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功 (V66)${PLAIN}"
-    echo -e "   IPv4入口: http://${IPV4}:${M_PORT}"
-    [[ "$IPV6" != "N/A" ]] && echo -e "   IPv6入口: http://[${IPV6}]:${M_PORT}"
+    echo -e "${GREEN}✅ 主控端部署成功 (V67)${PLAIN}"
+    echo -e "   入口: http://[${IPV6}]:${M_PORT} (IPv6优先)"
+    echo -e "   入口: http://${IPV4}:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
     pause_back
 }
 
-# --- [ 7. 被控安装 (通用版) ] ---
+# --- [ 7. 被控安装 (V67 连接修复) ] ---
 install_agent() {
     install_dependencies; mkdir -p $M_ROOT/agent
     
@@ -688,6 +692,7 @@ RUN pip install websockets psutil --break-system-packages
 WORKDIR /app
 CMD ["python", "agent.py"]
 EOF
+    # [V67] Agent 连接逻辑修正：IPv6 自动加 []
     cat > $M_ROOT/agent/agent.py <<EOF
 import asyncio, json, sqlite3, os, psutil, websockets, socket, platform
 MASTER = "$IN_HOST"; TOKEN = "$IN_TOKEN"; DB_PATH = "/app/db_share/x-ui.db"
@@ -701,7 +706,9 @@ def sync_db(data):
     except: return False
 async def run():
     target = MASTER
-    if ":" in target and not target.startswith("["): target = f"[{target}]"
+    # 自动识别 IPv6 并添加 []，防止 websocket 报错
+    if ":" in target and not target.startswith("[") and not target[0].isalpha():
+        target = f"[{target}]"
     uri = f"ws://{target}:8888"
     while True:
         try:
@@ -726,13 +733,13 @@ async def run():
         except: await asyncio.sleep(5)
 asyncio.run(run())
 EOF
-    cd $M_ROOT/agent; docker build -t multix-agent-v66 .
+    cd $M_ROOT/agent; docker build -t multix-agent-v67 .
     docker rm -f multix-agent 2>/dev/null
-    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v66
+    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v67
     echo -e "${GREEN}✅ 被控已启动${PLAIN}"; pause_back
 }
 
-# --- [ 8. 运维工具箱 (找回) ] ---
+# --- [ 8. 运维工具箱 ] ---
 sys_tools() {
     while true; do
         clear; echo -e "${SKYBLUE}🧰 运维工具箱${PLAIN}"
@@ -758,7 +765,7 @@ sys_tools() {
 
 # --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V66.0 IPv6支持版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V67.0 终极版)${PLAIN}"
     echo " 1. 安装 主控端"
     echo " 2. 安装 被控端"
     echo " 3. 连通测试"
