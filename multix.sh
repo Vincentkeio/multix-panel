@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro V59.0 (UI Fixed & Chinese Native)
-# Fix: Jinja/Vue Conflict | Add Button Freeze | SS-2022 Logic | Chinese UI
+# MultiX Pro V59.0 (UI Render Fix)
+# Fix: Vue/Jinja Conflict | Element Plus Loading | Restored Interactive Install
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
@@ -44,10 +44,7 @@ install_dependencies() {
     check_sys
     if [[ "${RELEASE}" == "centos" ]]; then yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git
     else apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git; fi
-    
-    # 强制重新安装 python 库，防止环境损坏
     pip3 install flask websockets psutil --break-system-packages >/dev/null 2>&1 || pip3 install flask websockets psutil >/dev/null 2>&1
-    
     if ! command -v docker &> /dev/null; then curl -fsSL https://get.docker.com | bash; systemctl start docker; fi
     fix_dual_stack
 }
@@ -84,8 +81,11 @@ credential_center() {
     clear; echo -e "${SKYBLUE}🔐 凭据管理${PLAIN}"
     if [ -f $M_ROOT/.env ]; then
         M_PORT=$(grep "M_PORT" $M_ROOT/.env | cut -d'=' -f2 | tr -d "'\""); M_TOKEN=$(grep "M_TOKEN" $M_ROOT/.env | cut -d'=' -f2 | tr -d "'\"")
+        M_USER=$(grep "M_USER" $M_ROOT/.env | cut -d'=' -f2 | tr -d "'\""); M_PASS=$(grep "M_PASS" $M_ROOT/.env | cut -d'=' -f2 | tr -d "'\"")
         get_public_ips
-        echo -e "${YELLOW}[主控]${PLAIN} http://[${IPV6}]:${M_PORT} | Token: ${SKYBLUE}$M_TOKEN${PLAIN}"
+        echo -e "${YELLOW}[主控]${PLAIN} http://[${IPV6}]:${M_PORT}"
+        echo -e "用户: ${GREEN}$M_USER${PLAIN} | 密码: ${GREEN}$M_PASS${PLAIN}"
+        echo -e "Token: ${SKYBLUE}$M_TOKEN${PLAIN}"
     fi
     if [ -f "$M_ROOT/agent/agent.py" ]; then
         CUR_MASTER=$(grep 'MASTER =' $M_ROOT/agent/agent.py | cut -d'"' -f2)
@@ -95,7 +95,7 @@ credential_center() {
     echo " 1. 修改配置  2. 修改连接  0. 返回"; read -p "选择: " c
     if [[ "$c" == "1" ]]; then
         read -p "端口: " np; M_PORT=${np:-$M_PORT}; read -p "Token: " nt; M_TOKEN=${nt:-$M_TOKEN}
-        echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='admin'\nM_PASS='admin'" > $M_ROOT/.env
+        echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
         fix_dual_stack; systemctl restart multix-master; echo "已重启"
     fi
     if [[ "$c" == "2" ]]; then
@@ -105,16 +105,21 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V59 修复Jinja冲突) ] ---
+# --- [ 6. 主控安装 (交互还原+UI修复) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
-    read -p "端口 [7575]: " IN_PORT; M_PORT=${IN_PORT:-7575}
-    RAND=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-    read -p "Token [$RAND]: " IN_TOKEN; M_TOKEN=${IN_TOKEN:-$RAND}
-    echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='admin'\nM_PASS='admin'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V59.0 汉化修复版)...${PLAIN}"
+    echo -e "${SKYBLUE}>>> 主控配置${PLAIN}"
+    read -p "端口 [7575]: " IN_PORT; M_PORT=${IN_PORT:-7575}
+    read -p "用户 [admin]: " IN_USER; M_USER=${IN_USER:-admin}
+    read -p "密码 [admin]: " IN_PASS; M_PASS=${IN_PASS:-admin}
+    RAND=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+    read -p "Token [随机]: " IN_TOKEN; M_TOKEN=${IN_TOKEN:-$RAND}
+    
+    echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
+    
+    echo -e "${YELLOW}🛰️ 部署主控 (V59 UI修复版)...${PLAIN}"
     cat > $M_ROOT/master/app.py <<EOF
 import json, asyncio, psutil, os, socket, subprocess, base64
 from flask import Flask, render_template_string, request, session, redirect, jsonify
@@ -132,6 +137,7 @@ def load_conf():
 
 CONF = load_conf()
 M_PORT, M_TOKEN = int(CONF.get('M_PORT', 7575)), CONF.get('M_TOKEN', 'err')
+M_USER, M_PASS = CONF.get('M_USER', 'admin'), CONF.get('M_PASS', 'admin')
 app = Flask(__name__); app.secret_key = M_TOKEN
 AGENTS = {}; LOOP_GLOBAL = None
 
@@ -145,12 +151,10 @@ def gen_key():
     try:
         if t == 'reality':
             out = subprocess.check_output("xray x25519 || echo 'Private key: x Public key: x'", shell=True).decode()
-            priv = out.split("Private key:")[1].split()[0].strip()
-            pub = out.split("Public key:")[1].split()[0].strip()
-            return jsonify({"private": priv, "public": pub})
+            return jsonify({"private": out.split("Private key:")[1].split()[0].strip(), "public": out.split("Public key:")[1].split()[0].strip()})
         elif t == 'ss-128': return jsonify({"key": base64.b64encode(os.urandom(16)).decode()})
         elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
-    except: return jsonify({"key": "Error", "private": "Error", "public": "Error"})
+    except: return jsonify({"key": "", "private": "", "public": ""})
 
 HTML_T = """
 {% raw %}
@@ -164,13 +168,10 @@ HTML_T = """
     <script src="https://unpkg.com/element-plus"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background: #020202; color: #cfd3dc; font-family: sans-serif; margin: 0; padding: 20px; }
-        .glass-card { background: #141414; border: 1px solid #2c2c2c; border-radius: 12px; transition: all 0.3s; }
-        .glass-card:hover { border-color: #409eff; }
-        :root { --el-bg-color: #141414; --el-text-color-primary: #E5EAF3; --el-border-color: #333; --el-fill-color-blank: #0a0a0a; }
+        body { background: #020202; color: #cfd3dc; margin: 0; padding: 20px; font-family: sans-serif; }
+        .glass-card { background: #141414; border: 1px solid #2c2c2c; border-radius: 12px; }
+        :root { --el-bg-color: #141414; --el-text-color-primary: #E5EAF3; --el-border-color: #333; }
         .el-input__wrapper { background-color: #0a0a0a !important; box-shadow: 0 0 0 1px #333 inset !important; }
-        .el-drawer { background-color: #0a0a0a !important; }
-        .el-divider__text { background-color: #0a0a0a !important; color: #409eff; }
     </style>
 </head>
 <body>
@@ -178,10 +179,7 @@ HTML_T = """
         <div class="flex justify-between items-center mb-8 px-4">
             <div>
                 <h1 class="text-3xl font-black italic text-blue-500">MultiX <span class="text-white">Pro</span></h1>
-                <div class="text-xs text-zinc-500 mt-1 font-mono">
-                    TOKEN: <span class="text-blue-400">{{ sys.token }}</span> | 
-                    IP: <span class="text-zinc-400">{{ sys.ipv4 }}</span>
-                </div>
+                <div class="text-xs text-zinc-500 mt-1 font-mono">TOKEN: {{ sys.token }} | IP: {{ sys.ipv4 }}</div>
             </div>
             <div class="flex gap-4">
                 <el-tag type="info" effect="dark">CPU: {{ masterStats.CPU }}%</el-tag>
@@ -190,26 +188,25 @@ HTML_T = """
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div v-for="agent in displayAgents" :key="agent.ip" class="glass-card p-6 relative">
+            <div v-for="agent in displayAgents" :key="agent.ip" class="glass-card p-6">
                 <div class="flex justify-between items-start mb-4">
                     <div>
-                        <div class="text-lg font-bold text-white cursor-pointer hover:text-blue-400" @click="editAlias(agent)">{{ agent.alias || '节点' }} ✎</div>
+                        <div class="text-lg font-bold text-white cursor-pointer hover:text-blue-400" @click="editAlias(agent)">{{ agent.alias || 'Node' }} ✎</div>
                         <div class="text-xs text-zinc-500 font-mono mt-1">{{ agent.ip }}</div>
                     </div>
                     <div :class="['h-2 w-2 rounded-full', agent.syncing ? 'bg-yellow-500 animate-pulse' : (agent.nodes ? 'bg-green-500' : 'bg-red-500')]"></div>
                 </div>
                 <div class="grid grid-cols-2 gap-4 mb-6">
                     <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">CPU</div><div class="text-sm font-bold text-blue-400">{{ agent.stats.cpu }}%</div></div>
-                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">内存</div><div class="text-sm font-bold text-purple-400">{{ agent.stats.mem }}%</div></div>
+                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">MEM</div><div class="text-sm font-bold text-purple-400">{{ agent.stats.mem }}%</div></div>
                 </div>
-                <el-button type="primary" size="small" @click="openManage(agent)" class="w-full">管理节点 ({{ agent.nodes.length }})</el-button>
+                <el-button type="primary" size="small" @click="openManage(agent)" class="w-full">Manage</el-button>
             </div>
         </div>
 
-        <el-drawer v-model="drawerVisible" :title="activeAgent.alias + ' / 入站列表'" size="600px">
+        <el-drawer v-model="drawerVisible" :title="activeAgent.alias + ' / Inbounds'" size="600px">
             <div class="p-6 h-full flex flex-col">
                 <div v-if="!isEditing" class="flex-1 overflow-y-auto space-y-3">
-                    <el-empty v-if="activeAgent.nodes.length === 0" description="暂无入站"></el-empty>
                     <div v-for="node in activeAgent.nodes" :key="node.id" class="bg-zinc-900 border border-white/5 p-4 rounded-lg flex justify-between items-center hover:border-blue-500/50 cursor-pointer" @click="editNode(node)">
                         <div>
                             <div class="flex items-center gap-2">
@@ -217,102 +214,68 @@ HTML_T = """
                                 <span class="font-bold text-sm">{{ node.remark }}</span>
                                 <el-tag size="small" type="warning" effect="plain">{{ node.port }}</el-tag>
                             </div>
-                            <div class="text-xs text-zinc-500 mt-1 font-mono pl-1">
-                                <span v-if="node.total > 0">限流: {{ (node.total/1073741824).toFixed(1) }}GB</span>
-                                <span v-else>流量: 无限</span>
-                            </div>
                         </div>
-                        <el-icon class="text-zinc-500"><Edit /></el-icon>
+                        <el-button type="primary" link>Edit</el-button>
                     </div>
                 </div>
 
                 <div v-else class="flex-1 overflow-y-auto pr-2">
-                    <el-form :model="form" label-position="top" size="default">
-                        
-                        <el-divider content-position="left">基础配置</el-divider>
+                    <el-form :model="form" label-position="top" size="large">
                         <div class="grid grid-cols-2 gap-4">
-                            <el-form-item label="备注"><el-input v-model="form.remark" placeholder="示例: 我的节点" /></el-form-item>
-                            <el-form-item label="协议">
-                                <el-select v-model="form.protocol" @change="onProtoChange">
-                                    <el-option value="vless" label="VLESS"></el-option>
-                                    <el-option value="vmess" label="VMess"></el-option>
-                                    <el-option value="shadowsocks" label="Shadowsocks"></el-option>
+                            <el-form-item label="Remark"><el-input v-model="form.remark" /></el-form-item>
+                            <el-form-item label="Port"><el-input v-model.number="form.port" type="number" /></el-form-item>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <el-form-item label="Protocol">
+                                <el-select v-model="form.protocol"><el-option value="vless">VLESS</el-option><el-option value="vmess">VMess</el-option><el-option value="shadowsocks">Shadowsocks</el-option></el-select>
+                            </el-form-item>
+                            <el-form-item label="UUID" v-if="['vless','vmess'].includes(form.protocol)">
+                                <el-input v-model="form.uuid"><template #append><el-button @click="genUUID">GEN</el-button></template></el-input>
+                            </el-form-item>
+                            <el-form-item label="Cipher" v-if="form.protocol === 'shadowsocks'">
+                                <el-select v-model="form.ssCipher">
+                                    <el-option value="aes-256-gcm">aes-256-gcm</el-option>
+                                    <el-option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</el-option>
                                 </el-select>
                             </el-form-item>
                         </div>
-                        <div class="grid grid-cols-2 gap-4">
-                            <el-form-item label="端口"><el-input v-model.number="form.port" type="number" /></el-form-item>
-                            <el-form-item v-if="form.protocol!=='shadowsocks'" label="UUID">
-                                <el-input v-model="form.uuid"><template #append><el-button @click="genUUID">重置</el-button></template></el-input>
-                            </el-form-item>
-                        </div>
+                        <el-form-item label="Password" v-if="form.protocol === 'shadowsocks'">
+                            <el-input v-model="form.ssPass"><template #append><el-button @click="genSSKey">GEN</el-button></template></el-input>
+                        </el-form-item>
+                        <el-form-item label="Flow" v-if="form.protocol === 'vless' && form.security === 'reality'">
+                            <el-select v-model="form.flow"><el-option value="xtls-rprx-vision">xtls-rprx-vision</el-option></el-select>
+                        </el-form-item>
 
-                        <div v-if="form.protocol==='shadowsocks'" class="grid grid-cols-1 gap-4">
-                            <el-form-item label="加密方式">
-                                <el-select v-model="form.ssCipher" style="width:100%">
-                                    <el-option value="aes-256-gcm" label="aes-256-gcm (传统)"></el-option>
-                                    <el-option value="2022-blake3-aes-128-gcm" label="2022-blake3-aes-128-gcm"></el-option>
-                                    <el-option value="2022-blake3-aes-256-gcm" label="2022-blake3-aes-256-gcm"></el-option>
-                                    <el-option value="chacha20-poly1305" label="chacha20-poly1305"></el-option>
-                                </el-select>
-                            </el-form-item>
-                            <el-form-item label="密码">
-                                <el-input v-model="form.ssPass"><template #append><el-button @click="genSSKey">生成密钥</el-button></template></el-input>
-                            </el-form-item>
-                        </div>
-
-                        <div v-if="form.protocol!=='shadowsocks'">
-                            <el-divider content-position="left">传输与安全</el-divider>
+                        <div v-if="form.protocol !== 'shadowsocks'">
+                            <el-divider content-position="left">Transport</el-divider>
                             <div class="grid grid-cols-2 gap-4">
-                                <el-form-item label="传输协议">
-                                    <el-select v-model="form.network">
-                                        <el-option value="tcp" label="TCP"></el-option>
-                                        <el-option value="ws" label="WebSocket (WS)"></el-option>
-                                    </el-select>
-                                </el-form-item>
-                                <el-form-item label="安全层">
-                                    <el-select v-model="form.security">
-                                        <el-option value="none" label="None"></el-option>
-                                        <el-option value="tls" label="TLS"></el-option>
-                                        <el-option v-if="form.protocol==='vless'" value="reality" label="Reality"></el-option>
-                                    </el-select>
-                                </el-form-item>
+                                <el-form-item label="Network"><el-select v-model="form.network"><el-option value="tcp">TCP</el-option><el-option value="ws">WebSocket</el-option></el-select></el-form-item>
+                                <el-form-item label="Security"><el-select v-model="form.security"><el-option value="none">None</el-option><el-option value="tls">TLS</el-option><el-option value="reality" v-if="form.protocol === 'vless'">Reality</el-option></el-select></el-form-item>
                             </div>
-
-                            <el-form-item label="流控 (Flow)" v-if="form.protocol==='vless' && form.security==='reality'">
-                                <el-select v-model="form.flow"><el-option value="xtls-rprx-vision" label="xtls-rprx-vision (推荐)"></el-option></el-select>
-                            </el-form-item>
-
-                            <div v-if="form.security==='reality'" class="bg-blue-900/10 p-4 rounded-lg border border-blue-500/20 mb-4">
-                                <el-form-item label="目标网站 (Dest)"><el-input v-model="form.dest" placeholder="www.microsoft.com:443" /></el-form-item>
-                                <el-form-item label="可选域名 (SNI)"><el-input v-model="form.serverNames" placeholder="逗号分隔" /></el-form-item>
-                                <el-form-item label="私钥 (Private Key)">
-                                    <el-input v-model="form.privKey" type="textarea" :rows="2">
-                                        <template #append><el-button @click="genRealityPair">生成配对</el-button></template>
-                                    </el-input>
-                                </el-form-item>
-                                <el-form-item label="ShortIds"><el-input v-model="form.shortIds" /></el-form-item>
+                            <div v-if="form.security === 'reality'" class="bg-blue-900/10 p-4 rounded-lg border border-blue-500/20 mb-4">
+                                <el-form-item label="Dest (SNI)"><el-input v-model="form.dest" /></el-form-item>
+                                <el-form-item label="SNI List"><el-input v-model="form.serverNames" /></el-form-item>
+                                <el-form-item label="Private Key"><el-input v-model="form.privKey"><template #append><el-button @click="genRealityPair">PAIR</el-button></template></el-input></el-form-item>
+                                <el-form-item label="Short IDs"><el-input v-model="form.shortIds" /></el-form-item>
                             </div>
-
-                            <div v-if="form.network==='ws'" class="bg-zinc-800/30 p-4 rounded-lg border border-zinc-700 mb-4">
-                                <el-form-item label="路径 (Path)"><el-input v-model="form.wsPath" placeholder="/" /></el-form-item>
-                                <el-form-item label="Host"><el-input v-model="form.wsHost" placeholder="domain.com" /></el-form-item>
+                            <div v-if="form.network === 'ws'" class="bg-zinc-800/30 p-4 rounded-lg border border-zinc-700 mb-4">
+                                <el-form-item label="Path"><el-input v-model="form.wsPath" /></el-form-item>
+                                <el-form-item label="Host"><el-input v-model="form.wsHost" /></el-form-item>
                             </div>
                         </div>
 
-                        <el-divider content-position="left">限制策略</el-divider>
+                        <el-divider content-position="left">Limits</el-divider>
                         <div class="grid grid-cols-2 gap-4">
-                            <el-form-item label="总流量 (GB)"><el-input v-model="form.totalGB" type="number" placeholder="0 = 无限" /></el-form-item>
-                            <el-form-item label="到期时间"><el-date-picker v-model="form.expiryDate" type="date" placeholder="无限期" style="width: 100%" /></el-form-item>
+                            <el-form-item label="Traffic (GB)"><el-input v-model="form.totalGB" type="number" /></el-form-item>
+                            <el-form-item label="Expiry Date"><el-date-picker v-model="form.expiryDate" type="date" style="width: 100%" /></el-form-item>
                         </div>
-
                     </el-form>
                 </div>
 
                 <div class="mt-4 pt-4 border-t border-zinc-800 flex gap-3">
-                    <el-button v-if="isEditing" @click="isEditing = false" class="flex-1">返回列表</el-button>
-                    <el-button v-if="isEditing" type="primary" @click="saveNode" class="flex-1" :loading="activeAgent.syncing">保存并重启</el-button>
-                    <el-button v-else type="primary" @click="openAdd" class="w-full">添加添加入站</el-button>
+                    <el-button v-if="isEditing" @click="isEditing = false" class="flex-1">Back</el-button>
+                    <el-button v-if="isEditing" type="primary" @click="saveNode" class="flex-1" :loading="activeAgent.syncing">Save & Restart</el-button>
+                    <el-button v-else type="primary" @click="openAdd" class="w-full">Add Inbound</el-button>
                 </div>
             </div>
         </el-drawer>
@@ -330,17 +293,14 @@ HTML_T = """
         const { createApp, ref, computed, onMounted, reactive } = Vue;
         const App = {
             setup() {
-                // 读取注入数据
-                const sys = ref(window.SERVER_DATA || { token: 'Loading...', ipv4: '...' });
+                const sys = ref(window.SERVER_DATA || {});
                 const agents = ref({}); const masterStats = ref({ CPU:0, MEM:0 });
                 const drawerVisible = ref(false); const isEditing = ref(false);
                 const activeAgent = ref({ nodes: [] }); const form = reactive({});
-                const mockAgent = ref({ ip: 'MOCK-SERVER', alias: '演示节点', stats: {cpu:0,mem:0}, nodes: [], syncing: false });
+                const mockAgent = ref({ ip: 'MOCK-SERVER', alias: 'Demo', stats: {cpu:10,mem:20}, nodes: [], syncing: false });
 
                 const displayAgents = computed(() => {
-                    const list = [mockAgent.value];
-                    for(let k in agents.value) { agents.value[k].ip=k; list.push(agents.value[k]); }
-                    return list;
+                    const list = [mockAgent.value]; for(let k in agents.value) { agents.value[k].ip=k; list.push(agents.value[k]); } return list;
                 });
 
                 const update = async () => {
@@ -353,17 +313,17 @@ HTML_T = """
 
                 const openManage = (agent) => { activeAgent.value = agent; drawerVisible.value = true; isEditing.value = false; };
                 const openAdd = () => { resetForm(); isEditing.value = true; };
-                const editAlias = (agent) => { const n = prompt("修改备注:", agent.alias); if(n) agent.alias = n; };
+                const editAlias = (agent) => { const n = prompt("Rename:", agent.alias); if(n) agent.alias = n; };
 
                 const resetForm = () => {
                     Object.assign(form, {
-                        id: null, remark: '新入站', port: Math.floor(Math.random()*10000)+20000, protocol: 'vless',
+                        id: null, remark: 'New', port: Math.floor(Math.random()*10000)+10000, protocol: 'vless',
                         uuid: crypto.randomUUID(), email: 'u@mx.com', flow: 'xtls-rprx-vision',
                         ssCipher: '2022-blake3-aes-128-gcm', ssPass: '', network: 'tcp', security: 'reality',
                         dest: 'www.microsoft.com:443', serverNames: 'www.microsoft.com', privKey: '', shortIds: '',
                         wsPath: '/', totalGB: '', expiryDate: null
                     });
-                    // 非阻塞调用生成，防止卡顿
+                    // Async gen key to avoid UI freeze
                     genRealityPair();
                 };
 
@@ -382,7 +342,7 @@ HTML_T = """
                 };
 
                 const saveNode = async () => {
-                    if(activeAgent.value.ip.includes('MOCK')) return;
+                    if(activeAgent.value.ip === 'MOCK-SERVER') return;
                     activeAgent.value.syncing = true;
                     
                     const clients = []; if(form.protocol!=='shadowsocks') clients.push({ id: form.uuid, email: form.email, flow: form.flow, alterId: 0 });
@@ -410,9 +370,8 @@ HTML_T = """
                 return { masterStats, sys, drawerVisible, isEditing, activeAgent, displayAgents, form, openManage, openAdd, editAlias, editNode, saveNode, genUUID, genRealityPair, genSSKey };
             }
         };
-        const app = createApp(App); app.use(ElementPlus); for (const [key, component] of Object.entries(ElementPlusIconsVue)) { app.component(key, component) } app.mount('#app');
+        const app = createApp(App); app.use(ElementPlus); app.mount('#app');
     </script>
-    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
 </body></html>
 {% endraw %}
 """
@@ -448,7 +407,6 @@ def gen_key():
 def index():
     if not session.get('logged'): return redirect('/login')
     s = get_sys_info()
-    # [V59 Fix] Inject via render_template, used by window.SERVER_DATA
     return render_template_string(HTML_T, token=M_TOKEN, ipv4=s['ipv4'], ipv6=s['ipv6'])
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -505,7 +463,7 @@ EOF
     pause_back
 }
 
-# --- [ 7. 被控安装 (V59 3X-UI 自动纠错) ] ---
+# --- [ 7. 被控安装 (V59 修正) ] ---
 install_agent() {
     install_dependencies; mkdir -p $M_ROOT/agent
     
@@ -595,7 +553,7 @@ sys_tools() {
 }
 
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V59.0 汉化版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V59.0 渲染修复版)${PLAIN}"
     echo " 1. 安装 主控端 | 2. 安装 被控端"
     echo " 3. 连通测试   | 4. 被控重启"
     echo " 5. 深度清理   | 6. 环境修复"
