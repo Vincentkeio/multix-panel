@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V60.0 (Architecture Fixed)
-# Fix 1: Restored Username/Password Prompts (No more admin/admin default)
-# Fix 2: Jinja2 vs Vue Conflict Solved (Split Template Injection)
+# MultiX Pro Script V61.0 (Architecture Refactor & Visual Upgrade)
+# Core Change: Vue delimiters changed to [[ ]] to solve Jinja2 conflicts.
+# UI Upgrade: New "Dark Minimal" Login Page.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V60.0"
+SH_VER="V61.0"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -45,12 +45,7 @@ install_dependencies() {
     check_sys
     if [[ "${RELEASE}" == "centos" ]]; then yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git
     else apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git; fi
-    
-    # [V60] 增强型 pip 安装，兼容新旧系统
-    echo -e "${YELLOW}[INFO]${PLAIN} 安装 Python 库..."
-    pip3 install flask websockets psutil --break-system-packages >/dev/null 2>&1
-    if [ $? -ne 0 ]; then pip3 install flask websockets psutil >/dev/null 2>&1; fi
-    
+    pip3 install flask websockets psutil --break-system-packages >/dev/null 2>&1 || pip3 install flask websockets psutil >/dev/null 2>&1
     if ! command -v docker &> /dev/null; then curl -fsSL https://get.docker.com | bash; systemctl start docker; fi
     fix_dual_stack
 }
@@ -111,14 +106,12 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V60 修复版) ] ---
+# --- [ 6. 主控安装 (V61 重构版) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
     
-    echo -e "${SKYBLUE}>>> 主控端初始化配置${PLAIN}"
-    
-    # [V60 修复] 恢复用户交互输入
+    echo -e "${SKYBLUE}>>> 主控初始化${PLAIN}"
     read -p "管理端口 [默认 7575]: " IN_PORT; M_PORT=${IN_PORT:-${M_PORT:-7575}}
     read -p "管理用户 [默认 admin]: " IN_USER; M_USER=${IN_USER:-${M_USER:-admin}}
     read -p "管理密码 [默认 admin]: " IN_PASS; M_PASS=${IN_PASS:-${M_PASS:-admin}}
@@ -127,7 +120,7 @@ install_master() {
     
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V60.0 架构修正版)...${PLAIN}"
+    echo -e "${YELLOW}🛰️ 部署主控 (V61.0 架构重构版)...${PLAIN}"
     cat > $M_ROOT/master/app.py <<EOF
 import json, asyncio, psutil, os, socket, subprocess, base64
 from flask import Flask, render_template_string, request, session, redirect, jsonify
@@ -164,12 +157,43 @@ def gen_key():
         elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
     except: return jsonify({"key": "", "private": "", "public": ""})
 
-# [V60] Jinja2/Vue 分离渲染模板
-HTML_T = """
+# [V61.0] 全新登录界面 (Dark Minimal)
+LOGIN_T = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8"><title>MultiX Login</title>
+    <style>
+        body { margin: 0; height: 100vh; background: #050505; display: flex; align-items: center; justify-content: center; font-family: sans-serif; color: #fff; }
+        .login-box { background: rgba(20, 20, 20, 0.8); border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 40px; width: 320px; backdrop-filter: blur(10px); box-shadow: 0 20px 50px rgba(0,0,0,0.5); text-align: center; }
+        h1 { font-style: italic; margin-bottom: 30px; font-size: 28px; background: linear-gradient(45deg, #3b82f6, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 900; }
+        input { background: #111; border: 1px solid #333; width: 100%; padding: 12px 15px; border-radius: 8px; color: #fff; margin-bottom: 15px; outline: none; box-sizing: border-box; transition: 0.3s; }
+        input:focus { border-color: #3b82f6; box-shadow: 0 0 10px rgba(59,130,246,0.3); }
+        button { width: 100%; padding: 12px; border-radius: 8px; border: none; background: linear-gradient(90deg, #3b82f6, #2563eb); color: #fff; font-weight: bold; cursor: pointer; transition: 0.3s; margin-top: 10px; }
+        button:hover { filter: brightness(1.2); transform: scale(1.02); }
+        .footer { margin-top: 20px; font-size: 12px; color: #444; }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <h1>MultiX Pro</h1>
+        <form method="post">
+            <input type="text" name="u" placeholder="Username" required autocomplete="off">
+            <input type="password" name="p" placeholder="Password" required>
+            <button type="submit">ENTER SYSTEM</button>
+        </form>
+        <div class="footer">SECURE ACCESS GATEWAY</div>
+    </div>
+</body>
+</html>
+"""
+
+# [V61.0] 控制台界面 (Vue [[ ]] 分隔符重构)
+DASH_T = """
 <!DOCTYPE html>
 <html class="dark">
 <head>
-    <meta charset="UTF-8"><title>MultiX V60</title>
+    <meta charset="UTF-8"><title>MultiX Console</title>
     <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
     <link rel="stylesheet" href="https://unpkg.com/element-plus/theme-chalk/dark/css-vars.css">
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
@@ -183,45 +207,52 @@ HTML_T = """
     </style>
 </head>
 <body>
+    <script>
+        window.SERVER_INFO = { token: "{{ token }}", ipv4: "{{ ipv4 }}", ipv6: "{{ ipv6 }}" };
+    </script>
+
     <div id="app">
         <div class="flex justify-between items-center mb-8 px-4">
             <div>
                 <h1 class="text-3xl font-black italic text-blue-500">MultiX <span class="text-white">Pro</span></h1>
-                <div class="text-xs text-zinc-500 mt-1 font-mono">TOKEN: {{ sys.token }} | IP: {{ sys.ipv4 }}</div>
+                <div class="text-xs text-zinc-500 mt-1 font-mono">
+                    TOKEN: <span class="text-blue-400">[[ sys.token ]]</span> | 
+                    IP: <span class="text-zinc-400">[[ sys.ipv4 ]]</span>
+                </div>
             </div>
             <div class="flex gap-4">
-                <el-tag type="info" effect="dark">CPU: {{ masterStats.CPU }}%</el-tag>
-                <el-tag type="info" effect="dark">MEM: {{ masterStats.MEM }}%</el-tag>
+                <el-tag type="info" effect="dark">CPU: [[ masterStats.CPU ]]%</el-tag>
+                <el-tag type="info" effect="dark">MEM: [[ masterStats.MEM ]]%</el-tag>
             </div>
         </div>
 
-        {% raw %}
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div v-for="agent in displayAgents" :key="agent.ip" class="glass-card p-6">
+            <div v-for="agent in displayAgents" :key="agent.ip" class="glass-card p-6 relative">
                 <div class="flex justify-between items-start mb-4">
                     <div>
-                        <div class="text-lg font-bold text-white cursor-pointer hover:text-blue-400" @click="editAlias(agent)">{{ agent.alias || 'Node' }} ✎</div>
-                        <div class="text-xs text-zinc-500 font-mono mt-1">{{ agent.ip }}</div>
+                        <div class="text-lg font-bold text-white cursor-pointer hover:text-blue-400" @click="editAlias(agent)">[[ agent.alias || 'Node' ]] ✎</div>
+                        <div class="text-xs text-zinc-500 font-mono mt-1">[[ agent.ip ]]</div>
                     </div>
                     <div :class="['h-2 w-2 rounded-full', agent.syncing ? 'bg-yellow-500 animate-pulse' : (agent.nodes ? 'bg-green-500' : 'bg-red-500')]"></div>
                 </div>
                 <div class="grid grid-cols-2 gap-4 mb-6">
-                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">CPU</div><div class="text-sm font-bold text-blue-400">{{ agent.stats.cpu }}%</div></div>
-                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">MEM</div><div class="text-sm font-bold text-purple-400">{{ agent.stats.mem }}%</div></div>
+                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">CPU</div><div class="text-sm font-bold text-blue-400">[[ agent.stats.cpu ]]%</div></div>
+                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">MEM</div><div class="text-sm font-bold text-purple-400">[[ agent.stats.mem ]]%</div></div>
                 </div>
-                <el-button type="primary" size="small" @click="openManage(agent)" class="w-full">Manage</el-button>
+                <el-button type="primary" size="small" @click="openManage(agent)" class="w-full">Manage ([[ agent.nodes.length ]])</el-button>
             </div>
         </div>
 
         <el-drawer v-model="drawerVisible" :title="activeAgent.alias + ' / Inbounds'" size="600px">
             <div class="p-6 h-full flex flex-col">
                 <div v-if="!isEditing" class="flex-1 overflow-y-auto space-y-3">
+                    <el-empty v-if="activeAgent.nodes.length === 0" description="No Data"></el-empty>
                     <div v-for="node in activeAgent.nodes" :key="node.id" class="bg-zinc-900 border border-white/5 p-4 rounded-lg flex justify-between items-center hover:border-blue-500/50 cursor-pointer" @click="editNode(node)">
                         <div>
                             <div class="flex items-center gap-2">
-                                <el-tag size="small" effect="dark">{{ node.protocol.toUpperCase() }}</el-tag>
-                                <span class="font-bold text-sm">{{ node.remark }}</span>
-                                <el-tag size="small" type="warning" effect="plain">{{ node.port }}</el-tag>
+                                <el-tag size="small" effect="dark">[[ node.protocol.toUpperCase() ]]</el-tag>
+                                <span class="font-bold text-sm">[[ node.remark ]]</span>
+                                <el-tag size="small" type="warning" effect="plain">[[ node.port ]]</el-tag>
                             </div>
                         </div>
                         <el-button type="primary" link>Edit</el-button>
@@ -236,7 +267,7 @@ HTML_T = """
                         </div>
                         <div class="grid grid-cols-2 gap-4">
                             <el-form-item label="Protocol">
-                                <el-select v-model="form.protocol"><el-option value="vless">VLESS</el-option><el-option value="vmess">VMess</el-option><el-option value="shadowsocks">Shadowsocks</el-option></el-select>
+                                <el-select v-model="form.protocol"><el-option value="vless" label="VLESS"></el-option><el-option value="vmess" label="VMess"></el-option><el-option value="shadowsocks" label="Shadowsocks"></el-option></el-select>
                             </el-form-item>
                             <el-form-item label="UUID" v-if="['vless','vmess'].includes(form.protocol)">
                                 <el-input v-model="form.uuid"><template #append><el-button @click="genUUID">GEN</el-button></template></el-input>
@@ -262,10 +293,10 @@ HTML_T = """
                                 <el-form-item label="Security"><el-select v-model="form.security"><el-option value="none">None</el-option><el-option value="tls">TLS</el-option><el-option value="reality" v-if="form.protocol === 'vless'">Reality</el-option></el-select></el-form-item>
                             </div>
                             <div v-if="form.security === 'reality'" class="bg-blue-900/10 p-4 rounded-lg border border-blue-500/20 mb-4">
-                                <el-form-item label="Dest (SNI)"><el-input v-model="form.dest" /></el-form-item>
-                                <el-form-item label="SNI List"><el-input v-model="form.serverNames" /></el-form-item>
-                                <el-form-item label="Private Key"><el-input v-model="form.privKey"><template #append><el-button @click="genRealityPair">PAIR</el-button></template></el-input></el-form-item>
-                                <el-form-item label="Short IDs"><el-input v-model="form.shortIds" /></el-form-item>
+                                <el-form-item label="Dest"><el-input v-model="form.dest" /></el-form-item>
+                                <el-form-item label="SNI"><el-input v-model="form.serverNames" /></el-form-item>
+                                <el-form-item label="Key"><el-input v-model="form.privKey"><template #append><el-button @click="genRealityPair">PAIR</el-button></template></el-input></el-form-item>
+                                <el-form-item label="SID"><el-input v-model="form.shortIds" /></el-form-item>
                             </div>
                             <div v-if="form.network === 'ws'" class="bg-zinc-800/30 p-4 rounded-lg border border-zinc-700 mb-4">
                                 <el-form-item label="Path"><el-input v-model="form.wsPath" /></el-form-item>
@@ -276,34 +307,25 @@ HTML_T = """
                         <el-divider content-position="left">Limits</el-divider>
                         <div class="grid grid-cols-2 gap-4">
                             <el-form-item label="Traffic (GB)"><el-input v-model="form.totalGB" type="number" /></el-form-item>
-                            <el-form-item label="Expiry Date"><el-date-picker v-model="form.expiryDate" type="date" style="width: 100%" /></el-form-item>
+                            <el-form-item label="Expiry"><el-date-picker v-model="form.expiryDate" type="date" style="width: 100%" /></el-form-item>
                         </div>
                     </el-form>
                 </div>
 
                 <div class="mt-4 pt-4 border-t border-zinc-800 flex gap-3">
                     <el-button v-if="isEditing" @click="isEditing = false" class="flex-1">Back</el-button>
-                    <el-button v-if="isEditing" type="primary" @click="saveNode" class="flex-1" :loading="activeAgent.syncing">Save & Restart</el-button>
-                    <el-button v-else type="primary" @click="openAdd" class="w-full">Add Inbound</el-button>
+                    <el-button v-if="isEditing" type="primary" @click="saveNode" class="flex-1" :loading="activeAgent.syncing">Save</el-button>
+                    <el-button v-else type="primary" @click="openAdd" class="w-full">Add</el-button>
                 </div>
             </div>
         </el-drawer>
     </div>
-    {% endraw %}
-
-    <script>
-        window.SERVER_DATA = {
-            token: "{{ token }}",
-            ipv4: "{{ ipv4 }}",
-            ipv6: "{{ ipv6 }}"
-        };
-    </script>
 
     <script>
         const { createApp, ref, computed, onMounted, reactive } = Vue;
         const App = {
             setup() {
-                const sys = ref(window.SERVER_DATA || {});
+                const sys = ref(window.SERVER_INFO || {});
                 const agents = ref({}); const masterStats = ref({ CPU:0, MEM:0 });
                 const drawerVisible = ref(false); const isEditing = ref(false);
                 const activeAgent = ref({ nodes: [] }); const form = reactive({});
@@ -351,7 +373,7 @@ HTML_T = """
                 };
 
                 const saveNode = async () => {
-                    if(activeAgent.value.ip === 'MOCK-SERVER') return;
+                    if(activeAgent.value.ip.includes('MOCK')) return;
                     activeAgent.value.syncing = true;
                     
                     const clients = []; if(form.protocol!=='shadowsocks') clients.push({ id: form.uuid, email: form.email, flow: form.flow, alterId: 0 });
@@ -379,7 +401,11 @@ HTML_T = """
                 return { masterStats, sys, drawerVisible, isEditing, activeAgent, displayAgents, form, openManage, openAdd, editAlias, editNode, saveNode, genUUID, genRealityPair, genSSKey };
             }
         };
-        const app = createApp(App); app.use(ElementPlus); app.mount('#app');
+        const app = createApp(App); 
+        app.use(ElementPlus);
+        // V61 Key Change: Change Delimiters to [[ ]]
+        app.config.compilerOptions.delimiters = ['[[', ']]'];
+        app.mount('#app');
     </script>
 </body></html>
 """
@@ -398,17 +424,28 @@ def do_sync():
         return jsonify({"status": "sent"})
     return jsonify({"status": "offline"}), 404
 
+@app.route('/api/gen_key', methods=['POST'])
+def gen_key():
+    t = request.json.get('type')
+    try:
+        if t == 'reality':
+            out = subprocess.check_output("xray x25519 || echo 'Private key: x Public key: x'", shell=True).decode()
+            return jsonify({"private": out.split("Private key:")[1].split()[0].strip(), "public": out.split("Public key:")[1].split()[0].strip()})
+        elif t == 'ss-128': return jsonify({"key": base64.b64encode(os.urandom(16)).decode()})
+        elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
+    except: return jsonify({"key": "", "private": "", "public": ""})
+
 @app.route('/')
 def index():
     if not session.get('logged'): return redirect('/login')
     s = get_sys_info()
-    return render_template_string(HTML_T, token=M_TOKEN, ipv4=s['ipv4'], ipv6=s['ipv6'])
+    return render_template_string(DASH_T, token=M_TOKEN, ipv4=s['ipv4'], ipv6=s['ipv6'])
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         if request.form['u'] == M_USER and request.form['p'] == M_PASS: session['logged'] = True; return redirect('/')
-    return '<h3>Login</h3><form method="post">U: <input name="u"> P: <input name="p" type="password"><button>Login</button></form>'
+    return render_template_string(LOGIN_T)
 
 async def ws_handler(ws):
     ip = ws.remote_address[0]
@@ -451,7 +488,7 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功！${PLAIN}"
+    echo -e "${GREEN}✅ 主控端部署成功 (V61)${PLAIN}"
     echo -e "   IPv4入口: http://${IPV4}:${M_PORT}"
     [[ "$IPV6" != "N/A" ]] && echo -e "   IPv6入口: http://[${IPV6}]:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
@@ -524,9 +561,9 @@ async def run():
         except: await asyncio.sleep(5)
 asyncio.run(run())
 EOF
-    cd $M_ROOT/agent; docker build -t multix-agent-v60 .
+    cd $M_ROOT/agent; docker build -t multix-agent-v61 .
     docker rm -f multix-agent 2>/dev/null
-    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v60
+    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v61
     echo -e "${GREEN}✅ 被控已启动${PLAIN}"; pause_back
 }
 
@@ -548,7 +585,7 @@ sys_tools() {
 }
 
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V60.0 交互修复版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V61.0 架构重构版)${PLAIN}"
     echo " 1. 安装 主控端 | 2. 安装 被控端"
     echo " 3. 连通测试   | 4. 被控重启"
     echo " 5. 深度清理   | 6. 环境修复"
