@@ -1,16 +1,14 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V68.0 (Dynamic SQL & UI Fixed)
-# Fix 1: Solved Jinja2/JS conflict causing "${alias}" glitches (Added {% raw %}).
-# Fix 2: Added "SQL Probe" in Agent. Auto-detects 3X-UI DB columns before writing.
-# Fix 3: Enhanced UI Cards with OS info, 3X status, and Node counts.
-# Fix 4: Added Token display in the Web Header.
+# MultiX Pro Script V68.1 (Dependency Fix & Connection Check)
+# Fix 1: Added 'netcat' to dependencies to fix "nc: command not found".
+# Fix 2: Optimized Connection Test logic.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V68.0"
+SH_VER="V68.1"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -33,7 +31,7 @@ get_public_ips() {
 }
 pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
-# --- [ 2. 环境修复 ] ---
+# --- [ 2. 环境修复 (已修复 nc 依赖) ] ---
 fix_dual_stack() {
     if grep -q "net.ipv6.bindv6only" /etc/sysctl.conf; then sed -i 's/net.ipv6.bindv6only.*/net.ipv6.bindv6only = 0/' /etc/sysctl.conf
     else echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf; fi
@@ -42,8 +40,12 @@ fix_dual_stack() {
 install_dependencies() {
     echo -e "${YELLOW}[INFO]${PLAIN} 检查并安装依赖..."
     check_sys
-    if [[ "${RELEASE}" == "centos" ]]; then yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git
-    else apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git; fi
+    # V68.1 修复: 显式安装 netcat/nc
+    if [[ "${RELEASE}" == "centos" ]]; then 
+        yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git nc
+    else 
+        apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git netcat-openbsd
+    fi
     
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1 || \
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" >/dev/null 2>&1
@@ -126,7 +128,7 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V68 UI修复版) ] ---
+# --- [ 6. 主控安装 (V68.1) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
@@ -187,7 +189,7 @@ def gen_key():
         elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
     except: return jsonify({"key": "Error: Install Xray", "private": "", "public": ""})
 
-# --- V68 核心修复: 使用 {% raw %} 隔离 JS 模板 ---
+# HTML TEMPLATE
 HTML_T = """
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
@@ -228,8 +230,7 @@ HTML_T = """
         </div>
     </div>
 
-    <div class="row g-4" id="node-list">
-        </div>
+    <div class="row g-4" id="node-list"></div>
 </div>
 
 <div class="modal fade" id="configModal" tabindex="-1">
@@ -271,7 +272,6 @@ HTML_T = """
                                 <button class="btn btn-outline-secondary" type="button" onclick="genSSKey()">Gen</button>
                             </div>
                         </div>
-                        
                         <div class="col-12"><hr class="border-secondary"></div>
                         <div class="col-md-6"><label class="form-label text-secondary small fw-bold">NETWORK</label><select class="form-select bg-dark text-white border-secondary" id="network"><option value="tcp">TCP</option><option value="ws">WebSocket</option></select></div>
                         <div class="col-md-6"><label class="form-label text-secondary small fw-bold">SECURITY</label><select class="form-select bg-dark text-white border-secondary" id="security"><option value="none">None</option><option value="tls">TLS</option><option value="reality">Reality</option></select></div>
@@ -287,7 +287,7 @@ HTML_T = """
                                 </div>
                             </div>
                         </div>
-                         <div class="col-12 group-ws" style="display:none">
+                        <div class="col-12 group-ws" style="display:none">
                             <div class="p-2 border border-secondary rounded"><div class="row g-2"><div class="col-6"><small>Path</small><input class="form-control form-control-sm bg-black text-white border-secondary" id="wsPath" value="/"></div><div class="col-6"><small>Host</small><input class="form-control form-control-sm bg-black text-white border-secondary" id="wsHost"></div></div></div>
                         </div>
                     </div>
@@ -336,14 +336,12 @@ HTML_T = """
                             <span class="status-dot ${statusClass}"></span>
                         </div>
                         <div class="small text-secondary font-monospace mb-3">${ip}</div>
-                        
                         <div class="d-flex flex-wrap gap-2 mb-3">
                             <span class="stat-box">OS: ${osVer}</span>
                             <span class="stat-box">3X: ${xuiVer}</span>
                             <span class="stat-box">CPU: ${cpu}%</span>
                             <span class="stat-box">MEM: ${mem}%</span>
                         </div>
-                        
                         <button class="btn btn-primary w-100 fw-bold" onclick="openManager('${ip}')">
                             MANAGE NODES (${nodeCount})
                         </button>
@@ -362,7 +360,6 @@ HTML_T = """
         $('#configModal').modal('show');
     }
 
-    // --- Form Logic ---
     function updateFormVisibility() {
         const p = $('#protocol').val(); const n = $('#network').val(); const s = $('#security').val();
         $('.group-ss').hide(); $('.group-uuid').hide(); $('.group-reality').hide(); $('.group-ws').hide();
@@ -497,14 +494,14 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功 (V68)${PLAIN}"
+    echo -e "${GREEN}✅ 主控端部署成功 (V68.1)${PLAIN}"
     echo -e "   入口: http://[${IPV6}]:${M_PORT}"
     echo -e "   入口: http://${IPV4}:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
     pause_back
 }
 
-# --- [ 7. 被控安装 (V68 SQL探测增强版) ] ---
+# --- [ 7. 被控安装 (V68.1) ] ---
 install_agent() {
     install_dependencies; mkdir -p $M_ROOT/agent
     
@@ -516,7 +513,6 @@ install_agent() {
     echo -e "${SKYBLUE}>>> 被控配置${PLAIN}"
     read -p "主控域名/IP: " IN_HOST; read -p "Token: " IN_TOKEN
     
-    # 网络协议强制选择逻辑
     echo -e "\n${YELLOW}>>> 网络协议优化${PLAIN}"
     echo -e "1. 自动 (Auto)"; echo -e "2. 强制 IPv4"; echo -e "3. 强制 IPv6"
     read -p "选择 [1-3]: " NET_OPT
@@ -532,28 +528,22 @@ WORKDIR /app
 CMD ["python", "agent.py"]
 EOF
     
-    # --- Agent Python 逻辑 (核心修改：SQL探测) ---
+    # --- Agent Python 逻辑 (SQL探测) ---
     cat > $M_ROOT/agent/agent.py <<EOF
 import asyncio, json, sqlite3, os, psutil, websockets, socket, platform
 MASTER = "$IN_HOST"; TOKEN = "$IN_TOKEN"; DB_PATH = "/app/db_share/x-ui.db"
 
 def get_xui_ver():
-    # 简单版本检测
     if os.path.exists(DB_PATH): return "Installed"
     return "Not Found"
 
-# --- 核心: SQL 动态探测函数 ---
 def smart_sync_db(data):
     try:
         conn = sqlite3.connect(DB_PATH, timeout=10)
         cursor = conn.cursor()
-        
-        # 1. 探测当前数据库有哪些字段
         cursor.execute("PRAGMA table_info(inbounds)")
-        columns = [info[1] for info in cursor.fetchall()] # ['id', 'user_id', 'up', ...]
+        columns = [info[1] for info in cursor.fetchall()]
         
-        # 2. 准备基础数据
-        # 3X-UI 必须字段
         base_data = {
             'user_id': 1, 'up': 0, 'down': 0, 'total': 0, 'remark': data.get('remark'),
             'enable': 1, 'expiry_time': 0, 'listen': '', 'port': data.get('port'),
@@ -561,23 +551,17 @@ def smart_sync_db(data):
             'stream_settings': data.get('stream_settings'), 'tag': 'multix',
             'sniffing': data.get('sniffing', '{}')
         }
-        
-        # 3. 过滤出有效字段 (只保留数据库里存在的字段)
         valid_data = {k: v for k, v in base_data.items() if k in columns}
-        
         nid = data.get('id')
         if nid:
-            # UPDATE 操作
             set_clause = ", ".join([f"{k}=?" for k in valid_data.keys()])
             values = list(valid_data.values()) + [nid]
             cursor.execute(f"UPDATE inbounds SET {set_clause} WHERE id=?", values)
         else:
-            # INSERT 操作
             keys = ", ".join(valid_data.keys())
             placeholders = ", ".join(["?"] * len(valid_data))
             values = list(valid_data.values())
             cursor.execute(f"INSERT INTO inbounds ({keys}) VALUES ({placeholders})", values)
-            
         conn.commit(); conn.close()
         return True
     except Exception as e:
@@ -588,17 +572,14 @@ async def run():
     target = MASTER
     if ":" in target and not target.startswith("[") and not target[0].isalpha(): target = f"[{target}]"
     uri = f"ws://{target}:8888"
-    
     while True:
         try:
             async with websockets.connect(uri) as ws:
                 await ws.send(json.dumps({"token": TOKEN}))
                 while True:
-                    # 读取节点列表发送给主控
                     nodes = []
                     try:
                         conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-                        # 只读取通用字段，防止报错
                         cur.execute("SELECT id, remark, port, protocol, settings, stream_settings FROM inbounds")
                         for r in cur.fetchall():
                             try:
@@ -607,7 +588,6 @@ async def run():
                         conn.close()
                     except: pass
                     
-                    # 增强心跳包: 带上 OS 和 3X 版本
                     stats = {
                         "cpu": int(psutil.cpu_percent()), 
                         "mem": int(psutil.virtual_memory().percent), 
@@ -619,10 +599,9 @@ async def run():
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=5); task = json.loads(msg)
                         if task.get('action') == 'sync_node':
-                            # 收到配置，执行动态写入
-                            os.system("docker restart 3x-ui") # 停止防止锁库
+                            os.system("docker restart 3x-ui")
                             smart_sync_db(task['data'])
-                            os.system("docker restart 3x-ui") # 重启生效
+                            os.system("docker restart 3x-ui")
                     except: continue
         except: await asyncio.sleep(5)
 
@@ -654,7 +633,7 @@ sys_tools() {
 
 # --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V68.0 智能探测版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V68.1 智能修复版)${PLAIN}"
     echo " 1. 安装 主控端"
     echo " 2. 安装 被控端"
     echo " 3. 连通测试"
@@ -669,7 +648,14 @@ main_menu() {
     read -p "选择: " c
     case $c in
         1) install_master ;; 2) install_agent ;;
-        3) read -p "IP: " t; nc -zv -w 5 $t 8888; pause_back ;;
+        # V68.1 连通测试增加 nc 安装提示
+        3) 
+            if ! command -v nc &> /dev/null; then
+                echo -e "${RED}[ERROR]${PLAIN} 缺少 nc 工具，正在安装..."
+                install_dependencies
+            fi
+            read -p "IP/Domain: " t; nc -zv -w 5 $t 8888; pause_back 
+            ;;
         4) docker restart multix-agent; pause_back ;;
         5) deep_cleanup ;;
         6) install_dependencies; pause_back ;;
