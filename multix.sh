@@ -1,15 +1,17 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V67.0 (Dual-Stack & UI Complete)
+# MultiX Pro Script V67.1 (Dual-Stack & UI Complete + IPv6/NAT Fix)
 # Fix 1: Added IPv6 Bracket Logic [] for Agent connection (Crucial for V6 users).
 # Fix 2: Restored "Demo Node" so UI is not empty on fresh install.
 # Fix 3: Display both IPv4 and IPv6 in the Web Header.
+# Fix 4: Added Force IPv4/IPv6 selection during Agent install for NAT users.
+# Fix 5: Enhanced Deep Cleanup to remove legacy systemd paths.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V67.0"
+SH_VER="V67.1"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -55,15 +57,30 @@ install_dependencies() {
     fix_dual_stack
 }
 
-# --- [ 3. 深度清理 ] ---
+# --- [ 3. 深度清理 (修改版) ] ---
 deep_cleanup() {
     echo -e "${RED}⚠️  警告：此操作将删除所有 MultiX 组件！${PLAIN}"; read -p "确认? [y/N]: " confirm
     [[ "$confirm" != "y" ]] && return
-    systemctl stop multix-master 2>/dev/null; rm -f /etc/systemd/system/multix-master.service
+    
+    # 停止并禁用服务
+    systemctl stop multix-master 2>/dev/null
+    systemctl disable multix-master 2>/dev/null
+    
+    # 清理 Systemd 服务文件 (增加 /usr/lib 路径清理)
+    rm -f /etc/systemd/system/multix-master.service
+    rm -f /usr/lib/systemd/system/multix-master.service 
     systemctl daemon-reload
+    
+    # 清理 Docker
     docker stop multix-agent 2>/dev/null; docker rm -f multix-agent 2>/dev/null
     docker rmi $(docker images | grep "multix-agent" | awk '{print $3}') 2>/dev/null
+    
+    # 清理进程
     pkill -9 -f "master/app.py"; pkill -9 -f "agent/agent.py"
+    
+    # 清理文件
+    rm -rf "$M_ROOT"
+    
     echo -e "${GREEN}[INFO]${PLAIN} 清理完成"; pause_back
 }
 
@@ -670,7 +687,7 @@ EOF
     pause_back
 }
 
-# --- [ 7. 被控安装 (V67 连接修复) ] ---
+# --- [ 7. 被控安装 (V67.1 修改版: 增加 IP 强制解析) ] ---
 install_agent() {
     install_dependencies; mkdir -p $M_ROOT/agent
     
@@ -684,7 +701,44 @@ install_agent() {
     fi
 
     echo -e "${SKYBLUE}>>> 被控配置${PLAIN}"
-    read -p "主控域名/IP: " IN_HOST; read -p "Token: " IN_TOKEN
+    read -p "主控域名/IP: " IN_HOST
+    read -p "Token: " IN_TOKEN
+    
+    # --- [ 新增逻辑开始: 强制协议选择 ] ---
+    echo -e "\n${YELLOW}>>> 网络协议优化 (解决 NAT/连接超时)${PLAIN}"
+    echo -e "1. 自动 / 默认 (Auto)"
+    echo -e "2. 强制 IPv4 (Force IPv4)"
+    echo -e "3. 强制 IPv6 (Force IPv6)"
+    read -p "请选择连接方式 [1-3] (默认1): " NET_OPT
+
+    case "$NET_OPT" in
+        2)
+            echo -e "${YELLOW}正在强制解析 IPv4...${PLAIN}"
+            RESOLVED=$(getent hosts "$IN_HOST" | awk '{ print $1 }' | grep -E '^[0-9]+\.' | head -n 1)
+            [ -z "$RESOLVED" ] && RESOLVED=$(ping -4 -c 1 "$IN_HOST" 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+            if [ -n "$RESOLVED" ]; then
+                echo -e "已解析为: ${GREEN}$RESOLVED${PLAIN}"
+                IN_HOST="$RESOLVED"
+            else
+                echo -e "${RED}解析失败，使用原始域名${PLAIN}"
+            fi
+            ;;
+        3)
+            echo -e "${YELLOW}正在强制解析 IPv6...${PLAIN}"
+            RESOLVED=$(getent hosts "$IN_HOST" | awk '{ print $1 }' | grep ":" | head -n 1)
+            [ -z "$RESOLVED" ] && RESOLVED=$(ping6 -c 1 "$IN_HOST" 2>/dev/null | head -n 1 | grep -oE '[0-9a-fA-F:]+:[0-9a-fA-F:]+' | head -n 1)
+            if [ -n "$RESOLVED" ]; then
+                echo -e "已解析为: ${GREEN}$RESOLVED${PLAIN}"
+                IN_HOST="$RESOLVED"
+            else
+                echo -e "${RED}解析失败 (可能无 IPv6 网络)，使用原始域名${PLAIN}"
+            fi
+            ;;
+        *)
+            echo "使用默认连接模式"
+            ;;
+    esac
+    # --- [ 新增逻辑结束 ] ---
     
     cat > $M_ROOT/agent/Dockerfile <<EOF
 FROM python:3.11-slim
@@ -765,7 +819,7 @@ sys_tools() {
 
 # --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V67.0 终极版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V67.1 终极版)${PLAIN}"
     echo " 1. 安装 主控端"
     echo " 2. 安装 被控端"
     echo " 3. 连通测试"
