@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==================================================
-# MultiX Cluster - v5.1 (Decoupled Logic)
+# MultiX Cluster - v5.2 (Smart Detection)
 # ==================================================
 APP_DIR="/opt/multix_docker"
 # 默认配置
@@ -49,10 +49,6 @@ app = Flask(__name__)
 agents = {}
 PORT = int(os.getenv('MASTER_PORT', 7575))
 
-# --- UI Template 省略，保持 v5.0 一致，此处简写以节省篇幅，实际运行会自动包含完整 UI ---
-# ... (此处包含完整 HTML，逻辑与之前完全一致，不再重复粘贴占用屏幕) ...
-# 为了确保脚本能跑，这里必须放 HTML 变量。
-# 实际脚本中，请保留 v5.0 的 HTML_TEMPLATE 完整内容
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
@@ -62,7 +58,7 @@ HTML_TEMPLATE = """
 <style>body{background:#141414;color:#fff}.card{background:#1f1f1f;margin-bottom:15px}.online{color:#52c41a}</style>
 </head>
 <body>
-<div class="container mt-4"><h3>MultiX Cluster <small class="text-muted fs-6">v5.1</small></h3><div class="row" id="list"></div></div>
+<div class="container mt-4"><h3>MultiX Cluster <small class="text-muted fs-6">v5.2 Smart</small></h3><div class="row" id="list"></div></div>
 <div class="modal fade" id="addModal"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">Add Node</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body">
 <form id="f"><input type="hidden" id="ip"><div class="mb-2"><label>Remark</label><input class="form-control" name="remark"></div>
 <div class="row"><div class="col"><label>Proto</label><select class="form-select" name="protocol" id="pro" onchange="up()"><option value="vless">VLESS</option><option value="vmess">VMess</option></select></div><div class="col"><label>Port</label><input type="number" class="form-control" name="port"></div></div>
@@ -92,8 +88,6 @@ def index(): return render_template_string(HTML_TEMPLATE)
 def hb():
     ip = request.remote_addr
     data = request.json
-    # 如果 Agent 和 Master 在同一台机器，Docker Host 模式下 IP 可能是本地 IP
-    # 这里不做特殊处理，直接信任上报的 IP
     agents[ip] = {'name': data.get('name'), 'xp': data.get('xp')}
     return jsonify({'status':'ok'})
 
@@ -104,11 +98,8 @@ def get_agents(): return jsonify(agents)
 def push():
     data = request.json
     target = data.get('target')
-    # 动态构建 URL
     url = f"http://[{target}]:{PORT}/agent/add" if ':' in target else f"http://{target}:{PORT}/agent/add"
-    # 如果目标是 127.0.0.1，说明是控制本机 Agent
     if target == '127.0.0.1': url = f"http://127.0.0.1:{PORT}/agent/add"
-    
     try:
         r = requests.post(url, json=data.get('config'), timeout=5)
         return jsonify(r.json())
@@ -124,7 +115,6 @@ EOF
     echo "COPY server.py ." >> Dockerfile
     echo "CMD [\"python\", \"server.py\"]" >> Dockerfile
 
-    # 启动 Master 容器
     docker build -t multix-master .
     docker rm -f multix-master 2>/dev/null
     
@@ -137,36 +127,50 @@ EOF
 
     echo -e "${GREEN}Master 主控端安装完成！${PLAIN}"
     echo -e "管理面板地址: http://$(curl -s -4 ifconfig.me):${DEFAULT_MASTER_PORT}"
-    echo -e "${YELLOW}注意：Master 只是指挥部。如果你想让本机也能跑节点，请继续安装 'Agent'，IP填 127.0.0.1${PLAIN}"
 }
 
 # ==================================================
-# 2. 安装 Agent (3x-ui + 对接程序)
+# 2. 安装 Agent (智能检测版)
 # ==================================================
 install_agent() {
     check_docker
     echo -e "${GREEN}>>> 正在部署 Agent 被控端 (含 3x-ui)...${PLAIN}"
     
-    echo -e "${YELLOW}请输入 Master (主控) 的 IP 地址:${PLAIN}"
-    echo -e "如果是本机既做主控又做被控，请输入: ${GREEN}127.0.0.1${PLAIN}"
-    read -p "IP: " MASTER_IP
-    [[ -z "${MASTER_IP}" ]] && MASTER_IP="127.0.0.1"
+    # --- 智能检测逻辑 START ---
+    if docker ps --format '{{.Names}}' | grep -q "^multix-master$"; then
+        # 如果发现本机运行了 Master，自动设置为本地连接
+        MASTER_IP="127.0.0.1"
+        
+        # 尝试从 Master 容器获取当前运行的端口 (防止用户修改过端口)
+        DETECTED_PORT=$(docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' multix-master | grep MASTER_PORT | cut -d= -f2)
+        if [[ -n "$DETECTED_PORT" ]]; then
+            DEFAULT_MASTER_PORT=$DETECTED_PORT
+        fi
+        
+        echo -e "${GREEN}>>> [智能检测] 本机运行中 Master (端口 ${DEFAULT_MASTER_PORT})${PLAIN}"
+        echo -e "${YELLOW}>>> 已自动跳过配置，Agent 将直接连接: 127.0.0.1${PLAIN}"
+        sleep 1
+    else
+        # 没发现 Master，说明是远程机，正常询问
+        echo -e "${YELLOW}请输入 Master (主控) 的 域名 或 IP 地址:${PLAIN}"
+        echo -e "例如: vpn.example.com 或 1.2.3.4 (无需 http 前缀)"
+        read -p "Address: " MASTER_IP
+        [[ -z "${MASTER_IP}" ]] && echo "地址不能为空" && return
+    fi
+    # --- 智能检测逻辑 END ---
 
     mkdir -p ${APP_DIR}/agent
     cd ${APP_DIR}/agent
 
-    # Agent 代码 (与 v5.0 一致)
+    # Agent 代码
     cat > agent.py <<EOF
 import time, requests, json, socket, os
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 M_IP = "${MASTER_IP}"
-# 注意：Agent 需要知道 Master 的端口来发送心跳
 M_PORT = int(os.getenv('MASTER_PORT', 7575)) 
-# Agent 自己的监听端口 (通常和 Master 一致，因为都是 7575 协议)
 MY_PORT = int(os.getenv('MASTER_PORT', 7575)) 
-
 X_PORT = int(os.getenv('XUI_PORT', 2053))
 X_USER = os.getenv('XUI_USER', 'admin')
 X_PASS = os.getenv('XUI_PASS', 'admin123')
@@ -180,7 +184,6 @@ def get_session():
 @app.route('/agent/add', methods=['POST'])
 def add():
     c = request.json
-    # Payload 映射逻辑 (省略部分以简化，逻辑同 v5.0)
     stream = {"network": c.get('network'), "security": c.get('security'), "wsSettings": {}, "tcpSettings": {}}
     if c.get('network') == 'ws': stream['wsSettings'] = {"path": c.get('ws_path'), "headers": {"Host": ""}}
     if c.get('security') == 'reality':
@@ -200,7 +203,6 @@ def add():
 def beat():
     while True:
         try:
-            # 向 Master 发送心跳，携带本机 3x-ui 端口信息
             u = f"http://[{M_IP}]:{M_PORT}/api/heartbeat" if ':' in M_IP else f"http://{M_IP}:{M_PORT}/api/heartbeat"
             requests.post(u, json={'name': socket.gethostname(), 'xp': X_PORT}, timeout=5)
         except: pass
@@ -217,7 +219,6 @@ EOF
     echo "COPY agent.py ." >> Dockerfile
     echo "CMD [\"python\", \"agent.py\"]" >> Dockerfile
 
-    # docker-compose.yml
     cat > docker-compose.yml <<EOF
 services:
   xui:
@@ -245,7 +246,6 @@ services:
     restart: always
 EOF
     
-    # 自动拉取最新镜像
     docker compose pull
     docker compose up -d --build
 
@@ -269,7 +269,6 @@ uninstall() {
             rm -rf ${APP_DIR}/master
             echo "Master 已卸载" ;;
     esac
-    
     case $OPT in
         2|3)
             cd ${APP_DIR}/agent 2>/dev/null
@@ -280,74 +279,53 @@ uninstall() {
 }
 
 # ==================================================
-# 4. 配置修改 (明确区分端口)
+# 4. 配置修改
 # ==================================================
 modify_config() {
     echo -e "${BLUE}>>> 修改配置${PLAIN}"
-    echo -e "------------------------------------------------"
-    echo -e "1. 修改 ${YELLOW}MultiX 主控面板端口${PLAIN} (当前默认 7575)"
-    echo -e "   - 指：你访问这个集群管理页面的端口"
-    echo -e "------------------------------------------------"
-    echo -e "2. 修改 ${YELLOW}3x-ui 节点面板端口${PLAIN} (当前默认 2053)"
-    echo -e "   - 指：底层 xray 面板的端口"
-    echo -e "------------------------------------------------"
-    echo -e "3. 修改 3x-ui 账号密码"
+    echo "1. 修改 MultiX 面板端口 (默认 7575)"
+    echo "2. 修改 3x-ui 面板端口 (默认 2053)"
+    echo "3. 修改 3x-ui 账号密码"
     read -p "请选择: " OPT
 
     case $OPT in
         1)
             read -p "新 MultiX 端口: " P
-            # 修改 Master
             if docker ps | grep -q multix-master; then
                 docker rm -f multix-master
                 docker run -d --name multix-master --network host --restart always -e MASTER_PORT=$P multix-master
-                echo "Master 端口已改，请用新端口访问。"
             fi
-            # 修改 Agent (因为 Agent 也要改监听端口以匹配 Master)
             if [ -f "${APP_DIR}/agent/docker-compose.yml" ]; then
                 sed -i "s/MASTER_PORT=.*/MASTER_PORT=$P/" ${APP_DIR}/agent/docker-compose.yml
                 cd ${APP_DIR}/agent && docker compose up -d
-                echo "Agent 配置已更新。"
             fi
+            echo "端口已修改，请使用新端口访问。"
             ;;
         2)
             read -p "新 3x-ui 端口: " P
-            if ! docker ps | grep -q 3x-ui; then echo "未检测到 3x-ui 容器"; return; fi
-            
-            # 使用 docker exec 修改内部数据库
             docker exec -it 3x-ui x-ui setting -port $P
-            # 更新 compose 文件的环境变量显示 (可选)
-            sed -i "s/XUI_PORT=.*/XUI_PORT=$P/" ${APP_DIR}/agent/docker-compose.yml 2>/dev/null
             docker restart 3x-ui
-            echo -e "${GREEN}3x-ui 端口已修改为: $P${PLAIN}"
+            echo "3x-ui 端口已修改。"
             ;;
         3)
             read -p "新用户名: " U
             read -p "新密码: " P
-            if ! docker ps | grep -q 3x-ui; then echo "未检测到 3x-ui 容器"; return; fi
             docker exec -it 3x-ui x-ui setting -username $U -password $P
             docker restart 3x-ui
-            echo -e "${GREEN}3x-ui 账号密码已修改。${PLAIN}"
+            echo "账号密码已修改。"
             ;;
     esac
 }
 
-# ==================================================
-# 主菜单
-# ==================================================
 show_menu() {
     clear
-    echo -e "${BLUE}MultiX Cluster Manager v5.1${PLAIN}"
-    echo -e "--------------------------------"
-    echo -e "1. 安装 Master (仅控制面板)"
-    echo -e "2. 安装 Agent (3x-ui + 节点功能)"
-    echo -e "--------------------------------"
-    echo -e "3. 修改端口/配置"
+    echo -e "${BLUE}MultiX Cluster v5.2 (Smart Mode)${PLAIN}"
+    echo -e "1. 安装 Master"
+    echo -e "2. 安装 Agent (自动检测主控)"
+    echo -e "3. 修改配置"
     echo -e "4. 卸载"
-    echo -e "--------------------------------"
-    echo -e "${YELLOW}提示：${PLAIN}如需主控机也跑节点，请依次执行 1 和 2"
-    echo -e "在安装 Agent 时输入 IP: 127.0.0.1"
-    echo -e "--------------------------------"
+    echo -e "---------------------------"
+    echo -e "提示: 域名/IP 请直接输入 (如 vpn.com)，无需 http://"
     read -p "选择: " OPT
     case $OPT in
         1) install_master ;;
