@@ -1,14 +1,13 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V61.0 (Architecture Refactor & Visual Upgrade)
-# Core Change: Vue delimiters changed to [[ ]] to solve Jinja2 conflicts.
-# UI Upgrade: New "Dark Minimal" Login Page.
+# MultiX Pro Script V61.1 (Emergency Variable Fix)
+# Fix: Resolved NameError 'HTML_T is not defined' causing 503/500 crash.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V61.0"
+SH_VER="V61.1"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -106,7 +105,7 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V61 重构版) ] ---
+# --- [ 6. 主控安装 (V61.1 修复变量名) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
@@ -120,7 +119,7 @@ install_master() {
     
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V61.0 架构重构版)...${PLAIN}"
+    echo -e "${YELLOW}🛰️ 部署主控 (V61.1 变量修复版)...${PLAIN}"
     cat > $M_ROOT/master/app.py <<EOF
 import json, asyncio, psutil, os, socket, subprocess, base64
 from flask import Flask, render_template_string, request, session, redirect, jsonify
@@ -188,8 +187,8 @@ LOGIN_T = """
 </html>
 """
 
-# [V61.0] 控制台界面 (Vue [[ ]] 分隔符重构)
-DASH_T = """
+# [V61.1 修复] 变量名统一为 HTML_T
+HTML_T = """
 <!DOCTYPE html>
 <html class="dark">
 <head>
@@ -430,7 +429,9 @@ def gen_key():
     try:
         if t == 'reality':
             out = subprocess.check_output("xray x25519 || echo 'Private key: x Public key: x'", shell=True).decode()
-            return jsonify({"private": out.split("Private key:")[1].split()[0].strip(), "public": out.split("Public key:")[1].split()[0].strip()})
+            priv = out.split("Private key:")[1].split()[0].strip()
+            pub = out.split("Public key:")[1].split()[0].strip()
+            return jsonify({"private": priv, "public": pub})
         elif t == 'ss-128': return jsonify({"key": base64.b64encode(os.urandom(16)).decode()})
         elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
     except: return jsonify({"key": "", "private": "", "public": ""})
@@ -439,7 +440,7 @@ def gen_key():
 def index():
     if not session.get('logged'): return redirect('/login')
     s = get_sys_info()
-    return render_template_string(DASH_T, token=M_TOKEN, ipv4=s['ipv4'], ipv6=s['ipv6'])
+    return render_template_string(HTML_T, token=M_TOKEN, ipv4=s['ipv4'], ipv6=s['ipv6'])
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -488,7 +489,7 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功 (V61)${PLAIN}"
+    echo -e "${GREEN}✅ 主控端部署成功！${PLAIN}"
     echo -e "   IPv4入口: http://${IPV4}:${M_PORT}"
     [[ "$IPV6" != "N/A" ]] && echo -e "   IPv6入口: http://[${IPV6}]:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
@@ -585,7 +586,7 @@ sys_tools() {
 }
 
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V61.0 架构重构版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V61.1 紧急修复版)${PLAIN}"
     echo " 1. 安装 主控端 | 2. 安装 被控端"
     echo " 3. 连通测试   | 4. 被控重启"
     echo " 5. 深度清理   | 6. 环境修复"
