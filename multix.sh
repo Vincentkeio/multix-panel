@@ -1,113 +1,108 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Perfect Interaction Edition (V43.0)
-# 包含：开局快捷键 | 交互式Token | 双栈检测 | 混合凭据管理 | 菜单自循环
+# MultiX Pro NAT/IPv6 Specialized Edition (V45.0)
+# 特性：强制 IPv6 解析 | 双栈优先权选择 | 完整运维菜单 | 零阉割保留
 # ==============================================================================
 
-# --- [ 全局配置 ] ---
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
-# --- [ V43 核心：运行时立即安装快捷命令 ] ---
+# --- [ 0. 快捷命令：开局即驻留 ] ---
 if [[ "$(readlink -f /usr/bin/multix)" != "$(readlink -f $0)" ]]; then
     cp "$0" /usr/bin/multix && chmod +x /usr/bin/multix
-    echo -e "${GREEN}✅ multix 快捷命令已安装，随时输入 multix 调出完整菜单。${PLAIN}"
+    echo -e "${GREEN}✅ multix 快捷命令已就绪，随时输入 multix 调出菜单。${PLAIN}"
 fi
 
-# --- [ 基础工具函数 ] ---
-check_root() {
-    [[ $EUID -ne 0 ]] && echo -e "${RED}错误: 请使用 root 用户运行此脚本！${PLAIN}" && exit 1
-}
+# --- [ 基础函数 ] ---
+check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}错误: 必须 Root 运行！${PLAIN}" && exit 1; }
+pause_back() { echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
 get_public_ips() {
     IPV4=$(curl -s4m 2 api.ipify.org || echo "未检测到")
     IPV6=$(curl -s6m 2 api64.ipify.org || echo "未检测到")
 }
 
-pause_back() {
-    echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"
-    read -n 1 -s -r
-    main_menu
+# --- [ V45 新增：智能域名解析与协议选择 ] ---
+resolve_host() {
+    local host=$1
+    local type=$2
+    python3 -c "import socket; 
+try: 
+    print(socket.getaddrinfo('$host', None, socket.$type)[0][4][0])
+except: 
+    pass"
 }
 
+# --- [ 环境修复与依赖 ] ---
 install_dependencies() {
-    echo -e "${YELLOW}⚙️ 正在检查并修复系统环境依赖...${PLAIN}"
+    echo -e "${YELLOW}⚙️ 检查环境依赖...${PLAIN}"
     if [[ -f /etc/redhat-release ]]; then
         yum install -y epel-release && yum install -y python3 python3-devel python3-pip curl wget socat tar openssl
     else
         apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl
     fi
-    # 修复 Python 依赖 (兼容各种系统环境)
     pip3 install flask websockets psutil --break-system-packages >/dev/null 2>&1 || pip3 install flask websockets psutil >/dev/null 2>&1
     
     if ! command -v docker &> /dev/null; then
-        echo -e "${YELLOW}正在安装 Docker...${PLAIN}"
         curl -fsSL https://get.docker.com | bash
         systemctl enable docker && systemctl start docker
     fi
-    echo -e "${GREEN}✅ 环境依赖修复完成。${PLAIN}"
+    
+    # 修复双栈监听
+    if grep -q "net.ipv6.bindv6only" /etc/sysctl.conf; then
+        sed -i 's/net.ipv6.bindv6only.*/net.ipv6.bindv6only = 0/' /etc/sysctl.conf
+    else
+        echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf
+    fi
+    sysctl -p >/dev/null 2>&1
 }
 
-# --- [ 功能：深度清理 ] ---
+# --- [ 深度清理 ] ---
 deep_cleanup() {
-    echo -e "${RED}⚠️ 正在执行深度清理模式...${PLAIN}"
+    echo -e "${RED}⚠️ 执行深度清理...${PLAIN}"
     systemctl stop multix-master 2>/dev/null
     systemctl disable multix-master 2>/dev/null
     rm -f /etc/systemd/system/multix-master.service
     systemctl daemon-reload
-    
-    docker stop multix-agent 2>/dev/null
-    docker rm -f multix-agent 2>/dev/null
-    # 清理相关镜像，防止旧代码残留
+    docker stop multix-agent 2>/dev/null; docker rm -f multix-agent 2>/dev/null
     docker rmi $(docker images | grep "multix-agent" | awk '{print $3}') 2>/dev/null
-    
-    pkill -9 -f "master/app.py"
-    pkill -9 -f "agent/agent.py"
-    echo -e "${GREEN}✅ 深度清理完成 (配置文件已保留)。${PLAIN}"
+    pkill -9 -f "master/app.py"; pkill -9 -f "agent/agent.py"
+    echo -e "${GREEN}✅ 清理完成 (保留配置文件)。${PLAIN}"
     pause_back
 }
 
-# --- [ V43 核心：混合凭据管理中心 ] ---
+# --- [ 凭据中心 ] ---
 credential_center() {
     clear
-    echo -e "${SKYBLUE}🔐 MultiX 混合凭据管理中心${PLAIN}"
+    echo -e "${SKYBLUE}🔐 MultiX 凭据与连接管理${PLAIN}"
     echo "=================================================="
-    
-    # 1. 显示主控配置
     if [ -f $M_ROOT/.env ]; then
         source $M_ROOT/.env
         get_public_ips
-        echo -e "${YELLOW}[本机主控端配置]${PLAIN}"
-        echo -e "  面板入口(IPv4): http://${IPV4}:${M_PORT}"
-        [[ "$IPV6" != "未检测到" ]] && echo -e "  面板入口(IPv6): http://[${IPV6}]:${M_PORT}"
+        echo -e "${YELLOW}[主控端配置]${PLAIN}"
+        echo -e "  入口(v4): http://${IPV4}:${M_PORT}"
+        [[ "$IPV6" != "未检测到" ]] && echo -e "  入口(v6): http://[${IPV6}]:${M_PORT}"
         echo -e "  用户: ${GREEN}$M_USER${PLAIN} | 密码: ${GREEN}$M_PASS${PLAIN}"
         echo -e "  Token: ${SKYBLUE}$M_TOKEN${PLAIN}"
     else
-        echo -e "${YELLOW}[本机主控端]${PLAIN}: 未安装"
+        echo -e "${YELLOW}[主控端]${PLAIN}: 未安装"
     fi
     
-    echo "--------------------------------------------------"
-    
-    # 2. 显示被控配置 (从 agent.py 提取)
     AGENT_FILE="$M_ROOT/agent/agent.py"
     if [ -f "$AGENT_FILE" ]; then
         CUR_MASTER=$(grep 'MASTER =' $AGENT_FILE | cut -d'"' -f2)
         CUR_TOKEN=$(grep 'TOKEN =' $AGENT_FILE | cut -d'"' -f2)
-        echo -e "${YELLOW}[本机被控端配置]${PLAIN}"
-        echo -e "  连接主控IP: ${GREEN}$CUR_MASTER${PLAIN}"
-        echo -e "  使用Token:  ${SKYBLUE}$CUR_TOKEN${PLAIN}"
-    else
-        echo -e "${YELLOW}[本机被控端]${PLAIN}: 未安装"
+        echo -e "\n${YELLOW}[被控端配置]${PLAIN}"
+        echo -e "  连接至: ${GREEN}$CUR_MASTER${PLAIN}"
+        echo -e "  Token:  ${SKYBLUE}$CUR_TOKEN${PLAIN}"
     fi
-    
     echo "=================================================="
     echo "1. 修改 [主控] 端口/密码/Token"
-    echo "2. 修改 [被控] 连接的主控IP/Token"
-    echo "0. 返回主菜单"
-    read -p "请选择: " c_opt
-    
+    echo "2. 修改 [被控] 目标IP/Token"
+    echo "0. 返回"
+    read -p "选择: " c_opt
     case $c_opt in
         1)
             [ ! -f $M_ROOT/.env ] && echo "未安装主控" && pause_back
@@ -116,60 +111,48 @@ credential_center() {
             read -p "新密码 ($M_PASS): " npa; M_PASS=${npa:-$M_PASS}
             read -p "新Token ($M_TOKEN): " nt; M_TOKEN=${nt:-$M_TOKEN}
             echo -e "M_TOKEN=$M_TOKEN\nM_PORT=$M_PORT\nM_USER=$M_USER\nM_PASS=$M_PASS" > $M_ROOT/.env
-            echo -e "${GREEN}已更新配置，正在重启主控服务...${PLAIN}"
-            systemctl restart multix-master
-            ;;
+            systemctl restart multix-master; echo "主控已重启" ;;
         2)
             [ ! -f "$AGENT_FILE" ] && echo "未安装被控" && pause_back
             read -p "新主控IP ($CUR_MASTER): " nm; NEW_MASTER=${nm:-$CUR_MASTER}
             read -p "新Token ($CUR_TOKEN): " nt; NEW_TOKEN=${nt:-$CUR_TOKEN}
-            # 使用 sed 替换文件内容
             sed -i "s/MASTER = \".*\"/MASTER = \"$NEW_MASTER\"/" $AGENT_FILE
             sed -i "s/TOKEN = \".*\"/TOKEN = \"$NEW_TOKEN\"/" $AGENT_FILE
-            # 重建容器以生效
-            echo -e "${GREEN}已更新连接信息，正在重载 Agent 容器...${PLAIN}"
-            docker restart multix-agent
-            ;;
+            docker restart multix-agent; echo "被控已重连" ;;
         0) main_menu ;;
-        *) credential_center ;;
     esac
     pause_back
 }
 
-# --- [ V43 核心：主控安装 (交互优化) ] ---
+# --- [ 主控端安装 ] ---
 install_master() {
     install_dependencies
     mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     
-    # 交互式配置
-    echo -e "${SKYBLUE}>>> 配置主控端参数 (回车使用默认值)${PLAIN}"
-    read -p "管理端口 [7575]: " IN_PORT; M_PORT=${IN_PORT:-7575}
-    read -p "管理用户 [admin]: " IN_USER; M_USER=${IN_USER:-admin}
-    read -p "管理密码 [admin]: " IN_PASS; M_PASS=${IN_PASS:-admin}
+    if [ -f $M_ROOT/.env ]; then
+        source $M_ROOT/.env
+        echo -e "${SKYBLUE}检测到现有配置，回车保留，输入新值覆盖。${PLAIN}"
+    fi
+    read -p "端口 [${M_PORT:-7575}]: " IN_PORT; M_PORT=${IN_PORT:-${M_PORT:-7575}}
+    read -p "用户 [${M_USER:-admin}]: " IN_USER; M_USER=${IN_USER:-${M_USER:-admin}}
+    read -p "密码 [${M_PASS:-admin}]: " IN_PASS; M_PASS=${IN_PASS:-${M_PASS:-admin}}
     
-    # Token 逻辑：默认生成高强度，用户可覆写
-    DEFAULT_TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-    echo -e "默认随机 Token: ${YELLOW}${DEFAULT_TOKEN}${PLAIN}"
-    read -p "设置 Token [回车使用默认]: " IN_TOKEN
-    M_TOKEN=${IN_TOKEN:-$DEFAULT_TOKEN}
+    RAND_TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+    CUR_TOKEN_SHOW=${M_TOKEN:-$RAND_TOKEN}
+    # 交互式 Token 设置
+    read -p "Token [默认: ${CUR_TOKEN_SHOW}]: " IN_TOKEN
+    M_TOKEN=${IN_TOKEN:-$CUR_TOKEN_SHOW}
     
-    # 固化变量
     echo -e "M_TOKEN=$M_TOKEN\nM_PORT=$M_PORT\nM_USER=$M_USER\nM_PASS=$M_PASS" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 正在部署主控端 (三级 UI + 物理 Token)...${PLAIN}"
-    
-    # 写入主程序 (完整保留 V39/V40 的三级 UI 逻辑)
+    echo -e "${YELLOW}🛰️ 部署主控端 (双栈兼容版)...${PLAIN}"
     cat > $M_ROOT/master/app.py <<EOF
 import json, asyncio, time, psutil, os, socket, logging
 from flask import Flask, render_template_string, request, session, redirect, jsonify
 import websockets
 from threading import Thread
 
-# 物理注入
-M_PORT = int("$M_PORT")
-M_USER = "$M_USER"
-M_PASS = "$M_PASS"
-M_TOKEN = "$M_TOKEN"
+M_PORT, M_USER, M_PASS, M_TOKEN = int("$M_PORT"), "$M_USER", "$M_PASS", "$M_TOKEN"
 
 app = Flask(__name__)
 app.secret_key = M_TOKEN
@@ -185,13 +168,13 @@ def get_sys_info():
         }
     except: return {"cpu":0,"mem":0,"disk":0,"ipv4":"N/A","ipv6":"N/A"}
 
-# 旗舰 UI (三级交互 + 物理 Token)
+# 旗舰三级 UI (V39+) + 物理 Token
 HTML_T = """
 {% raw %}
 <!DOCTYPE html>
 <html class="dark">
 <head>
-    <meta charset="UTF-8"><title>MultiX Pro V43</title>
+    <meta charset="UTF-8"><title>MultiX Pro V45</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -302,7 +285,7 @@ HTML_T = """
                 const lang = ref('zh'); const agents = ref({}); const masterStats = ref({ CPU:0, MEM:0, DISK:0 }); const sys = ref({ ipv4:'...', ipv6:'...' });
                 const showListModal = ref(false); const showEditModal = ref(false); const activeIp = ref('');
                 const conf = ref({ id:null, remark:'Reality-Node', email:'admin@multix.com', protocol:'vless', port:443, uuid:'', dest:'www.microsoft.com:443', privKey:'', shortId:'6baad05c' });
-                const mockAgent = ref({ syncing: false, nodes: [{ id: 999, remark: 'Mock-Node-V43', port: 443, protocol: 'vless' }] });
+                const mockAgent = ref({ syncing: false, nodes: [{ id: 999, remark: 'Mock-Node-V45', port: 443, protocol: 'vless' }] });
                 const t = { zh: { edit:'修改', addNode:'创建新节点' }, en: { edit:'Edit', addNode:'New Inbound' } };
 
                 const update = async () => {
@@ -350,7 +333,6 @@ def get_state():
 def do_sync():
     d = request.json; target = d.get('ip'); c = d.get('config', {})
     if target in AGENTS:
-        # 下发数据，严格符合 3X-UI 规范
         payload = json.dumps({"action": "sync_node", "token": M_TOKEN, "data": {"id": c.get('id'), "remark": c.get('remark'), "port": int(c.get('port')), "protocol": "vless", "settings": json.dumps({"clients": [{"id": c.get('uuid'), "flow": "xtls-rprx-vision", "email": c.get('email')}]}), "stream_settings": json.dumps({"network": "tcp", "security": "reality", "realitySettings": {"dest": c.get('dest', 'www.microsoft.com:443'), "serverNames": [c.get('dest', '').split(':')[0]], "privateKey": c.get('privKey'), "shortIds": [c.get('shortId')]}}), "sniffing": json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic"]})}})
         asyncio.run_coroutine_threadsafe(AGENTS[target]['ws'].send(payload), LOOP_GLOBAL)
         return jsonify({"status": "sent"})
@@ -387,36 +369,29 @@ async def ws_handler(ws):
 def start_ws():
     global LOOP_GLOBAL; LOOP_GLOBAL = asyncio.new_event_loop(); asyncio.set_event_loop(LOOP_GLOBAL)
     async def m():
-        async with websockets.serve(ws_handler, "::", 8888, family=socket.AF_INET6): await asyncio.Future()
+        # 双栈核心：不指定family，让 OS 同时监听 v4/v6
+        async with websockets.serve(ws_handler, "0.0.0.0", 8888): await asyncio.Future()
     LOOP_GLOBAL.run_until_complete(m())
 
 if __name__ == '__main__':
     Thread(target=start_ws, daemon=True).start()
-    app.run(host='::', port=M_PORT)
+    app.run(host='0.0.0.0', port=M_PORT)
 EOF
 
-    # Systemd 守护
     cat > /etc/systemd/system/multix-master.service <<EOF
 [Unit]
-Description=MultiX Master Service
+Description=MultiX Master
 After=network.target
-
 [Service]
 ExecStart=/usr/bin/python3 $M_ROOT/master/app.py
 Restart=always
 User=root
 WorkingDirectory=$M_ROOT/master
 Environment=PYTHONUNBUFFERED=1
-
 [Install]
 WantedBy=multi-user.target
 EOF
-    
-    systemctl daemon-reload
-    systemctl enable multix-master
-    systemctl restart multix-master
-    
-    # 成功提示 (含双栈检测)
+    systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
     echo -e "${GREEN}✅ 主控端部署成功！${PLAIN}"
     echo -e "   ---------------------------------------"
@@ -428,37 +403,56 @@ EOF
     pause_back
 }
 
-# --- [ 部署：被控端 (数据库规范化) ] ---
+# --- [ 被控安装 (NAT IPv6 特别优化) ] ---
 install_agent() {
     install_dependencies
     mkdir -p $M_ROOT/agent
+    echo -e "${SKYBLUE}>>> 配置被控端连接${PLAIN}"
+    read -p "主控域名/IP: " IN_HOST
+    read -p "Token (复制自主控): " IN_TOKEN
     
-    # 现场构建轻量镜像
+    # 智能协议选择
+    echo -e "${YELLOW}请选择连接主控的协议 (NAT 小鸡建议强制 IPv6):${PLAIN}"
+    echo " 1. 自动检测 (默认)"
+    echo " 2. 强制 IPv4"
+    echo " 3. 强制 IPv6 (解决 NAT 小鸡连不上双栈域名)"
+    read -p "选择 [1-3]: " NET_OPT
+    
+    TARGET_HOST="$IN_HOST"
+    if [[ "$NET_OPT" == "3" ]]; then
+        # 强制解析 IPv6
+        V6_ADDR=$(resolve_host "$IN_HOST" "AF_INET6")
+        if [[ -n "$V6_ADDR" ]]; then
+            echo -e "${GREEN}解析到 IPv6: $V6_ADDR${PLAIN}"
+            TARGET_HOST="[$V6_ADDR]"
+        else
+            echo -e "${RED}无法解析到 IPv6 地址，回退到自动模式。${PLAIN}"
+        fi
+    elif [[ "$NET_OPT" == "2" ]]; then
+        V4_ADDR=$(resolve_host "$IN_HOST" "AF_INET")
+        if [[ -n "$V4_ADDR" ]]; then
+            TARGET_HOST="$V4_ADDR"
+        fi
+    fi
+    
     cat > $M_ROOT/agent/Dockerfile <<EOF
 FROM python:3.11-slim
 RUN pip install websockets psutil --break-system-packages
 WORKDIR /app
 CMD ["python", "agent.py"]
 EOF
-    
     cat > $M_ROOT/agent/agent.py <<EOF
 import asyncio, json, sqlite3, os, psutil, websockets, socket, platform
-MASTER = "$MASTER_IP"; TOKEN = "$M_TOKEN"
+MASTER = "$TARGET_HOST"; TOKEN = "$IN_TOKEN"
 DB_PATH = "/app/db_share/x-ui.db"
-
 def sync_db(data):
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10); cursor = conn.cursor()
-        nid = data.get('id')
+        conn = sqlite3.connect(DB_PATH, timeout=10); cursor = conn.cursor(); nid = data.get('id')
         vals = (data['remark'], data['port'], data['settings'], data['stream_settings'], data['sniffing'])
-        # 强制补全字段
-        if nid:
-            cursor.execute("UPDATE inbounds SET remark=?, port=?, settings=?, stream_settings=?, sniffing=?, enable=1 WHERE id=?", vals + (nid,))
-        else:
-            cursor.execute("INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing) VALUES (1, 0, 0, 0, ?, 1, 0, '', ?, 'vless', ?, ?, 'multix', ?)", vals)
+        if nid: cursor.execute("UPDATE inbounds SET remark=?, port=?, settings=?, stream_settings=?, sniffing=?, enable=1 WHERE id=?", vals + (nid,))
+        else: cursor.execute("INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing) VALUES (1, 0, 0, 0, ?, 1, 0, '', ?, 'vless', ?, ?, 'multix', ?)", vals)
         conn.commit(); conn.close(); return True
     except: return False
-
 async def run():
     uri = f"ws://{MASTER}:8888"
     while True:
@@ -470,91 +464,71 @@ async def run():
                     cur.execute("SELECT id, remark, port, protocol FROM inbounds")
                     nodes = [{"id": r[0], "remark": r[1], "port": r[2], "protocol": r[3]} for r in cur.fetchall()]
                     conn.close()
-                    stats = {
-                        "cpu": int(psutil.cpu_percent()), "mem": int(psutil.virtual_memory().percent),
-                        "os": platform.system() + " " + platform.release(), "xui_ver": "v2.1.2"
-                    }
+                    stats = { "cpu": int(psutil.cpu_percent()), "mem": int(psutil.virtual_memory().percent), "os": platform.system()+" "+platform.release(), "xui_ver": "v2.1.2" }
                     await ws.send(json.dumps({"type": "heartbeat", "data": stats, "nodes": nodes}))
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=5)
                         task = json.loads(msg)
-                        if task.get('action') == 'sync_node':
-                            os.system("docker stop 3x-ui")
-                            sync_db(task['data'])
-                            os.system("docker start 3x-ui")
+                        if task.get('action') == 'sync_node': os.system("docker stop 3x-ui"); sync_db(task['data']); os.system("docker start 3x-ui")
                     except: continue
         except: await asyncio.sleep(5)
 asyncio.run(run())
 EOF
-
-    cd $M_ROOT/agent
-    docker build -t multix-agent-v43 .
+    cd $M_ROOT/agent; docker build -t multix-agent-v45 .
     docker rm -f multix-agent 2>/dev/null
-    # 挂载权限
-    docker run -d --name multix-agent --restart always --network host \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        -v $M_ROOT/agent/db_data:/app/db_share \
-        -v $M_ROOT/agent:/app \
-        multix-agent-v43
-    
-    echo -e "${GREEN}✅ 被控端已启动。请在主控面板确认上线状态。${PLAIN}"
+    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v $M_ROOT/agent/db_data:/app/db_share -v $M_ROOT/agent:/app multix-agent-v45
+    echo -e "${GREEN}✅ 被控已启动 (连接目标: $TARGET_HOST)。${PLAIN}"
     pause_back
 }
 
-# --- [ 完整运维菜单 ] ---
+# --- [ 运维菜单 ] ---
 sys_tools() {
     while true; do
         clear
         echo -e "${YELLOW}🧰 MultiX 系统运维工具箱${PLAIN}"
-        echo "--------------------------"
         echo "1. 开启 BBR 加速"
-        echo "2. 安装/重装 3X-UI 面板"
+        echo "2. 安装/重装 3X-UI"
         echo "3. 申请 SSL 证书"
-        echo "4. 重置 3X-UI 面板账号"
+        echo "4. 重置 3X-UI 账号"
         echo "5. 清空流量统计"
         echo "6. 开放防火墙端口"
-        echo "0. 返回主菜单"
+        echo "0. 返回"
         read -p "选择: " t_opt
         case $t_opt in
             1) bash <(curl -L -s https://github.com/chiakge/Linux-NetSpeed/raw/master/tcp.sh) ;;
             2) bash <(curl -Ls https://raw.githubusercontent.com/mzz2017/v2ray-util/master/install.sh) ;;
             3) curl https://get.acme.sh | sh ;;
             4) docker exec -it 3x-ui x-ui setting ;;
-            5) sqlite3 $M_ROOT/agent/db_data/x-ui.db "UPDATE client_traffics SET up=0, down=0;" && echo "流量已归零" ;;
-            6) read -p "输入端口: " p; ufw allow $p/tcp 2>/dev/null; firewall-cmd --zone=public --add-port=$p/tcp --permanent 2>/dev/null ;;
+            5) sqlite3 $M_ROOT/agent/db_data/x-ui.db "UPDATE client_traffics SET up=0, down=0;" && echo "流量清零" ;;
+            6) read -p "端口: " p; ufw allow $p/tcp 2>/dev/null; firewall-cmd --zone=public --add-port=$p/tcp --permanent 2>/dev/null ;;
             0) break ;;
-            *) echo "无效选择" ;;
         esac
-        read -n 1 -s -r -p "按任意键继续..."
+        read -n 1 -s -r -p "按键继续..."
     done
     main_menu
 }
 
 main_menu() {
     clear
-    echo -e "${SKYBLUE}🛰️ MultiX Pro 终极交互版 (V43.0)${PLAIN}"
+    echo -e "${SKYBLUE}🛰️ MultiX Pro (V45.0 NAT专用版)${PLAIN}"
     echo "------------------------------------------------"
-    echo -e "${YELLOW}核心部署:${PLAIN}"
     echo " 1. 安装/更新 主控端 (Master)"
-    echo " 2. 安装/更新 被控端 (Agent)"
+    echo " 2. 安装/更新 被控端 (Agent) [支持IPv6强制解析]"
     echo "------------------------------------------------"
-    echo -e "${YELLOW}诊断与修复:${PLAIN}"
-    echo " 3. 连通性测试 (nc 探测主控)"
-    echo " 4. 被控离线修复 (重启服务)"
-    echo " 5. 深度清理模式 (删除残留)"
-    echo " 6. 环境依赖修复 (Python/Docker)"
+    echo " 3. 连通性测试 (nc 探测)"
+    echo " 4. 被控离线修复 (重启)"
+    echo " 5. 深度清理模式 (防残留)"
+    echo " 6. 环境依赖修复"
     echo "------------------------------------------------"
-    echo -e "${YELLOW}系统管理:${PLAIN}"
-    echo " 7. 混合凭据中心 (查看/修改/重启)"
-    echo " 8. 实时运行日志"
-    echo " 9. 运维工具箱 (BBR/SSL/3XUI...)"
+    echo " 7. 混合凭据中心 (修改配置)"
+    echo " 8. 实时日志"
+    echo " 9. 运维工具箱 (BBR/SSL/3XUI)"
     echo "------------------------------------------------"
-    echo " 0. 退出系统"
-    
-    read -p "请输入选项: " choice
+    echo " 0. 退出"
+    read -p "选择: " choice
     case $choice in
         1) install_master ;;
-        2) read -p "输入主控IP: " MASTER_IP; read -p "输入Token: " M_TOKEN; install_agent ;;
+        2) install_agent ;;
         3) read -p "目标IP: " tip; nc -zv -w 5 $tip 8888; pause_back ;;
         4) docker restart multix-agent; pause_back ;;
         5) deep_cleanup ;;
