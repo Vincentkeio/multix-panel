@@ -1,273 +1,258 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Cluster Manager - v8.2 (Stable)
+# MultiX Cluster Manager - MVP Test Edition (v9.0)
 # ==============================================================================
-# 修复：Docker 安装状态强校验
-# 修复：卸载逻辑优化
-# 修复：安装过程中的错误阻断机制
+# 特性：反向 WebSocket、暴力改库、Dashboard 监控、3x-ui 深度集成
 # ==============================================================================
 
-INSTALL_PATH="/opt/multix"
-CONFIG_FILE="${INSTALL_PATH}/config.json"
+INSTALL_PATH="/opt/multix_mvp"
+MASTER_PORT=7575
+WS_PORT=8888
 
-# 颜色定义
-RED='\033[0;31m'
+# 颜色
 GREEN='\033[0;32m'
+RED='\033[0;31m'
 YELLOW='\033[0;33m'
 PLAIN='\033[0m'
 
-# ==============================================================================
-#  核心检查函数 (Fix: 增加错误阻断)
-# ==============================================================================
-
-check_root() {
-    [[ $EUID -ne 0 ]] && echo -e "${RED}错误: 请使用 root 权限运行此脚本！${PLAIN}" && exit 1
-}
-
 check_docker() {
-    echo -e "${YELLOW}>>> 正在检查 Docker 环境...${PLAIN}"
-    
-    # 1. 尝试调用 docker 命令
     if ! command -v docker &> /dev/null; then
-        echo -e "${YELLOW}>>> 未检测到 Docker，正在执行自动安装...${PLAIN}"
-        
-        # 使用官方脚本安装
+        echo "正在安装 Docker..."
         curl -fsSL https://get.docker.com | bash
-        
-        # 再次检查
-        if ! command -v docker &> /dev/null; then
-            echo -e "${RED}>>> 严重错误：Docker 安装失败！${PLAIN}"
-            echo -e "${RED}>>> 可能原因：网络连接 Docker 官方源超时。${PLAIN}"
-            echo -e "${RED}>>> 请尝试手动安装 Docker 后再运行此脚本。${PLAIN}"
-            exit 1
-        fi
-        
-        echo -e "${GREEN}>>> Docker 安装成功！${PLAIN}"
-        systemctl enable docker
-        systemctl start docker
-    else
-        echo -e "${GREEN}>>> Docker 已安装。${PLAIN}"
-    fi
-
-    # 2. 检查 Docker 服务是否运行
-    if ! docker ps > /dev/null 2>&1; then
-        echo -e "${YELLOW}>>> Docker 服务未运行，正在启动...${PLAIN}"
-        systemctl start docker
-        if ! docker ps > /dev/null 2>&1; then
-             echo -e "${RED}>>> 错误：无法启动 Docker 服务，请检查系统日志 (journalctl -u docker)。${PLAIN}"
-             exit 1
-        fi
+        systemctl enable docker; systemctl start docker
     fi
 }
 
 # ==============================================================================
-#  1. Master 安装逻辑
+# 1. 主控安装逻辑
 # ==============================================================================
 install_master() {
-    check_root
-    check_docker  # 这里如果失败会直接 exit，不会往下走
-    
-    echo -e "${GREEN}>>> 正在构建 MultiX Master...${PLAIN}"
+    check_docker
     mkdir -p ${INSTALL_PATH}/master
-    
-    # 初始化配置
-    if [ ! -f "$CONFIG_FILE" ]; then
-        echo '{"port": 7575, "token": "multix_token", "username": "admin", "password": "admin123"}' > $CONFIG_FILE
-    fi
+    cd ${INSTALL_PATH}/master
 
-    # 写入 app.py
-    cat > ${INSTALL_PATH}/master/app.py <<'EOF'
-import json, time, secrets, psutil
-from flask import Flask, request, jsonify, render_template_string, session
-
-# 加载配置
-CONFIG_FILE = '/app/config.json'
-def load_cfg():
-    try:
-        with open(CONFIG_FILE) as f: return json.load(f)
-    except: return {"port":7575}
+    # 写入 Master 后端代码
+    cat > app.py <<EOF
+import json, asyncio, time, psutil, secrets
+from flask import Flask, render_template_string, request, jsonify, session
+import websockets
+from threading import Thread
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)
-AGENTS = {}
+AGENTS = {} # { "ip": { "ws": ws_obj, "stats": {} } }
 
-# HTML 模板
-HTML_TEMPLATE = r"""
+# 规范化协议模板 (Master 负责拼装)
+def build_vless_payload(remark, port, uuid):
+    settings = json.dumps({
+        "clients": [{"id": uuid, "flow": "xtls-rprx-vision"}],
+        "decryption": "none"
+    })
+    stream_settings = json.dumps({
+        "network": "tcp", "security": "reality",
+        "realitySettings": {
+            "show": False, "dest": "www.microsoft.com:443",
+            "serverNames": ["www.microsoft.com"],
+            "privateKey": "填写你的私钥", 
+            "shortIds": ["abcdef123456"]
+        }
+    })
+    return {
+        "action": "sync_node",
+        "data": {
+            "remark": f"MX-{remark}",
+            "port": int(port),
+            "protocol": "vless",
+            "settings": settings,
+            "stream_settings": stream_settings
+        }
+    }
+
+HTML = """
 <!DOCTYPE html>
-<html class="dark">
-<head>
-<meta charset="UTF-8"><title>MultiX Manager</title>
-<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
-<link rel="stylesheet" href="https://unpkg.com/element-plus/theme-chalk/dark/css-vars.css">
-<script src="https://unpkg.com/element-plus"></script>
-<style>body{margin:0;background:#141414;color:#fff;font-family:sans-serif}.login-box{width:300px;margin:100px auto;padding:30px;background:#1d1e1f;border:1px solid #333;text-align:center}</style>
-</head>
+<html>
+<head><title>MultiX Master</title><style>body{background:#1a1a1a;color:#eee;font-family:sans-serif;padding:20px}.card{background:#252525;padding:15px;margin-bottom:10px;border-radius:5px;border:1px solid #333}</style></head>
 <body>
-<div id="app">
- <div v-if="!isLoggedIn" class="login-box">
-  <h3>MultiX Login</h3>
-  <el-input v-model="f.u" placeholder="User" style="margin-bottom:10px"></el-input>
-  <el-input v-model="f.p" type="password" placeholder="Pass" show-password style="margin-bottom:20px"></el-input>
-  <el-button type="primary" style="width:100%" @click="login">Login</el-button>
- </div>
- <div v-else style="padding:20px">
-  <div style="display:flex;justify-content:space-between;margin-bottom:20px">
-   <h3>MultiX Manager <el-tag>Online</el-tag></h3>
-   <el-button type="danger" size="small" @click="logout">Logout</el-button>
-  </div>
-  <el-row :gutter="20">
-   <el-col :span="8" v-for="(a,ip) in agents" :key="ip">
-    <el-card style="background:#252526;border:1px solid #333;color:#fff">
-     <template #header>
-      <div style="display:flex;justify-content:space-between">
-       <span>{{a.name}}</span>
-       <el-tag size="small" :type="a.status=='online'?'success':'info'">{{a.status}}</el-tag>
-      </div>
-     </template>
-     <div>IP: {{a.ipv4}}</div>
-     <div>BBR: <span :style="{color:a.bbr?'lightgreen':'red'}">{{a.bbr?'ON':'OFF'}}</span></div>
-     <div style="margin-top:10px">CPU: {{a.cpu}}%</div>
-     <el-button style="width:100%;margin-top:15px" type="primary" plain size="small" @click="open(a.ipv4, a.xport)">Open 3X-UI</el-button>
-    </el-card>
-   </el-col>
-  </el-row>
-  <el-empty v-if="Object.keys(agents).length==0" description="No Agents Connected"></el-empty>
- </div>
-</div>
-<script>
-const {createApp,ref,reactive,onMounted}=Vue;
-createApp({
- setup(){
-  const isLoggedIn=ref(false);
-  const f=reactive({u:'',p:''});
-  const agents=ref({});
-  const check=async()=>{try{isLoggedIn.value=(await(await fetch('/api/auth')).json()).ok;if(isLoggedIn.value)loop();}catch{}};
-  const login=async()=>{try{if((await(await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(f)})).json()).ok){isLoggedIn.value=true;loop();}}catch{}};
-  const logout=async()=>{await fetch('/api/logout');isLoggedIn.value=false;};
-  const loop=()=>{fetch('/api/data').then(r=>r.json()).then(d=>agents.value=d);setTimeout(loop,3000);};
-  const open=(i,p)=>window.open(`http://${i}:${p}`);
-  onMounted(check);
-  return {isLoggedIn,f,login,logout,agents,open};
- }
-}).use(ElementPlus).mount('#app');
-</script></body></html>
+    <h2>MultiX Cluster Dashboard</h2>
+    <div id="stats">在线被控: {{ agents_count }} | 本机CPU: {{ master_cpu }}%</div>
+    <hr>
+    <h3>节点下发 (模拟管理)</h3>
+    <form action="/send" method="post" class="card">
+        端口: <input name="port" value="443" style="width:50px"> 
+        备注: <input name="remark" value="TestNode"> 
+        UUID: <input name="uuid" value="7e74360e-7443-4903-b09e-71110750a98b">
+        <button type="submit">全集群暴力同步</button>
+    </form>
+    <h3>被控列表</h3>
+    {% for ip, info in agents.items() %}
+    <div class="card">
+        <b>主机: {{ info.stats.name or ip }}</b> [{{ ip }}] <br>
+        CPU: {{ info.stats.cpu }}% | MEM: {{ info.stats.mem }}% | BBR: {{ 'ON' if info.stats.bbr else 'OFF' }}
+    </div>
+    {% endfor %}
+</body>
+</html>
 """
 
 @app.route('/')
-def idx(): return render_template_string(HTML_TEMPLATE)
-@app.route('/api/auth')
-def chk(): return jsonify({'ok':'u' in session})
-@app.route('/api/login', methods=['POST'])
-def log():
- c=load_cfg(); d=request.json
- if d['u']==c['username'] and d['p']==c['password']: session['u']=1; return jsonify({'ok':True})
- return jsonify({'ok':False})
-@app.route('/api/logout')
-def out(): session.pop('u',None); return jsonify({'ok':True})
-@app.route('/api/data')
-def dat():
- if 'u' not in session: return jsonify({})
- t=time.time()
- for k in AGENTS:
-  if t-AGENTS[k]['t']>15: AGENTS[k]['status']='offline'
- return jsonify(AGENTS)
-@app.route('/api/heartbeat', methods=['POST'])
-def hb():
- c=load_cfg(); d=request.json
- if request.headers.get('Authorization')!=c['token']: return jsonify({}),403
- ip=d.get('ipv4') or request.remote_addr
- AGENTS[ip]={'name':d.get('name'),'cpu':d.get('cpu'),'bbr':d.get('bbr'),'ipv4':ip,'xport':d.get('x_port',2053),'status':'online','t':time.time()}
- return jsonify({'status':'ok'})
-if __name__=='__main__':
- c=load_cfg()
- app.run(host='0.0.0.0', port=c['port'])
+def index():
+    m_cpu = psutil.cpu_percent()
+    return render_template_string(HTML, agents_count=len(AGENTS), agents=AGENTS, master_cpu=m_cpu)
+
+@app.route('/send', methods=['POST'])
+def send_cmd():
+    payload = build_vless_payload(request.form['remark'], request.form['port'], request.form['uuid'])
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    async def broadcast():
+        for ip in list(AGENTS.keys()):
+            try:
+                await AGENTS[ip]['ws'].send(json.dumps(payload))
+            except: del AGENTS[ip]
+    loop.run_until_complete(broadcast())
+    return "指令已下发！<a href='/'>返回</a>"
+
+async def ws_server(websocket, path):
+    ip = websocket.remote_address[0]
+    AGENTS[ip] = {"ws": websocket, "stats": {}}
+    try:
+        async for msg in websocket:
+            data = json.loads(msg)
+            if data.get('type') == 'heartbeat':
+                AGENTS[ip]['stats'] = data['data']
+    finally:
+        if ip in AGENTS: del AGENTS[ip]
+
+if __name__ == '__main__':
+    def run_ws():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        srv = websockets.serve(ws_server, "0.0.0.0", ${WS_PORT})
+        loop.run_until_complete(srv)
+        loop.run_forever()
+    Thread(target=run_ws, daemon=True).start()
+    app.run(host='0.0.0.0', port=${MASTER_PORT})
 EOF
 
-    # Dockerfile
-    echo 'FROM python:3.9-slim
-RUN pip install flask psutil
+    # 创建 Dockerfile
+    cat > Dockerfile <<EOF
+FROM python:3.9-slim
+RUN pip install flask websockets psutil
 COPY app.py /app.py
-CMD ["python", "/app.py"]' > ${INSTALL_PATH}/master/Dockerfile
+CMD ["python", "/app.py"]
+EOF
 
-    # 构建与启动
-    echo -e "${YELLOW}>>> 正在构建容器镜像 (可能需要几分钟)...${PLAIN}"
-    cd ${INSTALL_PATH}/master
-    
-    # 增加 set -e 确保出错即停
-    if ! docker build -t multix-master .; then
-        echo -e "${RED}>>> 镜像构建失败！请检查网络是否能连接 Docker Hub。${PLAIN}"
-        exit 1
-    fi
-    
+    docker build -t multix-master .
     docker rm -f multix-master 2>/dev/null
-    
-    docker run -d \
-        --name multix-master \
-        --network host \
-        --privileged \
-        --restart always \
-        -v ${INSTALL_PATH}/config.json:/app/config.json \
-        multix-master
-
-    echo -e "${GREEN}==========================================${PLAIN}"
-    echo -e "${GREEN} 安装成功！${PLAIN}"
-    echo -e " 管理面板: http://$(curl -s4 ifconfig.me):7575"
-    echo -e " 默认账户: admin"
-    echo -e " 默认密码: admin123"
-    echo -e "${GREEN}==========================================${PLAIN}"
+    docker run -d --name multix-master --network host --restart always multix-master
+    echo -e "${GREEN}主控安装完成！访问 http://IP:${MASTER_PORT}${PLAIN}"
 }
 
 # ==============================================================================
-#  2. 卸载逻辑 (Fix: 清理不干净的问题)
+# 2. 被控安装逻辑
 # ==============================================================================
-uninstall() {
-    echo -e "${RED}警告：此操作将删除 Master 和 Agent 容器。${PLAIN}"
-    read -p "是否同时卸载 Docker 引擎？(y/n，推荐 n): " del_docker
-    
-    echo -e "${YELLOW}>>> 正在停止并删除容器...${PLAIN}"
-    docker rm -f multix-master multix-agent 3x-ui 2>/dev/null
-    
-    echo -e "${YELLOW}>>> 正在清理数据文件...${PLAIN}"
-    rm -rf ${INSTALL_PATH}
-    
-    if [[ "$del_docker" == "y" ]]; then
-        echo -e "${YELLOW}>>> 正在卸载 Docker...${PLAIN}"
-        if command -v apt-get &>/dev/null; then
-            apt-get purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-            rm -rf /var/lib/docker
-            rm -rf /var/lib/containerd
-        elif command -v yum &>/dev/null; then
-            yum remove -y docker-ce docker-ce-cli containerd.io
-        fi
-        echo -e "${GREEN}>>> Docker 已卸载。${PLAIN}"
-    fi
-    
-    echo -e "${GREEN}>>> 卸载完成。${PLAIN}"
+install_agent() {
+    check_docker
+    read -p "请输入主控 IP: " M_IP
+    mkdir -p ${INSTALL_PATH}/agent/db_data
+    cd ${INSTALL_PATH}/agent
+
+    cat > agent.py <<EOF
+import asyncio, json, sqlite3, os, shutil, socket, psutil, subprocess
+import websockets, docker
+
+MASTER_WS = "ws://${M_IP}:${WS_PORT}"
+DB_PATH = "/app/db_share/x-ui.db"
+
+def get_stats():
+    return {
+        "name": socket.gethostname(),
+        "cpu": int(psutil.cpu_percent()),
+        "mem": int(psutil.virtual_memory().percent),
+        "bbr": "bbr" in subprocess.getoutput("sysctl net.ipv4.tcp_congestion_control")
+    }
+
+async def handle_task(data):
+    try:
+        client = docker.from_env()
+        xui = client.containers.get("3x-ui")
+        # 1. 停止
+        xui.stop()
+        # 2. 写库 (暴力逻辑)
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        sql = "INSERT OR REPLACE INTO inbounds (remark, port, protocol, settings, stream_settings, enable, sniffing, listen) VALUES (?, ?, ?, ?, ?, 1, '{\"enabled\": true}', '')"
+        cursor.execute(sql, (data['remark'], data['port'], data['protocol'], data['settings'], data['stream_settings']))
+        conn.commit(); conn.close()
+        # 3. 启动
+        xui.start()
+        return True
+    except Exception as e:
+        print(f"Error: {e}"); return False
+
+async def run_agent():
+    while True:
+        try:
+            async with websockets.connect(MASTER_WS) as ws:
+                print("已连接主控")
+                while True:
+                    # 心跳
+                    await ws.send(json.dumps({"type": "heartbeat", "data": get_stats()}))
+                    try:
+                        msg = await asyncio.wait_for(ws.recv(), timeout=5)
+                        task = json.loads(msg)
+                        if task['action'] == 'sync_node':
+                            await handle_task(task['data'])
+                    except asyncio.TimeoutError:
+                        continue
+        except:
+            print("连接断开，重试中..."); await asyncio.sleep(5)
+
+if __name__ == '__main__':
+    asyncio.run(run_agent())
+EOF
+
+    # Docker Compose
+    cat > docker-compose.yml <<EOF
+services:
+  3x-ui:
+    image: ghcr.io/mhsanaei/3x-ui:latest
+    container_name: 3x-ui
+    network_mode: host
+    volumes:
+      - ./db_data:/etc/x-ui
+    restart: always
+
+  multix-agent:
+    image: python:3.9-slim
+    container_name: multix-agent
+    network_mode: host
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./db_data:/app/db_share
+      - ./agent.py:/app/agent.py
+    working_dir: /app
+    entrypoint: /bin/sh -c "pip install docker websockets psutil && python /app.py"
+    restart: always
+EOF
+
+    docker compose up -d
+    echo -e "${GREEN}被控 Agent 及 3x-ui 安装完成！${PLAIN}"
 }
 
 # ==============================================================================
-#  菜单
+# 菜单
 # ==============================================================================
-show_menu() {
-    clear
-    echo -e "==========================================="
-    echo -e " MultiX Manager v8.2 ${YELLOW}(Fix Docker)${PLAIN}"
-    echo -e "==========================================="
-    echo -e " 1. 安装 Master (主控)"
-    echo -e " 2. 安装 Agent (被控)"
-    echo -e " 3. 卸载"
-    echo -e " 0. 退出"
-    echo -e "==========================================="
-    read -p " 请输入: " num
-    case $num in
-        1) install_master ;;
-        2) check_root; check_docker; echo "Agent 安装逻辑同上..." ;; # 占位
-        3) check_root; uninstall ;;
-        0) exit 0 ;;
-        *) show_menu ;;
-    esac
-}
+echo -e "${YELLOW}MultiX MVP Installer${PLAIN}"
+echo "1. 安装主控端 (Master)"
+echo "2. 安装被控端 (Agent)"
+echo "3. 卸载全部"
+read -p "选择 [1-3]: " opt
 
-show_menu
+case $opt in
+    1) install_master ;;
+    2) install_agent ;;
+    3) docker rm -f multix-master multix-agent 3x-ui; rm -rf ${INSTALL_PATH} ;;
+esac
