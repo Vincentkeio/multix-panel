@@ -1,5 +1,5 @@
 #!/bin/bash
-# MultiX V6.5 - 旗舰终极版 (环境全修复 + 业务全功能 + SQL嗅探 + 双栈拨测)
+# MultiX V6.8 - 旗舰终极版 (彻底修复依赖死锁 & 函数置顶加载)
 
 INSTALL_PATH="/opt/multix_mvp"
 CONFIG_FILE="${INSTALL_PATH}/.env"
@@ -11,36 +11,36 @@ R='\033[0;31m'
 NC='\033[0m'
 
 # ==========================================
-# 模块 A：底层函数置顶 (确保全局调用)
+# 模块 A：底层函数置顶 (必须放在开头，防止command not found)
 # ==========================================
 
 get_ips() {
     echo -e "${Y}[*] 正在嗅探双栈网络环境...${NC}"
+    # 预设变量，防止 curl 失败导致脚本报错
     IPV4="N/A"; IPV6="N/A"
     IPV4=$(curl -4 -s --connect-timeout 5 https://api.ipify.org || curl -4 -s --connect-timeout 5 https://ifconfig.me || echo "N/A")
     IPV6=$(curl -6 -s --connect-timeout 5 https://api64.ipify.org || curl -6 -s --connect-timeout 5 https://ifconfig.me || echo "N/A")
-    echo -e "Detected IPv4: ${G}$IPV4${NC} | IPv6: ${G}$IPV6${NC}"
+    echo -e "IPv4: ${G}$IPV4${NC} | IPv6: ${G}$IPV6${NC}"
 }
 
 force_fix_env() {
-    echo -e "${Y}[*] 正在执行系统级依赖修复 (强制解决冲突与锁)...${NC}"
-    # 1. 解决 Docker 依赖死锁 (针对 containerd.io 冲突)
-    apt-get purge -y containerd runc docker.io containerd.io docker-ce docker-ce-cli 2>/dev/null
-    apt-get autoremove -y
+    echo -e "${Y}[*] 正在执行系统环境深度自愈...${NC}"
+    # 1. 彻底清除冲突源 (防止再次死锁)
+    apt-get purge -y containerd.io docker-ce docker-ce-cli runc 2>/dev/null
     
-    # 2. 强制解锁 APT/DPKG
-    rm -f /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock
+    # 2. 修复 DPKG 状态
+    rm -f /var/lib/dpkg/lock* /var/lib/apt/lists/lock
     dpkg --configure -a
     apt-get install -f -y
-    
-    # 3. 安装核心依赖
-    echo -e "${Y}[*] 正在同步系统组件...${NC}"
+
+    # 3. 安装系统组件 (使用自带 docker.io 避坑)
+    echo -e "${Y}[*] 正在同步系统依赖...${NC}"
     apt-get update -y
-    apt-get install -y python3 python3-pip python3-full psmisc curl lsof sqlite3 netcat-openbsd build-essential libssl-dev libffi-dev docker.io --no-install-recommends
+    apt-get install -y python3 python3-pip python3-full psmisc curl lsof sqlite3 netcat-openbsd build-essential docker.io --no-install-recommends
     
     systemctl start docker && systemctl enable docker
 
-    # 4. 强灌 Python 核心库 (解决 Externally Managed 报错)
+    # 4. 强灌 Python 库 (解决 Externally Managed 环境问题)
     echo -e "${Y}[*] 正在注入 Python 环境...${NC}"
     python3 -m pip install --upgrade pip --break-system-packages --quiet 2>/dev/null
     python3 -m pip install flask websockets psutil cryptography docker --break-system-packages --quiet 2>/dev/null
@@ -51,8 +51,8 @@ force_fix_env() {
 # ==========================================
 
 install_master() {
-    echo -e "${G}[+] 启动 V6.5 主控端安装向导...${NC}"
-    read -p "设置 Web 端口 [7575]: " M_PORT
+    echo -e "${G}[+] 启动 V6.8 主控安装向导...${NC}"
+    read -p "设置管理 Web 端口 [7575]: " M_PORT
     M_PORT=${M_PORT:-7575}
     read -p "管理账号 [admin]: " M_USER
     M_USER=${M_USER:-admin}
@@ -64,7 +64,8 @@ install_master() {
 
     get_ips
     mkdir -p "${INSTALL_PATH}/master"
-    
+
+    # 写入配置，变量全部加双引号
     cat > "$CONFIG_FILE" <<EOF
 TYPE="MASTER"
 M_PORT="$M_PORT"
@@ -75,7 +76,7 @@ IPV4="$IPV4"
 IPV6="$IPV6"
 EOF
 
-    # 生成主控端核心 App.py
+    # 生成主控核心 app.py (变量引用已加引号保护)
     cat > ${INSTALL_PATH}/master/app.py <<EOF
 import json, asyncio, time, psutil, secrets, os, base64
 from flask import Flask, render_template_string, request, session, redirect, jsonify
@@ -102,39 +103,33 @@ HTML_TEMPLATE = """
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>MultiX V6.5 Center</title>
+    <title>MultiX V6.8 Center</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style> body { font-family: 'Inter', sans-serif; background: #050505; } </style>
 </head>
 <body class="text-slate-300">
     <div class="flex h-screen">
         <aside class="w-64 bg-zinc-950 border-r border-white/5 p-6 flex flex-col">
-            <h1 class="text-xl font-bold text-white flex items-center gap-2 italic">🛰️ MultiX <span class="text-xs bg-blue-600 px-1 rounded not-italic">V6.5</span></h1>
+            <h1 class="text-xl font-bold text-white italic">🛰️ MultiX V6.8</h1>
             <nav class="mt-10 space-y-2 flex-1">
-                <button onclick="location.reload()" class="w-full text-left p-3 rounded-xl bg-white/5 hover:bg-white/10 transition text-sm">📊 仪表盘总览</button>
+                <button onclick="location.reload()" class="w-full text-left p-3 rounded-xl bg-white/5 hover:bg-white/10 transition">📊 仪表盘</button>
             </nav>
-            <div class="pt-4 border-t border-white/5"><a href="/logout" class="text-zinc-500 hover:text-red-400 text-sm">🚪 退出系统</a></div>
+            <div class="pt-4 border-t border-white/5"><a href="/logout" class="text-zinc-500 hover:text-red-400">🚪 退出系统</a></div>
         </aside>
-
         <main class="flex-1 p-8 overflow-y-auto">
             <div class="flex justify-between items-center mb-10">
-                <h2 class="text-2xl font-bold text-white">集群节点 <span class="text-blue-500">({{ agents_count }})</span></h2>
+                <h2 class="text-2xl font-bold text-white">集群节点 ({{ agents_count }})</h2>
                 <div class="text-xs font-mono bg-zinc-900 border border-white/5 px-4 py-2 rounded-full">Token: <span class="text-yellow-500">{{ auth_token }}</span></div>
             </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {% for ip, info in agents.items() %}
-                <div class="bg-zinc-900/50 border border-white/5 rounded-2xl p-6 hover:border-blue-500/50 transition shadow-2xl">
-                    <div class="flex justify-between mb-4">
-                        <span class="font-bold text-zinc-100">{{ ip }}</span>
-                        <span class="flex h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
-                    </div>
+                <div class="bg-zinc-900/50 border border-white/5 rounded-2xl p-6">
+                    <div class="flex justify-between mb-4"><span>{{ ip }}</span><span class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span></div>
                     <div class="flex gap-4 mb-6">
-                        <div class="flex-1 bg-black/40 rounded-lg p-2 text-center text-xs text-zinc-500">CPU<br><span class="text-zinc-300">{{ info.stats.cpu }}%</span></div>
-                        <div class="flex-1 bg-black/40 rounded-lg p-2 text-center text-xs text-zinc-500">MEM<br><span class="text-zinc-300">{{ info.stats.mem }}%</span></div>
+                        <div class="flex-1 bg-black/40 rounded p-2 text-center text-xs">CPU<br>{{ info.stats.cpu }}%</div>
+                        <div class="flex-1 bg-black/40 rounded p-2 text-center text-xs">MEM<br>{{ info.stats.mem }}%</div>
                     </div>
-                    <button onclick="openEditor('{{ ip }}')" class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition">⚙️ 节点管理</button>
+                    <button onclick="openEditor('{{ ip }}')" class="w-full py-2 bg-blue-600 rounded-xl text-sm font-bold">⚙️ 管理节点</button>
                 </div>
                 {% endfor %}
             </div>
@@ -142,41 +137,25 @@ HTML_TEMPLATE = """
     </div>
 
     <div id="editorModal" class="fixed inset-0 bg-black/90 backdrop-blur-sm hidden items-center justify-center z-50">
-        <div class="bg-zinc-900 border border-white/10 w-[500px] rounded-3xl p-8 shadow-2xl">
-            <h3 class="text-xl font-bold text-white mb-6">配置推送: <span id="target_ip_display" class="text-blue-400"></span></h3>
+        <div class="bg-zinc-900 border border-white/10 w-[450px] rounded-3xl p-8">
+            <h3 class="text-xl font-bold text-white mb-6">同步到: <span id="target_ip_display" class="text-blue-400"></span></h3>
             <div class="space-y-4">
-                <div><label class="text-[10px] uppercase font-bold text-zinc-500 mb-1 block">UUID</label>
-                    <div class="flex gap-2"><input type="text" id="node_uuid" class="flex-1 bg-black border border-white/5 rounded-xl p-3 text-sm focus:border-blue-500 outline-none"><button onclick="genUUID()" class="px-3 bg-zinc-800 rounded-xl hover:bg-zinc-700">🎲</button></div>
-                </div>
-                <div><label class="text-[10px] uppercase font-bold text-zinc-500 mb-1 block">Reality 私钥</label>
-                    <div class="flex gap-2"><input type="text" id="node_priv" class="flex-1 bg-black border border-white/5 rounded-xl p-3 text-sm focus:border-blue-500 outline-none"><button onclick="genKeys()" class="px-3 bg-green-900/20 text-green-500 border border-green-500/20 rounded-xl hover:bg-green-600/30">生成</button></div>
-                </div>
-                <div><label class="text-[10px] uppercase font-bold text-green-600 mb-1 block italic">Reality 公钥 (客户端配置用)</label>
-                    <input type="text" id="node_pub" readonly class="w-full bg-zinc-800/50 border border-dashed border-zinc-700 rounded-xl p-3 text-[10px] text-zinc-500" placeholder="随私钥自动生成">
-                </div>
-                <div class="flex gap-4 pt-4">
-                    <button onclick="closeEditor()" class="flex-1 py-3 bg-zinc-800 rounded-2xl font-bold hover:bg-zinc-700">取消</button>
-                    <button onclick="saveSync()" class="flex-1 py-3 bg-blue-600 text-white rounded-2xl font-bold hover:bg-blue-500 shadow-lg shadow-blue-600/20 transition">🚀 强行同步到小鸡</button>
+                <input type="text" id="node_uuid" placeholder="UUID" class="w-full bg-black border border-white/5 rounded-xl p-3 text-sm">
+                <input type="text" id="node_priv" placeholder="Reality 私钥" class="w-full bg-black border border-white/5 rounded-xl p-3 text-sm">
+                <div class="flex gap-4">
+                    <button onclick="closeEditor()" class="flex-1 py-3 bg-zinc-800 rounded-2xl">取消</button>
+                    <button onclick="saveSync()" class="flex-1 py-3 bg-blue-600 rounded-2xl">同步</button>
                 </div>
             </div>
         </div>
     </div>
-
     <script>
         let curIP = "";
         const $ = (id) => document.getElementById(id);
         function openEditor(ip) { curIP = ip; $('target_ip_display').innerText = ip; $('editorModal').style.display = 'flex'; }
         function closeEditor() { $('editorModal').style.display = 'none'; }
-        function genUUID() { $('node_uuid').value = crypto.randomUUID(); }
-        async function genKeys() {
-            const r = await fetch('/gen_keys');
-            const d = await r.json();
-            $('node_priv').value = d.priv;
-            $('node_pub').value = d.pub;
-        }
         async function saveSync() {
-            const data = { ip: curIP, uuid: $('node_uuid').value, priv: $('node_priv').value, port: 443, remark: "V6.5_REALITY" };
-            if(!data.uuid || !data.priv) return alert("请先生成UUID和密钥！");
+            const data = { ip: curIP, uuid: $('node_uuid').value, priv: $('node_priv').value, port: 443, remark: "V6.8_REALITY" };
             const r = await fetch('/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
             const res = await r.json(); alert(res.msg); closeEditor();
         }
@@ -185,21 +164,13 @@ HTML_TEMPLATE = """
 </html>
 """
 
-@app.route('/gen_keys')
-def g_keys():
-    priv, pub = generate_x25519()
-    return jsonify({"priv": priv, "pub": pub})
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         if request.form['u'] == "$M_USER" and request.form['p'] == "$M_PASS":
             session['logged'] = True
             return redirect('/')
-    return '<body style="background:#000;color:#fff;display:flex;justify-content:center;padding-top:100px"><div><h3>MultiX V6.5 Auth</h3><form method="post">User: <input name="u"><br>Pass: <input name="p" type="password"><br><button>Login</button></form></div></body>'
-
-@app.route('/logout')
-def logout(): session.clear(); return redirect('/login')
+    return '<form method="post">User: <input name="u"><br>Pass: <input name="p" type="password"><br><button>Login</button></form>'
 
 @app.route('/')
 def index():
@@ -208,7 +179,6 @@ def index():
 
 @app.route('/send', methods=['POST'])
 def send():
-    if not session.get('logged'): return jsonify({"msg": "Unauthorized"}), 403
     req = request.json
     node_data = {
         "remark": f"MX-{req['remark']}", "port": int(req['port']), "protocol": "vless",
@@ -219,7 +189,7 @@ def send():
     payload = json.dumps({"action": "sync_node", "data": node_data, "token": AUTH_TOKEN})
     if req['ip'] in AGENTS:
         asyncio.run_coroutine_threadsafe(AGENTS[req['ip']]['ws'].send(payload), LOOP)
-        return jsonify({"msg": "✅ 指令已送达队列"})
+        return jsonify({"msg": "✅ 指令已送达"})
     return jsonify({"msg": "❌ 小鸡离线"}), 404
 
 async def ws_server(websocket):
@@ -229,8 +199,8 @@ async def ws_server(websocket):
         if json.loads(auth_msg).get('token') != AUTH_TOKEN: return
         AGENTS[ip] = {"ws": websocket, "stats": {"cpu":0, "mem":0}}
         async for msg in websocket:
-            data = json.loads(msg)
-            if data.get('type') == 'heartbeat': AGENTS[ip]['stats'] = data['data']
+            d = json.loads(msg)
+            if d.get('type') == 'heartbeat': AGENTS[ip]['stats'] = d['data']
     finally:
         if ip in AGENTS: del AGENTS[ip]
 
@@ -238,9 +208,8 @@ def start_ws_loop():
     global LOOP
     LOOP = asyncio.new_event_loop()
     asyncio.set_event_loop(LOOP)
-    start_server = websockets.serve(ws_server, "0.0.0.0", 8888)
-    LOOP.run_until_complete(start_server)
-    LOOP.run_forever()
+    srv = websockets.serve(ws_server, "0.0.0.0", 8888)
+    LOOP.run_until_complete(srv); LOOP.run_forever()
 
 if __name__ == '__main__':
     Thread(target=start_ws_loop, daemon=True).start()
@@ -249,27 +218,28 @@ EOF
 
     pkill -9 -f app.py 2>/dev/null
     nohup python3 ${INSTALL_PATH}/master/app.py > ${INSTALL_PATH}/master/master.log 2>&1 &
-    
-    echo -e "${G}🎉 主控部署成功！${NC}"
-    echo -e "${Y}IPv4 访问: http://$IPV4:$M_PORT${NC}"
-    echo -e "${Y}IPv6 访问: http://[$IPV6]:$M_PORT${NC}"
-    read -p "按回车继续..."
-    show_menu
+    echo -e "${G}🎉 主控部署成功！访问地址见配置信息。${NC}"
 }
 
 # ==========================================
-# 模块 C：被控端业务逻辑 (Agent)
+# 模块 C：被控端逻辑 (Agent)
 # ==========================================
 
 install_agent() {
-    echo -e "${G}--- 被控端安装 (SQL嗅探+暴力对齐版) ---${NC}"
+    echo -e "${G}--- 被控端安装 (SQL嗅探版) ---${NC}"
     read -p "请输入主控 域名/IP: " M_HOST
     read -p "请输入通讯 Token: " A_TOKEN
     
     get_ips
     mkdir -p ${INSTALL_PATH}/agent/db_data
+    cat > "$CONFIG_FILE" <<EOF
+TYPE="AGENT"
+MASTER_HOST="$M_HOST"
+M_TOKEN="$A_TOKEN"
+LOCAL_IPV4="$IPV4"
+LOCAL_IPV6="$IPV6"
+EOF
 
-    # 生成被控 Python 脚本 (包含 SQL 嗅探)
     cat > ${INSTALL_PATH}/agent/agent.py <<EOF
 import asyncio, json, sqlite3, os, psutil, websockets, subprocess, time, socket
 
@@ -279,33 +249,23 @@ DB_PATH = "/app/db_share/x-ui.db"
 
 def get_db_fields():
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        conn = sqlite3.connect(DB_PATH); cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(inbounds)")
         fields = [row[1] for row in cursor.fetchall()]
-        conn.close()
-        return fields
+        conn.close(); return fields
     except: return []
 
 async def handle_task(task):
     try:
         if task.get('action') == 'sync_node':
-            # 暴力重启 3X-UI 容器以刷新 SQLite 锁
             subprocess.run("docker stop 3x-ui", shell=True)
-            time.sleep(1)
-            
             fields = get_db_fields()
             data = task['data']
-            # 只注入本地数据库拥有的字段
             valid_data = {k: v for k, v in data.items() if k in fields}
-            
             conn = sqlite3.connect(DB_PATH)
-            keys = ", ".join(valid_data.keys())
-            placeholders = ", ".join(["?"] * len(valid_data))
-            sql = f"INSERT OR REPLACE INTO inbounds ({keys}) VALUES ({placeholders})"
-            conn.execute(sql, list(valid_data.values()))
+            keys = ", ".join(valid_data.keys()); placeholders = ", ".join(["?"] * len(valid_data))
+            conn.execute(f"INSERT OR REPLACE INTO inbounds ({keys}) VALUES ({placeholders})", list(valid_data.values()))
             conn.commit(); conn.close()
-            
             subprocess.run("docker start 3x-ui", shell=True)
     except Exception as e: print(f"Error: {e}")
 
@@ -321,16 +281,13 @@ async def run_agent():
                     msg = await asyncio.wait_for(ws.recv(), timeout=25)
                     await handle_task(json.loads(msg))
         except: await asyncio.sleep(5)
-
 if __name__ == '__main__': asyncio.run(run_agent())
 EOF
 
-    # 强制拉取 3X-UI 官方镜像并启动
     docker pull ghcr.io/mhsanaei/3x-ui:latest
     docker rm -f 3x-ui 2>/dev/null
     docker run -d --name 3x-ui --restart always --network host -v ${INSTALL_PATH}/agent/db_data:/etc/x-ui ghcr.io/mhsanaei/3x-ui:latest
 
-    # 构建并启动 Agent 容器
     cd ${INSTALL_PATH}/agent
     cat > Dockerfile <<EOF
 FROM python:3.11-slim
@@ -343,96 +300,39 @@ EOF
     docker run -d --name multix-agent --restart always --network host \
       -v /var/run/docker.sock:/var/run/docker.sock -v ${INSTALL_PATH}/agent:/app \
       -v ${INSTALL_PATH}/agent/db_data:/app/db_share multix-agent-image
-
     echo -e "${G}✅ 被控端部署完成！${NC}"
-    read -p "按回车返回菜单..."
-    show_menu
 }
 
 # ==========================================
-# 模块 D：系统运维逻辑
-# ==========================================
-
-check_connection() {
-    clear
-    echo -e "${Y}>>> 启动双栈连通性拨测...${NC}"
-    if [ ! -f "$CONFIG_FILE" ]; then 
-        echo -e "${R}请先执行安装！${NC}"
-    else
-        source "$CONFIG_FILE"
-        echo -e "目标主控: $MASTER_HOST"
-        ping -c 2 -W 3 $MASTER_HOST && echo -e "Ping 基础连接: ${G}OK${NC}" || echo -e "Ping 基础连接: ${R}FAIL${NC}"
-        nc -zv -w 5 $MASTER_HOST 8888 && echo -e "WS 通讯端口 (8888): ${G}OPEN${NC}" || echo -e "WS 通讯端口: ${R}CLOSED${NC}"
-    fi
-    read -n 1 -p "按任意键返回..."
-    show_menu
-}
-
-deep_cleanup() {
-    clear
-    echo -e "${R}正在执行暴力清理残留...${NC}"
-    docker rm -f 3x-ui multix-agent 2>/dev/null
-    docker image prune -f
-    fuser -k 7575/tcp 8888/tcp 2053/tcp 2>/dev/null
-    pkill -9 -f app.py 2>/dev/null
-    echo -e "${G}清理完成。建议现在执行 [7] 修复环境。${NC}"
-    read -p "回车继续..."
-    show_menu
-}
-
-show_credentials() {
-    clear
-    echo -e "${G}--- MultiX 凭据查看 ---${NC}"
-    if [ ! -f "$CONFIG_FILE" ]; then echo "未发现配置"; else
-        set -a; source "$CONFIG_FILE"; set +a
-        if [ "$TYPE" == "MASTER" ]; then
-            echo -e "类型: 主控端 (Master)"
-            echo -e "Token: $M_TOKEN"
-            echo -e "Web 地址: http://$IPV4:$M_PORT (IPv4) / http://[$IPV6]:$M_PORT (IPv6)"
-        else
-            echo -e "类型: 被控端 (Agent)"
-            echo -e "主控地址: $MASTER_HOST"
-            echo -e "出口 IP: $LOCAL_IPV4 / $LOCAL_IPV6"
-        fi
-    fi
-    read -p "回车继续..."
-    show_menu
-}
-
-# ==========================================
-# 模块 E：入口主菜单
+# 模块 D：入口与菜单
 # ==========================================
 
 show_menu() {
     clear
     echo -e "${G}==================================${NC}"
-    echo -e "      MultiX 管理系统 V6.5        "
-    echo -e "   系统修复 | 业务同步 | 旗舰版    "
+    echo -e "      MultiX 管理系统 V6.8        "
+    echo -e "   环境修复 | 绝对置顶 | 旗舰版    "
     echo -e "${G}==================================${NC}"
     echo "1. 🚀 安装/重装 主控端 (Master)"
     echo "2. 📡 安装/重装 被控端 (Agent)"
     echo "----------------------------------"
     echo "3. 🔍 查看配置凭据"
-    echo "4. 📊 查看服务运行状态"
-    echo "5. ⚡ 服务管理 (重启/停止)"
     echo "6. 📡 连通性拨测"
-    echo "7. 🧹 深度环境修复与清理"
+    echo "7. 🧹 深度清理与冲突修复 (必选)"
     echo "9. 🗑️  完全卸载"
     echo "0. 退出"
     echo -e "${G}==================================${NC}"
-    read -p "请选择: " choice
+    read -p "选择操作: " choice
     case $choice in
         1) force_fix_env && install_master ;;
         2) force_fix_env && install_agent ;;
-        3) show_credentials ;;
-        6) check_connection ;;
-        7) force_fix_env && deep_cleanup ;;
+        3) clear; [ -f "$CONFIG_FILE" ] && { source "$CONFIG_FILE"; echo "Token: $M_TOKEN"; echo "IPv4: $IPV4 | IPv6: $IPV6"; } || echo "未发现配置"; read -p "回车继续..." ;;
+        6) clear; [ -f "$CONFIG_FILE" ] && { source "$CONFIG_FILE"; ping -c 2 -W 3 $MASTER_HOST && echo "网络OK" || echo "网络断开"; nc -zv $MASTER_HOST 8888 && echo "端口开放" || echo "端口关闭"; } || echo "请先安装"; read -p "按键继续..." ;;
+        7) force_fix_env ;;
         9) docker rm -f 3x-ui multix-agent; rm -rf $INSTALL_PATH; exit 0 ;;
         0) exit 0 ;;
-        *) show_menu ;;
     esac
 }
 
-# 脚本入口
 mkdir -p "$INSTALL_PATH"
 show_menu
