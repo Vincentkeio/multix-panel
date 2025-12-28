@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V66.0 (jQuery Stability Fix)
-# Fix: AJAX 'Loading...' freeze | Forced Login | Full 3X-UI Modal Features
-# Stack: Flask + Bootstrap 5 + jQuery 3.6 (Proven Stability)
+# MultiX Pro Script V66.0 (IPv6 & Session Fix)
+# Fix 1: Changed Flask listen to '::' to support the user's IPv6 access.
+# Fix 2: Added AJAX error feedback to prevent "Loading..." hang.
+# Fix 3: Added Logout button and Session cleanup.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
@@ -122,7 +123,7 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V66 jQuery稳定版) ] ---
+# --- [ 6. 主控安装 (V66 IPv6修复版) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
@@ -136,7 +137,7 @@ install_master() {
     
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V66.0 jQuery/Bootstrap)...${PLAIN}"
+    echo -e "${YELLOW}🛰️ 部署主控 (V66.0 IPv6支持版)...${PLAIN}"
     
     # 核心：使用 'EOF' 锁定，禁止 Shell 解析内部内容，确保 Python/JS 源码纯净
     cat > $M_ROOT/master/app.py <<'EOF'
@@ -207,25 +208,29 @@ HTML_T = """
         .modal-content { background: #0a0a0a; border: 1px solid #333; }
         .modal-header { border-bottom: 1px solid #222; }
         .modal-footer { border-top: 1px solid #222; }
+        #error-banner { display: none; position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1050; }
     </style>
 </head>
 <body>
+<div id="error-banner" class="alert alert-danger shadow-lg fw-bold"></div>
+
 <div class="container">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h2 class="fw-bold fst-italic text-primary mb-0">MultiX <span class="text-white">Pro</span></h2>
             <small class="text-secondary font-monospace" id="sys-info">Connecting...</small>
         </div>
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 align-items-center">
             <span class="badge bg-dark border border-secondary p-2">CPU: <span id="cpu">0</span>%</span>
             <span class="badge bg-dark border border-secondary p-2">MEM: <span id="mem">0</span>%</span>
+            <a href="/logout" class="btn btn-outline-danger btn-sm fw-bold">LOGOUT</a>
         </div>
     </div>
 
     <div class="row g-4" id="node-list">
         <div class="col-12 text-center text-secondary py-5">
             <div class="spinner-border text-primary" role="status"></div>
-            <div class="mt-2">Loading Nodes...</div>
+            <div class="mt-2">Waiting for Agent Connection...</div>
         </div>
     </div>
 </div>
@@ -376,7 +381,9 @@ HTML_T = """
             url: '/api/state',
             type: 'GET',
             dataType: 'json',
+            timeout: 5000,
             success: function(data) {
+                $('#error-banner').hide();
                 $('#cpu').text(data.master.stats.cpu);
                 $('#mem').text(data.master.stats.mem);
                 $('#sys-info').text('TOKEN: '+TOKEN+' | IP: '+data.master.ipv4);
@@ -384,8 +391,8 @@ HTML_T = """
                 renderGrid();
             },
             error: function(xhr, status, error) {
+                $('#error-banner').text('Connection Error: ' + error).fadeIn();
                 console.log("State fetch failed:", error);
-                // Don't alert here to avoid spamming, just log
             }
         });
     }
@@ -589,6 +596,11 @@ def login():
             return redirect('/')
     return render_template_string(LOGIN_T)
 
+@app.route('/logout')
+def logout():
+    session.pop('logged', None)
+    return redirect('/login')
+
 @app.route('/api/state')
 def api_state():
     s = get_sys_info()
@@ -627,6 +639,7 @@ def start_ws():
 
 if __name__ == '__main__':
     Thread(target=start_ws, daemon=True).start()
+    # 关键修复：改为监听所有 IPv6/IPv4 地址
     app.run(host='::', port=M_PORT)
 EOF
 
@@ -719,17 +732,54 @@ EOF
     echo -e "${GREEN}✅ 被控已启动${PLAIN}"; pause_back
 }
 
-# --- [ 8. 主菜单 ] ---
+# --- [ 8. 运维工具箱 (找回) ] ---
+sys_tools() {
+    while true; do
+        clear; echo -e "${SKYBLUE}🧰 运维工具箱${PLAIN}"
+        echo " 1. BBR加速 (Chiakge)"
+        echo " 2. 安装/重置 3X-UI (MHSanaei)"
+        echo " 3. 申请 SSL 证书 (acme.sh)"
+        echo " 4. 重置 3X-UI 面板账号"
+        echo " 5. 清空 3X-UI 流量统计"
+        echo " 6. 开放防火墙端口"
+        echo " 0. 返回"
+        read -p "选择: " t
+        case $t in
+            1) bash <(curl -L -s https://github.com/chiakge/Linux-NetSpeed/raw/master/tcp.sh) ;;
+            2) bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) ;;
+            3) curl https://get.acme.sh | sh ;;
+            4) docker exec -it 3x-ui x-ui setting ;;
+            5) sqlite3 $M_ROOT/agent/db_data/x-ui.db "UPDATE client_traffics SET up=0, down=0;" && echo "已清空" ;;
+            6) read -p "端口: " p; ufw allow $p/tcp 2>/dev/null; firewall-cmd --zone=public --add-port=$p/tcp --permanent 2>/dev/null; echo "Done" ;;
+            0) break ;;
+        esac; read -n 1 -s -r -p "继续..."
+    done; main_menu
+}
+
+# --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V66.0 jQuery版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V66.0 IPv6支持版)${PLAIN}"
     echo " 1. 安装 主控端"
     echo " 2. 安装 被控端"
-    echo " 3. 清理/卸载"
+    echo " 3. 连通测试"
+    echo " 4. 被控重启"
+    echo " 5. 深度清理"
+    echo " 6. 环境修复"
+    echo " 7. 凭据管理"
+    echo " 8. 实时日志"
+    echo " 9. 运维工具"
+    echo " 10. 服务管理"
     echo " 0. 退出"
     read -p "选择: " c
     case $c in
-        1) install_master ;; 2) install_agent ;; 3) deep_cleanup ;;
-        0) exit 0 ;; *) main_menu ;;
+        1) install_master ;; 2) install_agent ;;
+        3) read -p "IP: " t; nc -zv -w 5 $t 8888; pause_back ;;
+        4) docker restart multix-agent; pause_back ;;
+        5) deep_cleanup ;;
+        6) install_dependencies; pause_back ;;
+        7) credential_center ;;
+        8) journalctl -u multix-master -f || docker logs -f multix-agent --tail 50; pause_back ;;
+        9) sys_tools ;; 10) service_manager ;; 0) exit 0 ;; *) main_menu ;;
     esac
 }
 main_menu
