@@ -1,5 +1,5 @@
 #!/bin/bash
-# MultiX V4.0 - 全能 Dashboard 版 (主控增强 + 实时监控 + 智能修复)
+# MultiX V4.5 - 极客透明版 (快捷命令 + 状态管理 + 档案查看)
 
 INSTALL_PATH="/opt/multix_mvp"
 MASTER_DOMAIN="multix.spacelite.top"
@@ -10,26 +10,106 @@ Y='\033[1;33m'
 R='\033[0;31m'
 NC='\033[0m'
 
+# --- 菜单界面 ---
 show_menu() {
     clear
     echo -e "${G}==================================${NC}"
-    echo -e "      MultiX 管理系统 V4.0        "
-    echo -e "    可视化仪表盘 | 智能自愈系统    "
+    echo -e "      MultiX 管理系统 V4.5        "
+    echo -e "    快捷命令: multix | 状态自愈     "
     echo -e "${G}==================================${NC}"
     echo "1. 🚀 安装/重装 主控端 (Master)"
-    echo "2. 🗑️  卸载 主控端 (Master)"
+    echo "2. 📡 安装/重装 被控端 (Agent)"
     echo "----------------------------------"
-    echo "3. 📡 安装/重装 被控端 (Agent + 3x-ui)"
-    echo "4. 🗑️  卸载 被控端 (Agent)"
+    echo "3. 🔍 查看本机配置信息 (管理凭据)"
+    echo "4. 📊 查看服务运行状态"
+    echo "5. ⚡ 启动/停止/重启服务"
     echo "----------------------------------"
-    echo "7. 🔧 智能一键修复 (不删数据，解决死机)"
-    echo "----------------------------------"
-    echo "5. 🚪 退出"
+    echo "7. 🔧 智能一键修复 (解决端口占用)"
+    echo "9. 🗑️  完全卸载 (慎用)"
+    echo "0. 🚪 退出"
     echo -e "${G}==================================${NC}"
-    read -p "请选择操作 [1-7]: " choice
+    read -p "请选择操作 [0-9]: " choice
 }
 
-# --- 智能修复逻辑 ---
+# --- 功能：查看配置档案 ---
+show_config() {
+    clear
+    echo -e "${G}==================================${NC}"
+    echo -e "      🛰️ MultiX 本机配置档案       "
+    echo -e "${G}==================================${NC}"
+    
+    # 探测主控配置
+    if [ -f "$INSTALL_PATH/master/app.py" ]; then
+        M_PORT=$(grep "port=" "$INSTALL_PATH/master/app.py" | tail -1 | sed -E 's/.*port=([0-9]+).*/\1/')
+        M_USER=$(grep -P 'request.form\["u"\] ==' "$INSTALL_PATH/master/app.py" | cut -d'"' -f2)
+        M_PASS=$(grep -P 'request.form\["p"\] ==' "$INSTALL_PATH/master/app.py" | cut -d'"' -f4)
+        M_TOKEN=$(grep "AUTH_TOKEN =" "$INSTALL_PATH/master/app.py" | head -1 | cut -d'"' -f2)
+        echo -e "${Y}[ 主控端 (Master) ]${NC}"
+        echo -e " - 面板地址: ${G}http://$(curl -s4 https://api64.ipify.org):${M_PORT:-7575}${NC}"
+        echo -e " - 管理账号: ${G}${M_USER:-admin}${NC}"
+        echo -e " - 管理密码: ${G}${M_PASS:-admin}${NC}"
+        echo -e " - 通信 Token: ${Y}${M_TOKEN}${NC}"
+    else
+        echo -e "${R}[ 主控端 ] : 未安装 (或非主控机器)${NC}"
+    fi
+
+    echo -e "----------------------------------"
+
+    # 探测被控配置
+    if [ -f "$INSTALL_PATH/agent/agent.py" ]; then
+        A_MASTER=$(grep "MASTER_WS =" "$INSTALL_PATH/agent/agent.py" | cut -d'"' -f2)
+        A_TOKEN=$(grep "TOKEN =" "$INSTALL_PATH/agent/agent.py" | cut -d'"' -f2)
+        echo -e "${Y}[ 被控端 (Agent) ]${NC}"
+        echo -e " - 连接主控: ${G}$A_MASTER${NC}"
+        echo -e " - 本机 Token: ${Y}$A_TOKEN${NC}"
+        X_PORT=$(docker inspect --format='{{range $p, $conf := .NetworkSettings.Ports}}{{(index $conf 0).HostPort}}{{end}}' 3x-ui 2>/dev/null)
+        echo -e " - 3x-ui 端口: ${G}${X_PORT:-"Host模式"}${NC}"
+    else
+        echo -e "${R}[ 被控端 ] : 未安装 (或非被控小鸡)${NC}"
+    fi
+    echo -e "${G}==================================${NC}"
+    read -p "按回车返回菜单..."
+}
+
+# --- 功能：状态查询 ---
+show_status() {
+    echo -e "\n${Y}[*] 正在检索服务状态...${NC}"
+    # 主控进程
+    M_PID=$(pgrep -f "master/app.py")
+    if [ ! -z "$M_PID" ]; then echo -e "主控进程: ${G}● Running (PID: $M_PID)${NC}"; else echo -e "主控进程: ${R}○ Stopped${NC}"; fi
+    # Docker 容器
+    if command -v docker &>/dev/null; then
+        containers=("3x-ui" "multix-agent")
+        for c in "${containers[@]}"; do
+            if [ "$(docker ps -q -f name=$c)" ]; then echo -e "$c 容器: ${G}● Running${NC}"; else echo -e "$c 容器: ${R}○ Stopped${NC}"; fi
+        done
+    fi
+    read -p "按回车返回..."
+}
+
+# --- 功能：服务管理 ---
+manage_service() {
+    echo -e "\n1. ${G}启动${NC}所有服务 | 2. ${R}停止${NC}所有服务 | 3. ${Y}重启${NC}所有服务"
+    read -p "选择操作: " op
+    case $op in
+        1)
+            [ -f "$INSTALL_PATH/master/app.py" ] && nohup python3 $INSTALL_PATH/master/app.py > /dev/null 2>&1 &
+            docker start 3x-ui multix-agent 2>/dev/null
+            echo "服务已尝试启动";;
+        2)
+            pkill -f "master/app.py" 2>/dev/null
+            docker stop 3x-ui multix-agent 2>/dev/null
+            echo "服务已停止";;
+        3)
+            pkill -f "master/app.py" 2>/dev/null
+            [ -f "$INSTALL_PATH/master/app.py" ] && nohup python3 $INSTALL_PATH/master/app.py > /dev/null 2>&1 &
+            docker restart 3x-ui multix-agent 2>/dev/null
+            echo "服务已重启";;
+    esac
+    sleep 1
+}
+
+# --- 智能修复逻辑 (保留原有逻辑) ---
 smart_repair() {
     echo -e "${Y}[*] 启动智能修复流程...${NC}"
     systemctl stop x-ui 2>/dev/null
@@ -50,9 +130,9 @@ smart_repair() {
     sleep 2
 }
 
-# --- 安装主控端 (Dashboard 增强版) ---
+# --- 安装主控端 (保留 Dashboard 4.0 逻辑) ---
 install_master() {
-    echo -e "${G}[+] 启动 V4.0 主控安装向导...${NC}"
+    echo -e "${G}[+] 启动 V4.5 主控安装向导...${NC}"
     read -p "设置管理 Web 端口 [默认 7575]: " M_PORT
     M_PORT=${M_PORT:-7575}
     read -p "设置管理员账号 [默认 admin]: " M_USER
@@ -64,7 +144,7 @@ install_master() {
     M_TOKEN=${M_TOKEN:-$DEF_TOKEN}
 
     mkdir -p ${INSTALL_PATH}/master
-    apt update && apt install -y python3 python3-pip psmisc curl lsof
+    apt update && apt install -y python3 python3-pip psmisc curl lsof sqlite3
     pip3 install flask websockets psutil --break-system-packages --quiet || pip3 install flask websockets psutil --quiet
 
     cat > ${INSTALL_PATH}/master/app.py <<EOF
@@ -95,7 +175,7 @@ HTML_TEMPLATE = """
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>MultiX V4.0 Dashboard</title>
+    <title>MultiX V4.5 Dashboard</title>
     <style>
         body { background: #0f111a; color: #a6adbb; font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; }
         .sidebar { width: 240px; background: #1a1c27; height: 100vh; padding: 20px; border-right: 1px solid #2a2d3e; }
@@ -105,103 +185,58 @@ HTML_TEMPLATE = """
         .stat-val { font-size: 24px; color: #fff; font-weight: bold; }
         .stat-label { font-size: 12px; color: #646b7b; text-transform: uppercase; }
         .btn { background: #5865f2; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; transition: 0.3s; }
-        .btn:hover { background: #4752c4; }
         .badge { background: #232733; padding: 4px 10px; border-radius: 4px; font-size: 12px; color: #00ff00; }
-        .agent-card { border-left: 4px solid #5865f2; }
-        input, select { background: #0f111a; border: 1px solid #2a2d3e; color: #fff; padding: 8px; border-radius: 4px; width: 100%; margin: 10px 0; }
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 100; }
         .modal-content { background: #1a1c27; margin: 5% auto; padding: 30px; width: 450px; border-radius: 15px; border: 1px solid #2a2d3e; }
+        input, select { background: #0f111a; border: 1px solid #2a2d3e; color: #fff; padding: 8px; width: 100%; margin: 10px 0; }
     </style>
 </head>
 <body>
     <div class="sidebar">
-        <h2 style="color:#fff">🛰️ MultiX V4.0</h2>
-        <p style="color:#5865f2">分布式管理系统</p>
-        <hr style="border:0; border-top:1px solid #2a2d3e; margin: 20px 0;">
+        <h2 style="color:#fff">🛰️ MultiX V4.5</h2>
         <div style="cursor:pointer; padding:10px 0; color:#fff">📊 运行概览</div>
-        <div style="cursor:pointer; padding:10px 0;">🛡️ 安全设置</div>
-        <div style="cursor:pointer; padding:10px 0;">📜 系统日志</div>
         <div style="margin-top:50px"><a href="/logout" style="color:#ff4d4d; text-decoration:none">🚪 退出登录</a></div>
     </div>
     <div class="main">
-        <h3>📊 主控机系统状态 (Dashboard)</h3>
+        <h3>📊 主控机系统状态</h3>
         <div class="grid">
-            <div class="card">
-                <div class="stat-label">CPU 使用率</div>
-                <div class="stat-val">{{ master.cpu }}%</div>
-            </div>
-            <div class="card">
-                <div class="stat-label">内存使用率</div>
-                <div class="stat-val">{{ master.mem }}%</div>
-            </div>
-            <div class="card">
-                <div class="stat-label">磁盘占用</div>
-                <div class="stat-val">{{ master.disk }}%</div>
-            </div>
-            <div class="card">
-                <div class="stat-label">运行时间</div>
-                <div class="stat-val">{{ master.uptime }} 小时</div>
-            </div>
+            <div class="card"><div class="stat-label">CPU</div><div class="stat-val">{{ master.cpu }}%</div></div>
+            <div class="card"><div class="stat-label">MEM</div><div class="stat-val">{{ master.mem }}%</div></div>
+            <div class="card"><div class="stat-label">DISK</div><div class="stat-val">{{ master.disk }}%</div></div>
+            <div class="card"><div class="stat-label">UPTIME</div><div class="stat-val">{{ master.uptime }}h</div></div>
         </div>
-
         <h3>📡 节点管理 (在线: {{ agents_count }})</h3>
         <div class="grid">
             {% for ip, info in agents.items() %}
-            <div class="card agent-card">
-                <div style="display:flex; justify-content:space-between">
-                    <span style="color:#fff; font-weight:bold">{{ ip }}</span>
-                    <span class="badge">Online</span>
-                </div>
-                <p style="font-size:13px">CPU: {{ info.stats.cpu }}% | MEM: {{ info.stats.mem }}%</p>
-                <button class="btn" onclick="openEdit('{{ ip }}')">配置节点</button>
+            <div class="card">
+                <div style="display:flex; justify-content:space-between"><span>{{ ip }}</span><span class="badge">Online</span></div>
+                <button class="btn" style="margin-top:10px" onclick="openEdit('{{ ip }}')">配置节点</button>
             </div>
             {% endfor %}
-            {% if agents_count == 0 %}
-            <div class="card" style="grid-column: 1 / -1; text-align: center; color: #646b7b;">
-                目前暂无被控小鸡在线，请先安装被控端。
-            </div>
-            {% endif %}
         </div>
     </div>
-
     <div id="editModal" class="modal">
         <div class="modal-content">
-            <h3 style="color:#fff">⚙️ 配置节点参数</h3>
+            <h3>⚙️ 配置节点参数</h3>
             <form id="configForm">
                 <input type="hidden" id="target_ip" name="target_ip">
-                <label>节点备注</label><input type="text" name="remark" value="V40_NODE">
-                <label>端口</label><input type="number" name="port" value="12345">
-                <label>协议</label>
-                <select name="protocol">
-                    <option value="vless">VLESS (Reality)</option>
-                    <option value="vmess">VMess</option>
-                    <option value="trojan">Trojan</option>
-                </select>
-                <label>UUID / Password</label><input type="text" name="uuid" id="uuid">
-                <button type="button" class="btn" style="width:100%; margin-top:15px" onclick="submitSync()">🚀 立即推送到小鸡</button>
-                <button type="button" class="btn" style="width:100%; margin-top:10px; background:#2a2d3e" onclick="closeEdit()">取消</button>
+                <input type="text" name="remark" value="V45_STABLE">
+                <input type="number" name="port" value="12345">
+                <select name="protocol"><option value="vless">VLESS</option></select>
+                <input type="text" name="uuid" id="uuid">
+                <button type="button" class="btn" onclick="submitSync()">🚀 立即推送</button>
+                <button type="button" class="btn" style="background:#2a2d3e" onclick="closeEdit()">取消</button>
             </form>
         </div>
     </div>
-
     <script>
-        function openEdit(ip) {
-            document.getElementById('target_ip').value = ip;
-            document.getElementById('uuid').value = '{{ uuid }}';
-            document.getElementById('editModal').style.display = 'block';
-        }
+        function openEdit(ip) { document.getElementById('target_ip').value = ip; document.getElementById('uuid').value = '{{ uuid }}'; document.getElementById('editModal').style.display = 'block'; }
         function closeEdit() { document.getElementById('editModal').style.display = 'none'; }
         async function submitSync() {
             const formData = new FormData(document.getElementById('configForm'));
             const data = Object.fromEntries(formData.entries());
-            const resp = await fetch('/send_v2', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data)
-            });
-            const res = await resp.json();
-            alert(res.msg);
-            closeEdit();
+            const resp = await fetch('/send_v2', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+            const res = await resp.json(); alert(res.msg); closeEdit();
         }
     </script>
 </body>
@@ -217,9 +252,7 @@ def login():
     return '<h2>MultiX Login</h2><form method="post">User: <input name="u"><br>Pass: <input name="p" type="password"><br><button>Login</button></form>'
 
 @app.route('/logout')
-def logout():
-    session.clear()
-    return redirect('/login')
+def logout(): session.clear(); return redirect('/login')
 
 @app.route('/')
 def index():
@@ -234,16 +267,13 @@ def send_v2():
     node_data = {
         "remark": f"MX-{req['remark']}", "port": int(req['port']), "protocol": req['protocol'],
         "settings": json.dumps({"clients": [{"id": req['uuid'], "flow": "xtls-rprx-vision"}], "decryption": "none"}),
-        "stream_settings": json.dumps({
-            "network": "tcp", "security": "reality",
-            "realitySettings": {"show": False, "dest": "www.microsoft.com:443", "serverNames": ["www.microsoft.com"], "privateKey": "YOUR_PRIVATE_KEY", "shortIds": ["abcdef123456"]}
-        }),
+        "stream_settings": json.dumps({"network": "tcp", "security": "reality", "realitySettings": {"show": False, "dest": "www.microsoft.com:443", "serverNames": ["www.microsoft.com"], "privateKey": "YOUR_KEY", "shortIds": ["abcdef123456"]}}),
         "sniffing": json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic"]})
     }
     payload = json.dumps({"action": "sync_node", "data": node_data, "token": AUTH_TOKEN})
     if target_ip in AGENTS:
         LOOP.call_soon_threadsafe(asyncio.create_task, AGENTS[target_ip]['ws'].send(payload))
-        return jsonify({"msg": f"已成功推送到 {target_ip}"})
+        return jsonify({"msg": f"已推送至 {target_ip}"})
     return jsonify({"msg": "节点不在线"}), 404
 
 async def ws_server(websocket):
@@ -270,32 +300,36 @@ EOF
     pkill -9 -f app.py 2>/dev/null
     nohup python3 ${INSTALL_PATH}/master/app.py > ${INSTALL_PATH}/master/master.log 2>&1 &
     
-    IPV4=$(curl -s4 https://api64.ipify.org || echo "None")
+    # 注入快捷命令
+    install_shortcut
+    
     echo -e "${G}==========================================${NC}"
-    echo -e "🎉 MultiX V4.0 主控部署成功！"
-    echo -e "🔗 面板地址: http://${IPV4}:${M_PORT}"
-    echo -e "👤 账号密码: ${M_USER} / ${M_PASS}"
+    echo -e "🎉 MultiX V4.5 主控部署成功！"
+    echo -e "🔗 面板地址: http://$(curl -s4 https://api64.ipify.org):$M_PORT"
     echo -e "🔑 鉴权 Token: ${Y}${M_TOKEN}${NC}"
+    echo -e "⌨️  快捷命令: ${G}multix${NC}"
     echo -e "${G}==========================================${NC}"
     read -p "按回车返回菜单"
 }
 
-# --- 被控端安装 (保持逻辑一致) ---
+# --- 安装被控端 (保留 V4.0 逻辑) ---
 install_agent() {
-    echo -e "${G}--- 被控端安装 (V4.0 自愈版) ---${NC}"
-    read -p "请输入主控 Token: " A_TOKEN
+    echo -e "${G}--- 被控端安装 (V4.5 极客版) ---${NC}"
+    read -p "请输入主控端通信 Token: " A_TOKEN
     read -p "自定义面板端口 [默认 2053]: " P_WEB
     P_WEB=${P_WEB:-2053}
+
     systemctl stop x-ui 2>/dev/null
     systemctl disable x-ui 2>/dev/null
     fuser -k ${P_WEB}/tcp 2096/tcp 2>/dev/null
     apt update && apt install -y sqlite3 docker.io psmisc lsof
     mkdir -p ${INSTALL_PATH}/agent/db_data
     docker rm -f 3x-ui multix-agent 2>/dev/null
+    
     docker run -d --name 3x-ui --restart always --network host \
       -e XUI_PORT=${P_WEB} \
       -v ${INSTALL_PATH}/agent/db_data:/etc/x-ui ghcr.io/mhsanaei/3x-ui:latest
-    
+
     cat > ${INSTALL_PATH}/agent/agent.py <<EOF
 import asyncio, json, sqlite3, os, psutil, websockets, docker, time
 MASTER_WS = "ws://${MASTER_DOMAIN}:8888"
@@ -341,7 +375,45 @@ EOF
     docker run -d --name multix-agent --restart always --network host \
       -v /var/run/docker.sock:/var/run/docker.sock -v ${INSTALL_PATH}/agent:/app \
       -v ${INSTALL_PATH}/agent/db_data:/app/db_share multix-agent-image
-    echo -e "${G}✅ 被控端部署完成！${NC}"
+    
+    install_shortcut
+    echo -e "${G}✅ 被控端部署完成！⌨️  快捷命令: multix${NC}"
+    read -p "按回车返回..."
 }
 
-while true; do show_menu; case $choice in 1) install_master ;; 3) install_agent ;; 7) smart_repair ;; 5) exit 0 ;; esac; done
+# --- 快捷命令安装函数 ---
+install_shortcut() {
+    # 将当前运行的脚本复制到系统路径
+    cat > /usr/local/bin/multix <<EOF
+#!/bin/bash
+bash <(cat <<'INNEREOF'
+$(cat "$0")
+INNEREOF
+)
+EOF
+    chmod +x /usr/local/bin/multix
+}
+
+# --- 执行主流程 ---
+while true; do
+    show_menu
+    case $choice in
+        1) install_master ;;
+        2) install_agent ;;
+        3) show_config ;;
+        4) show_status ;;
+        5) manage_service ;;
+        7) smart_repair ;;
+        9) 
+            read -p "确认卸载？(y/n): " confirm
+            if [ "$confirm" == "y" ]; then
+                pkill -f "master/app.py"
+                docker rm -f 3x-ui multix-agent 2>/dev/null
+                rm -rf $INSTALL_PATH /usr/local/bin/multix
+                echo "已完全卸载。"
+                exit 0
+            fi ;;
+        0) exit 0 ;;
+        *) echo "无效选项" ; sleep 1 ;;
+    esac
+done
