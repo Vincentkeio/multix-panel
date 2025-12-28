@@ -1,14 +1,15 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V62.0 (Safe-Write Architecture)
-# Fix: Used quoted 'EOF' for HTML templates to prevent Shell corruption of Vue JS.
-# Fix: Added explicit error handling in Flask routes.
+# MultiX Pro Script V62.1 (Dependency Reset & Syntax Hard-Fix)
+# Fix 1: Force uninstall incompatible Flask/Werkzeug versions.
+# Fix 2: Re-install stable Flask 2.3.3 to prevent 500/503 errors.
+# Fix 3: Remove all indentation in cat <<EOF to prevent Python SyntaxError.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V62.0"
+SH_VER="V62.1"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -34,20 +35,26 @@ resolve_ip() {
 }
 pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
-# --- [ 2. 环境修复 ] ---
+# --- [ 2. 环境修复 (暴力重置依赖) ] ---
 fix_dual_stack() {
     if grep -q "net.ipv6.bindv6only" /etc/sysctl.conf; then sed -i 's/net.ipv6.bindv6only.*/net.ipv6.bindv6only = 0/' /etc/sysctl.conf
     else echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf; fi
     sysctl -p >/dev/null 2>&1
 }
+
 install_dependencies() {
-    echo -e "${YELLOW}[INFO]${PLAIN} 检查依赖..."
+    echo -e "${YELLOW}[INFO]${PLAIN} 正在清理旧环境..."
     check_sys
     if [[ "${RELEASE}" == "centos" ]]; then yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git
     else apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git; fi
     
-    # [V62] 锁定 Flask 版本以防 Werkzeug 兼容性问题
-    pip3 install "flask<3.0.0" "werkzeug<3.0.0" websockets psutil --break-system-packages >/dev/null 2>&1 || pip3 install "flask<3.0.0" "werkzeug<3.0.0" websockets psutil >/dev/null 2>&1
+    # [V62.1 关键] 强制卸载可能冲突的高版本库
+    pip3 uninstall -y flask werkzeug jinja2 itsdangerous click blinker websockets psutil >/dev/null 2>&1
+    
+    echo -e "${YELLOW}[INFO]${PLAIN} 安装稳定版依赖 (Flask 2.3.3)..."
+    # 指定版本安装，防止 API 变动导致的 500/503
+    pip3 install "Flask==2.3.3" "Werkzeug==2.3.7" "Jinja2==3.1.2" "websockets==11.0.3" "psutil" --break-system-packages >/dev/null 2>&1 || \
+    pip3 install "Flask==2.3.3" "Werkzeug==2.3.7" "Jinja2==3.1.2" "websockets==11.0.3" "psutil" >/dev/null 2>&1
     
     if ! command -v docker &> /dev/null; then curl -fsSL https://get.docker.com | bash; systemctl start docker; fi
     fix_dual_stack
@@ -55,7 +62,7 @@ install_dependencies() {
 
 # --- [ 3. 深度清理 ] ---
 deep_cleanup() {
-    echo -e "${RED}⚠️  警告：清理所有组件！${PLAIN}"; read -p "确认? [y/N]: " confirm
+    echo -e "${RED}⚠️  警告：此操作将删除所有 MultiX 组件！${PLAIN}"; read -p "确认? [y/N]: " confirm
     [[ "$confirm" != "y" ]] && return
     systemctl stop multix-master 2>/dev/null; rm -f /etc/systemd/system/multix-master.service
     systemctl daemon-reload
@@ -69,12 +76,13 @@ deep_cleanup() {
 service_manager() {
     while true; do
         clear; echo -e "${SKYBLUE}⚙️ 服务管理${PLAIN}"
-        echo " 1. 启动主控  2. 停止主控  3. 重启主控  4. 主控日志"
+        echo " 1. 启动主控  2. 停止主控  3. 重启主控  4. 主控日志 (排错用)"
         echo " 5. 重启被控  6. 被控日志  0. 返回"
         read -p "选择: " s
         case $s in
             1) systemctl start multix-master && echo "Done" ;; 2) systemctl stop multix-master && echo "Done" ;;
-            3) systemctl restart multix-master && echo "Done" ;; 4) journalctl -u multix-master -n 20 --no-pager ;;
+            3) systemctl restart multix-master && echo "Done" ;; 
+            4) echo "--- 最后 50 行日志 ---"; journalctl -u multix-master -n 50 --no-pager ;;
             5) docker restart multix-agent && echo "Done" ;; 6) docker logs multix-agent --tail 20 ;; 0) break ;;
         esac; read -n 1 -s -r -p "继续..."
     done; main_menu
@@ -109,7 +117,7 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V62 分段写入技术) ] ---
+# --- [ 6. 主控安装 (格式硬修正) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
@@ -123,19 +131,23 @@ install_master() {
     
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V62 安全写入模式)...${PLAIN}"
+    echo -e "${YELLOW}🛰️ 部署主控 (V62.1 格式硬修正版)...${PLAIN}"
     
-    # 1. 写入 Python 头部 (需要 Bash 变量 $M_ROOT)
-    cat > $M_ROOT/master/app.py <<EOF
-import json, asyncio, psutil, os, socket, subprocess, base64, traceback
+    # [V62.1] 使用单引号 'EOF' 防止变量展开
+    # 并且所有 Python 代码顶格写，防止缩进错误
+    cat > $M_ROOT/master/app.py <<'EOF'
+import json, asyncio, psutil, os, socket, subprocess, base64, logging
 from flask import Flask, render_template_string, request, session, redirect, jsonify
 import websockets
 from threading import Thread
 
+# 设置日志，方便排查 500 错误
+logging.basicConfig(level=logging.DEBUG)
+
 def load_conf():
     c = {}
     try:
-        with open('$M_ROOT/.env') as f:
+        with open('/opt/multix_mvp/.env') as f:
             for l in f:
                 if '=' in l: k,v = l.strip().split('=', 1); c[k] = v.strip("'\"")
     except: pass
@@ -160,46 +172,37 @@ def gen_key():
     t = request.json.get('type')
     try:
         if t == 'reality':
-            # 尝试调用 xray，失败则返回空
             out = subprocess.check_output("xray x25519 || echo 'Private key: x Public key: x'", shell=True).decode()
-            priv = out.split("Private key:")[1].split()[0].strip()
-            pub = out.split("Public key:")[1].split()[0].strip()
-            return jsonify({"private": priv, "public": pub})
+            return jsonify({"private": out.split("Private key:")[1].split()[0].strip(), "public": out.split("Public key:")[1].split()[0].strip()})
         elif t == 'ss-128': return jsonify({"key": base64.b64encode(os.urandom(16)).decode()})
         elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
-    except: return jsonify({"key": "", "private": "Please Install Xray", "public": ""})
+    except: return jsonify({"key": "", "private": "", "public": ""})
 
-# HTML 变量占位符，下文填充
-LOGIN_T = ""
-HTML_T = ""
-EOF
-
-    # 2. 写入 HTML 模板 (使用 'EOF' 阻止 Shell 篡改 Vue 代码)
-    cat >> $M_ROOT/master/app.py <<'EOF'
+# HTML 模板变量
 LOGIN_T = """
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8"><title>MultiX Login</title>
-    <style>
-        body { margin: 0; height: 100vh; background: #050505; display: flex; align-items: center; justify-content: center; font-family: sans-serif; color: #fff; }
-        .login-box { background: rgba(20, 20, 20, 0.8); border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 40px; width: 320px; backdrop-filter: blur(10px); box-shadow: 0 20px 50px rgba(0,0,0,0.5); text-align: center; }
-        h1 { font-style: italic; margin-bottom: 30px; font-size: 28px; background: linear-gradient(45deg, #3b82f6, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 900; }
-        input { background: #111; border: 1px solid #333; width: 100%; padding: 12px 15px; border-radius: 8px; color: #fff; margin-bottom: 15px; outline: none; box-sizing: border-box; transition: 0.3s; }
-        input:focus { border-color: #3b82f6; box-shadow: 0 0 10px rgba(59,130,246,0.3); }
-        button { width: 100%; padding: 12px; border-radius: 8px; border: none; background: linear-gradient(90deg, #3b82f6, #2563eb); color: #fff; font-weight: bold; cursor: pointer; transition: 0.3s; margin-top: 10px; }
-        button:hover { filter: brightness(1.2); transform: scale(1.02); }
-    </style>
+<meta charset="UTF-8"><title>MultiX Login</title>
+<style>
+body { margin: 0; height: 100vh; background: #050505; display: flex; align-items: center; justify-content: center; font-family: sans-serif; color: #fff; }
+.login-box { background: rgba(20, 20, 20, 0.8); border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 40px; width: 320px; backdrop-filter: blur(10px); box-shadow: 0 20px 50px rgba(0,0,0,0.5); text-align: center; }
+h1 { font-style: italic; margin-bottom: 30px; font-size: 28px; background: linear-gradient(45deg, #3b82f6, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 900; }
+input { background: #111; border: 1px solid #333; width: 100%; padding: 12px 15px; border-radius: 8px; color: #fff; margin-bottom: 15px; outline: none; box-sizing: border-box; transition: 0.3s; }
+input:focus { border-color: #3b82f6; box-shadow: 0 0 10px rgba(59,130,246,0.3); }
+button { width: 100%; padding: 12px; border-radius: 8px; border: none; background: linear-gradient(90deg, #3b82f6, #2563eb); color: #fff; font-weight: bold; cursor: pointer; transition: 0.3s; margin-top: 10px; }
+button:hover { filter: brightness(1.2); transform: scale(1.02); }
+</style>
 </head>
 <body>
-    <div class="login-box">
-        <h1>MultiX Pro</h1>
-        <form method="post">
-            <input type="text" name="u" placeholder="Username" required autocomplete="off">
-            <input type="password" name="p" placeholder="Password" required>
-            <button type="submit">ENTER SYSTEM</button>
-        </form>
-    </div>
+<div class="login-box">
+<h1>MultiX Pro</h1>
+<form method="post">
+<input type="text" name="u" placeholder="Username" required autocomplete="off">
+<input type="password" name="p" placeholder="Password" required>
+<button type="submit">ENTER SYSTEM</button>
+</form>
+</div>
 </body>
 </html>
 """
@@ -208,235 +211,97 @@ HTML_T = """
 <!DOCTYPE html>
 <html class="dark">
 <head>
-    <meta charset="UTF-8"><title>MultiX Console</title>
-    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
-    <link rel="stylesheet" href="https://unpkg.com/element-plus/theme-chalk/dark/css-vars.css">
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <script src="https://unpkg.com/element-plus"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { background: #020202; color: #cfd3dc; margin: 0; padding: 20px; font-family: sans-serif; }
-        .glass-card { background: #141414; border: 1px solid #2c2c2c; border-radius: 12px; }
-        :root { --el-bg-color: #141414; --el-text-color-primary: #E5EAF3; --el-border-color: #333; }
-        .el-input__wrapper { background-color: #0a0a0a !important; box-shadow: 0 0 0 1px #333 inset !important; }
-    </style>
+<meta charset="UTF-8"><title>MultiX Console</title>
+<link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+<link rel="stylesheet" href="https://unpkg.com/element-plus/theme-chalk/dark/css-vars.css">
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<script src="https://unpkg.com/element-plus"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+body { background: #020202; color: #cfd3dc; margin: 0; padding: 20px; font-family: sans-serif; }
+.glass-card { background: #141414; border: 1px solid #2c2c2c; border-radius: 12px; }
+:root { --el-bg-color: #141414; --el-text-color-primary: #E5EAF3; --el-border-color: #333; }
+.el-input__wrapper { background-color: #0a0a0a !important; box-shadow: 0 0 0 1px #333 inset !important; }
+</style>
 </head>
 <body>
-    <script>
-        window.SERVER_INFO = { token: "{{ token }}", ipv4: "{{ ipv4 }}", ipv6: "{{ ipv6 }}" };
-    </script>
-
-    <div id="app">
-        <div class="flex justify-between items-center mb-8 px-4">
-            <div>
-                <h1 class="text-3xl font-black italic text-blue-500">MultiX <span class="text-white">Pro</span></h1>
-                <div class="text-xs text-zinc-500 mt-1 font-mono">
-                    TOKEN: <span class="text-blue-400">[[ sys.token ]]</span> | 
-                    IP: <span class="text-zinc-400">[[ sys.ipv4 ]]</span>
-                </div>
-            </div>
-            <div class="flex gap-4">
-                <el-tag type="info" effect="dark">CPU: [[ masterStats.CPU ]]%</el-tag>
-                <el-tag type="info" effect="dark">MEM: [[ masterStats.MEM ]]%</el-tag>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div v-for="agent in displayAgents" :key="agent.ip" class="glass-card p-6 relative">
-                <div class="flex justify-between items-start mb-4">
-                    <div>
-                        <div class="text-lg font-bold text-white cursor-pointer hover:text-blue-400" @click="editAlias(agent)">[[ agent.alias || 'Node' ]] ✎</div>
-                        <div class="text-xs text-zinc-500 font-mono mt-1">[[ agent.ip ]]</div>
-                    </div>
-                    <div :class="['h-2 w-2 rounded-full', agent.syncing ? 'bg-yellow-500 animate-pulse' : (agent.nodes ? 'bg-green-500' : 'bg-red-500')]"></div>
-                </div>
-                <div class="grid grid-cols-2 gap-4 mb-6">
-                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">CPU</div><div class="text-sm font-bold text-blue-400">[[ agent.stats.cpu ]]%</div></div>
-                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">MEM</div><div class="text-sm font-bold text-purple-400">[[ agent.stats.mem ]]%</div></div>
-                </div>
-                <el-button type="primary" size="small" @click="openManage(agent)" class="w-full">Manage ([[ agent.nodes.length ]])</el-button>
-            </div>
-        </div>
-
-        <el-drawer v-model="drawerVisible" :title="activeAgent.alias + ' / Inbounds'" size="600px">
-            <div class="p-6 h-full flex flex-col">
-                <div v-if="!isEditing" class="flex-1 overflow-y-auto space-y-3">
-                    <el-empty v-if="activeAgent.nodes.length === 0" description="No Data"></el-empty>
-                    <div v-for="node in activeAgent.nodes" :key="node.id" class="bg-zinc-900 border border-white/5 p-4 rounded-lg flex justify-between items-center hover:border-blue-500/50 cursor-pointer" @click="editNode(node)">
-                        <div>
-                            <div class="flex items-center gap-2">
-                                <el-tag size="small" effect="dark">[[ node.protocol.toUpperCase() ]]</el-tag>
-                                <span class="font-bold text-sm">[[ node.remark ]]</span>
-                                <el-tag size="small" type="warning" effect="plain">[[ node.port ]]</el-tag>
-                            </div>
-                        </div>
-                        <el-button type="primary" link>Edit</el-button>
-                    </div>
-                </div>
-
-                <div v-else class="flex-1 overflow-y-auto pr-2">
-                    <el-form :model="form" label-position="top" size="large">
-                        <div class="grid grid-cols-2 gap-4">
-                            <el-form-item label="Remark"><el-input v-model="form.remark" /></el-form-item>
-                            <el-form-item label="Port"><el-input v-model.number="form.port" type="number" /></el-form-item>
-                        </div>
-                        <div class="grid grid-cols-2 gap-4">
-                            <el-form-item label="Protocol">
-                                <el-select v-model="form.protocol"><el-option value="vless">VLESS</el-option><el-option value="vmess">VMess</el-option><el-option value="shadowsocks">Shadowsocks</el-option></el-select>
-                            </el-form-item>
-                            <el-form-item label="UUID" v-if="['vless','vmess'].includes(form.protocol)">
-                                <el-input v-model="form.uuid"><template #append><el-button @click="genUUID">GEN</el-button></template></el-input>
-                            </el-form-item>
-                            <el-form-item label="Cipher" v-if="form.protocol === 'shadowsocks'">
-                                <el-select v-model="form.ssCipher">
-                                    <el-option value="aes-256-gcm">aes-256-gcm</el-option>
-                                    <el-option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</el-option>
-                                </el-select>
-                            </el-form-item>
-                        </div>
-                        <el-form-item label="Password" v-if="form.protocol === 'shadowsocks'">
-                            <el-input v-model="form.ssPass"><template #append><el-button @click="genSSKey">GEN</el-button></template></el-input>
-                        </el-form-item>
-                        <el-form-item label="Flow" v-if="form.protocol === 'vless' && form.security === 'reality'">
-                            <el-select v-model="form.flow"><el-option value="xtls-rprx-vision">xtls-rprx-vision</el-option></el-select>
-                        </el-form-item>
-
-                        <div v-if="form.protocol !== 'shadowsocks'">
-                            <el-divider content-position="left">Transport</el-divider>
-                            <div class="grid grid-cols-2 gap-4">
-                                <el-form-item label="Network"><el-select v-model="form.network"><el-option value="tcp">TCP</el-option><el-option value="ws">WebSocket</el-option></el-select></el-form-item>
-                                <el-form-item label="Security"><el-select v-model="form.security"><el-option value="none">None</el-option><el-option value="tls">TLS</el-option><el-option value="reality" v-if="form.protocol === 'vless'">Reality</el-option></el-select></el-form-item>
-                            </div>
-                            <div v-if="form.security === 'reality'" class="bg-blue-900/10 p-4 rounded-lg border border-blue-500/20 mb-4">
-                                <el-form-item label="Dest"><el-input v-model="form.dest" /></el-form-item>
-                                <el-form-item label="SNI"><el-input v-model="form.serverNames" /></el-form-item>
-                                <el-form-item label="Key"><el-input v-model="form.privKey"><template #append><el-button @click="genRealityPair">PAIR</el-button></template></el-input></el-form-item>
-                                <el-form-item label="SID"><el-input v-model="form.shortIds" /></el-form-item>
-                            </div>
-                            <div v-if="form.network === 'ws'" class="bg-zinc-800/30 p-4 rounded-lg border border-zinc-700 mb-4">
-                                <el-form-item label="Path"><el-input v-model="form.wsPath" /></el-form-item>
-                                <el-form-item label="Host"><el-input v-model="form.wsHost" /></el-form-item>
-                            </div>
-                        </div>
-
-                        <el-divider content-position="left">Limits</el-divider>
-                        <div class="grid grid-cols-2 gap-4">
-                            <el-form-item label="Traffic (GB)"><el-input v-model="form.totalGB" type="number" /></el-form-item>
-                            <el-form-item label="Expiry"><el-date-picker v-model="form.expiryDate" type="date" style="width: 100%" /></el-form-item>
-                        </div>
-                    </el-form>
-                </div>
-
-                <div class="mt-4 pt-4 border-t border-zinc-800 flex gap-3">
-                    <el-button v-if="isEditing" @click="isEditing = false" class="flex-1">Back</el-button>
-                    <el-button v-if="isEditing" type="primary" @click="saveNode" class="flex-1" :loading="activeAgent.syncing">Save</el-button>
-                    <el-button v-else type="primary" @click="openAdd" class="w-full">Add</el-button>
-                </div>
-            </div>
-        </el-drawer>
-    </div>
-
-    <script>
-        const { createApp, ref, computed, onMounted, reactive } = Vue;
-        const App = {
-            setup() {
-                const sys = ref(window.SERVER_INFO || {});
-                const agents = ref({}); const masterStats = ref({ CPU:0, MEM:0 });
-                const drawerVisible = ref(false); const isEditing = ref(false);
-                const activeAgent = ref({ nodes: [] }); const form = reactive({});
-                const mockAgent = ref({ ip: 'MOCK-SERVER', alias: 'Demo', stats: {cpu:10,mem:20}, nodes: [], syncing: false });
-
-                const displayAgents = computed(() => {
-                    const list = [mockAgent.value]; for(let k in agents.value) { agents.value[k].ip=k; list.push(agents.value[k]); } return list;
-                });
-
-                const update = async () => {
-                    try { const r = await fetch('/api/state'); const d = await r.json(); 
-                    masterStats.value = d.master.stats;
-                    for(let ip in d.agents) {
-                        if(!agents.value[ip] || !agents.value[ip].syncing) agents.value[ip] = { ...agents.value[ip], ...d.agents[ip], syncing: false };
-                    } } catch(e){}
-                };
-
-                const openManage = (agent) => { activeAgent.value = agent; drawerVisible.value = true; isEditing.value = false; };
-                const openAdd = () => { resetForm(); isEditing.value = true; };
-                const editAlias = (agent) => { const n = prompt("Rename:", agent.alias); if(n) agent.alias = n; };
-
-                const resetForm = () => {
-                    Object.assign(form, {
-                        id: null, remark: 'New', port: Math.floor(Math.random()*10000)+10000, protocol: 'vless',
-                        uuid: crypto.randomUUID(), email: 'u@mx.com', flow: 'xtls-rprx-vision',
-                        ssCipher: '2022-blake3-aes-128-gcm', ssPass: '', network: 'tcp', security: 'reality',
-                        dest: 'www.microsoft.com:443', serverNames: 'www.microsoft.com', privKey: '', shortIds: '',
-                        wsPath: '/', totalGB: '', expiryDate: null
-                    });
-                    genRealityPair();
-                };
-
-                const editNode = (node) => {
-                    const s = node.settings||{}; const ss = node.stream_settings||{}; const c = s.clients?s.clients[0]:{};
-                    Object.assign(form, {
-                        id: node.id, remark: node.remark, port: node.port, protocol: node.protocol,
-                        uuid: c.id, email: c.email, flow: c.flow, ssCipher: s.method, ssPass: s.password,
-                        network: ss.network||'tcp', security: ss.security||'none',
-                        dest: ss.realitySettings?.dest, serverNames: (ss.realitySettings?.serverNames||[]).join(','),
-                        privKey: ss.realitySettings?.privateKey, shortIds: (ss.realitySettings?.shortIds||[]).join(','),
-                        wsPath: ss.wsSettings?.path, wsHost: ss.wsSettings?.headers?.Host,
-                        totalGB: node.total>0?(node.total/1073741824).toFixed(2):'', expiryDate: node.expiry_time>0?new Date(node.expiry_time):null
-                    });
-                    isEditing.value = true;
-                };
-
-                const saveNode = async () => {
-                    if(activeAgent.value.ip.includes('MOCK')) return;
-                    activeAgent.value.syncing = true;
-                    
-                    const clients = []; if(form.protocol!=='shadowsocks') clients.push({ id: form.uuid, email: form.email, flow: form.flow, alterId: 0 });
-                    const stream = { network: form.network, security: form.security };
-                    if(form.security==='reality') stream.realitySettings = { dest: form.dest, privateKey: form.privKey, shortIds: form.shortIds?form.shortIds.split(','):[], serverNames: form.serverNames?form.serverNames.split(','):[], fingerprint: 'chrome' };
-                    if(form.network==='ws') stream.wsSettings = { path: form.wsPath, headers: { Host: form.wsHost } };
-                    
-                    const settings = form.protocol==='shadowsocks' ? { method: form.ssCipher, password: form.ssPass, network: "tcp,udp" } : { clients, decryption: "none" };
-                    
-                    const payload = {
-                        id: form.id, remark: form.remark, port: parseInt(form.port), protocol: form.protocol,
-                        total: form.totalGB>0?Math.floor(form.totalGB*1073741824):0, expiry_time: form.expiryDate?new Date(form.expiryDate).getTime():0,
-                        settings: JSON.stringify(settings), stream_settings: JSON.stringify(stream),
-                        sniffing: JSON.stringify({ enabled: true, destOverride: ["http","tls","quic"] })
-                    };
-
-                    try { await fetch('/api/sync', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ip: activeAgent.value.ip, config: payload }) }); setTimeout(() => { activeAgent.value.syncing = false; drawerVisible.value = false; }, 3000); } catch(e) { activeAgent.value.syncing = false; }
-                };
-
-                const genUUID = () => form.uuid = crypto.randomUUID();
-                const genRealityPair = async () => { try { const r = await fetch('/api/gen_key', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'reality'})}); const d=await r.json(); if(d.private){form.privKey=d.private;form.pubKey=d.public;} } catch(e){} };
-                const genSSKey = async () => { let t='ss-128'; if(form.ssCipher.includes('256')) t='ss-256'; try { const r = await fetch('/api/gen_key', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:t})}); const d=await r.json(); form.ssPass=d.key; } catch(e){} };
-
-                onMounted(() => { update(); setInterval(update, 3000); });
-                return { masterStats, sys, drawerVisible, isEditing, activeAgent, displayAgents, form, openManage, openAdd, editAlias, editNode, saveNode, genUUID, genRealityPair, genSSKey };
-            }
-        };
-        const app = createApp(App); 
-        app.use(ElementPlus);
-        // Vue Delimiters Change: [[ ]]
-        app.config.compilerOptions.delimiters = ['[[', ']]'];
-        app.mount('#app');
-    </script>
+<script>
+window.SERVER_INFO = { token: "{{ token }}", ipv4: "{{ ipv4 }}", ipv6: "{{ ipv6 }}" };
+</script>
+<div id="app">
+<div class="flex justify-between items-center mb-8 px-4">
+<div><h1 class="text-3xl font-black italic text-blue-500">MultiX <span class="text-white">Pro</span></h1><div class="text-xs text-zinc-500 mt-1 font-mono">TOKEN: <span class="text-blue-400">[[ sys.token ]]</span> | IP: <span class="text-zinc-400">[[ sys.ipv4 ]]</span></div></div>
+<div class="flex gap-4"><el-tag type="info" effect="dark">CPU: [[ masterStats.CPU ]]%</el-tag><el-tag type="info" effect="dark">MEM: [[ masterStats.MEM ]]%</el-tag></div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+<div v-for="agent in displayAgents" :key="agent.ip" class="glass-card p-6 relative">
+<div class="flex justify-between items-start mb-4"><div><div class="text-lg font-bold text-white cursor-pointer hover:text-blue-400" @click="editAlias(agent)">[[ agent.alias || 'Node' ]] ✎</div><div class="text-xs text-zinc-500 font-mono mt-1">[[ agent.ip ]]</div></div><div :class="['h-2 w-2 rounded-full', agent.syncing ? 'bg-yellow-500 animate-pulse' : (agent.nodes ? 'bg-green-500' : 'bg-red-500')]"></div></div>
+<div class="grid grid-cols-2 gap-4 mb-6"><div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">CPU</div><div class="text-sm font-bold text-blue-400">[[ agent.stats.cpu ]]%</div></div><div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">MEM</div><div class="text-sm font-bold text-purple-400">[[ agent.stats.mem ]]%</div></div></div>
+<el-button type="primary" size="small" @click="openManage(agent)" class="w-full">Manage ([[ agent.nodes.length ]])</el-button>
+</div>
+</div>
+<el-drawer v-model="drawerVisible" :title="activeAgent.alias + ' / Inbounds'" size="600px">
+<div class="p-6 h-full flex flex-col">
+<div v-if="!isEditing" class="flex-1 overflow-y-auto space-y-3">
+<el-empty v-if="activeAgent.nodes.length === 0" description="No Data"></el-empty>
+<div v-for="node in activeAgent.nodes" :key="node.id" class="bg-zinc-900 border border-white/5 p-4 rounded-lg flex justify-between items-center hover:border-blue-500/50 cursor-pointer" @click="editNode(node)">
+<div><div class="flex items-center gap-2"><el-tag size="small" effect="dark">[[ node.protocol.toUpperCase() ]]</el-tag><span class="font-bold text-sm">[[ node.remark ]]</span><el-tag size="small" type="warning" effect="plain">[[ node.port ]]</el-tag></div></div><el-button type="primary" link>Edit</el-button>
+</div>
+</div>
+<div v-else class="flex-1 overflow-y-auto pr-2">
+<el-form :model="form" label-position="top" size="large">
+<div class="grid grid-cols-2 gap-4"><el-form-item label="Remark"><el-input v-model="form.remark" /></el-form-item><el-form-item label="Port"><el-input v-model.number="form.port" type="number" /></el-form-item></div>
+<div class="grid grid-cols-2 gap-4"><el-form-item label="Protocol"><el-select v-model="form.protocol"><el-option value="vless" label="VLESS"></el-option><el-option value="vmess" label="VMess"></el-option><el-option value="shadowsocks" label="Shadowsocks"></el-option></el-select></el-form-item><el-form-item label="UUID" v-if="['vless','vmess'].includes(form.protocol)"><el-input v-model="form.uuid"><template #append><el-button @click="genUUID">GEN</el-button></template></el-input></el-form-item><el-form-item label="Cipher" v-if="form.protocol === 'shadowsocks'"><el-select v-model="form.ssCipher"><el-option value="aes-256-gcm">aes-256-gcm</el-option><el-option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</el-option></el-select></el-form-item></div>
+<el-form-item label="Password" v-if="form.protocol === 'shadowsocks'"><el-input v-model="form.ssPass"><template #append><el-button @click="genSSKey">GEN</el-button></template></el-input></el-form-item>
+<el-form-item label="Flow" v-if="form.protocol === 'vless' && form.security === 'reality'"><el-select v-model="form.flow"><el-option value="xtls-rprx-vision">xtls-rprx-vision</el-option></el-select></el-form-item>
+<div v-if="form.protocol !== 'shadowsocks'">
+<el-divider content-position="left">Transport</el-divider>
+<div class="grid grid-cols-2 gap-4"><el-form-item label="Network"><el-select v-model="form.network"><el-option value="tcp">TCP</el-option><el-option value="ws">WebSocket</el-option></el-select></el-form-item><el-form-item label="Security"><el-select v-model="form.security"><el-option value="none">None</el-option><el-option value="tls">TLS</el-option><el-option value="reality" v-if="form.protocol === 'vless'">Reality</el-option></el-select></el-form-item></div>
+<div v-if="form.security === 'reality'" class="bg-blue-900/10 p-4 rounded-lg border border-blue-500/20 mb-4"><el-form-item label="Dest"><el-input v-model="form.dest" /></el-form-item><el-form-item label="SNI"><el-input v-model="form.serverNames" /></el-form-item><el-form-item label="Key"><el-input v-model="form.privKey"><template #append><el-button @click="genRealityPair">PAIR</el-button></template></el-input></el-form-item><el-form-item label="SID"><el-input v-model="form.shortIds" /></el-form-item></div>
+<div v-if="form.network === 'ws'" class="bg-zinc-800/30 p-4 rounded-lg border border-zinc-700 mb-4"><el-form-item label="Path"><el-input v-model="form.wsPath" /></el-form-item><el-form-item label="Host"><el-input v-model="form.wsHost" /></el-form-item></div>
+</div>
+<el-divider content-position="left">Limits</el-divider>
+<div class="grid grid-cols-2 gap-4"><el-form-item label="Traffic (GB)"><el-input v-model="form.totalGB" type="number" /></el-form-item><el-form-item label="Expiry"><el-date-picker v-model="form.expiryDate" type="date" style="width: 100%" /></el-form-item></div>
+</el-form>
+</div>
+<div class="mt-4 pt-4 border-t border-zinc-800 flex gap-3"><el-button v-if="isEditing" @click="isEditing = false" class="flex-1">Back</el-button><el-button v-if="isEditing" type="primary" @click="saveNode" class="flex-1" :loading="activeAgent.syncing">Save</el-button><el-button v-else type="primary" @click="openAdd" class="w-full">Add</el-button></div>
+</div>
+</el-drawer>
+</div>
+<script>
+const { createApp, ref, computed, onMounted, reactive } = Vue;
+const App = {
+setup() {
+const sys = ref(window.SERVER_INFO || {});
+const agents = ref({}); const masterStats = ref({ CPU:0, MEM:0 });
+const drawerVisible = ref(false); const isEditing = ref(false);
+const activeAgent = ref({ nodes: [] }); const form = reactive({});
+const mockAgent = ref({ ip: 'MOCK-SERVER', alias: 'Demo', stats: {cpu:10,mem:20}, nodes: [], syncing: false });
+const displayAgents = computed(() => { const list = [mockAgent.value]; for(let k in agents.value) { agents.value[k].ip=k; list.push(agents.value[k]); } return list; });
+const update = async () => { try { const r = await fetch('/api/state'); const d = await r.json(); masterStats.value = d.master.stats; for(let ip in d.agents) { if(!agents.value[ip] || !agents.value[ip].syncing) agents.value[ip] = { ...agents.value[ip], ...d.agents[ip], syncing: false }; } } catch(e){} };
+const openManage = (agent) => { activeAgent.value = agent; drawerVisible.value = true; isEditing.value = false; };
+const openAdd = () => { resetForm(); isEditing.value = true; };
+const editAlias = (agent) => { const n = prompt("Rename:", agent.alias); if(n) agent.alias = n; };
+const resetForm = () => { Object.assign(form, { id: null, remark: 'New', port: Math.floor(Math.random()*10000)+10000, protocol: 'vless', uuid: crypto.randomUUID(), email: 'u@mx.com', flow: 'xtls-rprx-vision', ssCipher: '2022-blake3-aes-128-gcm', ssPass: '', network: 'tcp', security: 'reality', dest: 'www.microsoft.com:443', serverNames: 'www.microsoft.com', privKey: '', shortIds: '', wsPath: '/', totalGB: '', expiryDate: null }); genRealityPair(); };
+const editNode = (node) => { const s = node.settings||{}; const ss = node.stream_settings||{}; const c = s.clients?s.clients[0]:{}; Object.assign(form, { id: node.id, remark: node.remark, port: node.port, protocol: node.protocol, uuid: c.id, email: c.email, flow: c.flow, ssCipher: s.method, ssPass: s.password, network: ss.network||'tcp', security: ss.security||'none', dest: ss.realitySettings?.dest, serverNames: (ss.realitySettings?.serverNames||[]).join(','), privKey: ss.realitySettings?.privateKey, shortIds: (ss.realitySettings?.shortIds||[]).join(','), wsPath: ss.wsSettings?.path, wsHost: ss.wsSettings?.headers?.Host, totalGB: node.total>0?(node.total/1073741824).toFixed(2):'', expiryDate: node.expiry_time>0?new Date(node.expiry_time):null }); isEditing.value = true; };
+const saveNode = async () => { if(activeAgent.value.ip.includes('MOCK')) return; activeAgent.value.syncing = true; const clients = []; if(form.protocol!=='shadowsocks') clients.push({ id: form.uuid, email: form.email, flow: form.flow, alterId: 0 }); const stream = { network: form.network, security: form.security }; if(form.security==='reality') stream.realitySettings = { dest: form.dest, privateKey: form.privKey, shortIds: form.shortIds?form.shortIds.split(','):[], serverNames: form.serverNames?form.serverNames.split(','):[], fingerprint: 'chrome' }; if(form.network==='ws') stream.wsSettings = { path: form.wsPath, headers: { Host: form.wsHost } }; const settings = form.protocol==='shadowsocks' ? { method: form.ssCipher, password: form.ssPass, network: "tcp,udp" } : { clients, decryption: "none" }; const payload = { id: form.id, remark: form.remark, port: parseInt(form.port), protocol: form.protocol, total: form.totalGB>0?Math.floor(form.totalGB*1073741824):0, expiry_time: form.expiryDate?new Date(form.expiryDate).getTime():0, settings: JSON.stringify(settings), stream_settings: JSON.stringify(stream), sniffing: JSON.stringify({ enabled: true, destOverride: ["http","tls","quic"] }) }; try { await fetch('/api/sync', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ip: activeAgent.value.ip, config: payload }) }); setTimeout(() => { activeAgent.value.syncing = false; drawerVisible.value = false; }, 3000); } catch(e) { activeAgent.value.syncing = false; } };
+const genUUID = () => form.uuid = crypto.randomUUID();
+const genRealityPair = async () => { try { const r = await fetch('/api/gen_key', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'reality'})}); const d=await r.json(); if(d.private){form.privKey=d.private;form.pubKey=d.public;} } catch(e){} };
+const genSSKey = async () => { let t='ss-128'; if(form.ssCipher.includes('256')) t='ss-256'; try { const r = await fetch('/api/gen_key', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:t})}); const d=await r.json(); form.ssPass=d.key; } catch(e){} };
+onMounted(() => { update(); setInterval(update, 3000); });
+return { masterStats, sys, drawerVisible, isEditing, activeAgent, displayAgents, form, openManage, openAdd, editAlias, editNode, saveNode, genUUID, genRealityPair, genSSKey };
+}
+};
+const app = createApp(App); app.use(ElementPlus); app.config.compilerOptions.delimiters = ['[[', ']]']; app.mount('#app');
+</script>
 </body></html>
-EOF
-
-    # 3. 写入 Python 尾部 (继续使用普通 EOF)
-    cat >> $M_ROOT/master/app.py <<EOF
+"""
 
 @app.route('/')
 def index():
     if not session.get('logged'): return redirect('/login')
-    # 安全捕获渲染错误
-    try:
-        s = get_sys_info()
-        return render_template_string(HTML_T, token=M_TOKEN, ipv4=s['ipv4'], ipv6=s['ipv6'])
-    except Exception as e:
-        return f"<h3>Panel Render Error</h3><pre>{traceback.format_exc()}</pre>", 500
+    s = get_sys_info()
+    return render_template_string(HTML_T, token=M_TOKEN, ipv4=s['ipv4'], ipv6=s['ipv6'])
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -492,7 +357,7 @@ EOF
     pause_back
 }
 
-# --- [ 7. 被控安装 ] ---
+# --- [ 7. 被控安装 (保持不变) ] ---
 install_agent() {
     install_dependencies; mkdir -p $M_ROOT/agent
     
@@ -582,7 +447,7 @@ sys_tools() {
 }
 
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V62.0 安全写入版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V62.1 依赖修复版)${PLAIN}"
     echo " 1. 安装 主控端 | 2. 安装 被控端"
     echo " 3. 连通测试   | 4. 被控重启"
     echo " 5. 深度清理   | 6. 环境修复"
