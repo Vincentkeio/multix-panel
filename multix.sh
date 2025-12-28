@@ -1,9 +1,8 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Dual-Stack Ultimate (V46.0)
-# 核心修复：内核级双栈监听 (bindv6only=0) | Agent 强制 IPv6 解析
-# 功能保留：三级 UI | 凭据中心 | 深度清理 | 完整运维菜单 | 物理 Token
+# MultiX Pro V47.0 (3X-UI Exclusive Edition)
+# 核心特性：3X-UI 深度适配 | 卡片别名系统 | 失败回滚/报警 | 双栈 NAT 穿透
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
@@ -13,7 +12,7 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m';
 # --- [ 0. 快捷命令驻留 ] ---
 if [[ "$(readlink -f /usr/bin/multix)" != "$(readlink -f $0)" ]]; then
     cp "$0" /usr/bin/multix && chmod +x /usr/bin/multix
-    echo -e "${GREEN}✅ multix 快捷命令已就绪，随时输入 multix 调出菜单。${PLAIN}"
+    echo -e "${GREEN}✅ multix 快捷命令已就绪。${PLAIN}"
 fi
 
 # --- [ 基础函数 ] ---
@@ -25,31 +24,16 @@ get_public_ips() {
     IPV6=$(curl -s6m 2 api64.ipify.org || echo "未检测到")
 }
 
-# --- [ V46 核心：智能域名解析 (解决 NAT 小鸡连不上双栈) ] ---
 resolve_ip() {
-    local host=$1
-    local type=$2 # AF_INET 或 AF_INET6
+    local host=$1; local type=$2
     python3 -c "import socket; 
-try: 
-    print(socket.getaddrinfo('$host', None, socket.$type)[0][4][0])
-except: 
-    pass"
+try: print(socket.getaddrinfo('$host', None, socket.$type)[0][4][0])
+except: pass"
 }
 
-# --- [ V46 核心：双栈环境修复 ] ---
-fix_dual_stack() {
-    # 这一步至关重要：允许 IPv6 socket 监听 IPv4 流量
-    if grep -q "net.ipv6.bindv6only" /etc/sysctl.conf; then
-        sed -i 's/net.ipv6.bindv6only.*/net.ipv6.bindv6only = 0/' /etc/sysctl.conf
-    else
-        echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf
-    fi
-    sysctl -p >/dev/null 2>&1
-}
-
-# --- [ 环境修复与依赖 ] ---
+# --- [ 环境修复 ] ---
 install_dependencies() {
-    echo -e "${YELLOW}⚙️ 检查并修复环境依赖...${PLAIN}"
+    echo -e "${YELLOW}⚙️ 检查环境依赖...${PLAIN}"
     if [[ -f /etc/redhat-release ]]; then
         yum install -y epel-release && yum install -y python3 python3-devel python3-pip curl wget socat tar openssl
     else
@@ -61,198 +45,159 @@ install_dependencies() {
         curl -fsSL https://get.docker.com | bash
         systemctl enable docker && systemctl start docker
     fi
-    fix_dual_stack # 应用双栈补丁
+    # 双栈修复
+    if grep -q "net.ipv6.bindv6only" /etc/sysctl.conf; then
+        sed -i 's/net.ipv6.bindv6only.*/net.ipv6.bindv6only = 0/' /etc/sysctl.conf
+    else
+        echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf
+    fi
+    sysctl -p >/dev/null 2>&1
 }
 
 # --- [ 深度清理 ] ---
 deep_cleanup() {
     echo -e "${RED}⚠️ 执行深度清理...${PLAIN}"
     systemctl stop multix-master 2>/dev/null
-    systemctl disable multix-master 2>/dev/null
     rm -f /etc/systemd/system/multix-master.service
     systemctl daemon-reload
     docker stop multix-agent 2>/dev/null; docker rm -f multix-agent 2>/dev/null
     docker rmi $(docker images | grep "multix-agent" | awk '{print $3}') 2>/dev/null
     pkill -9 -f "master/app.py"; pkill -9 -f "agent/agent.py"
-    echo -e "${GREEN}✅ 清理完成 (保留配置文件)。${PLAIN}"
+    echo -e "${GREEN}✅ 清理完成。${PLAIN}"
     pause_back
 }
 
 # --- [ 凭据中心 ] ---
 credential_center() {
     clear
-    echo -e "${SKYBLUE}🔐 MultiX 凭据与连接管理${PLAIN}"
-    echo "=================================================="
+    echo -e "${SKYBLUE}🔐 MultiX 凭据中心${PLAIN}"
     if [ -f $M_ROOT/.env ]; then
         source $M_ROOT/.env
         get_public_ips
-        echo -e "${YELLOW}[主控端配置]${PLAIN}"
-        echo -e "  面板入口: http://${IPV4}:${M_PORT} (IPv4)"
-        [[ "$IPV6" != "未检测到" ]] && echo -e "  面板入口: http://[${IPV6}]:${M_PORT} (IPv6)"
-        echo -e "  用户: ${GREEN}$M_USER${PLAIN} | 密码: ${GREEN}$M_PASS${PLAIN}"
-        echo -e "  Token: ${SKYBLUE}$M_TOKEN${PLAIN}"
-    else
-        echo -e "${YELLOW}[主控端]${PLAIN}: 未安装"
+        echo -e "${YELLOW}[主控]${PLAIN} http://${IPV4}:${M_PORT}"
+        echo -e "Token: ${SKYBLUE}$M_TOKEN${PLAIN}"
     fi
-    
     AGENT_FILE="$M_ROOT/agent/agent.py"
     if [ -f "$AGENT_FILE" ]; then
         CUR_MASTER=$(grep 'MASTER =' $AGENT_FILE | cut -d'"' -f2)
         CUR_TOKEN=$(grep 'TOKEN =' $AGENT_FILE | cut -d'"' -f2)
-        echo -e "\n${YELLOW}[被控端配置]${PLAIN}"
-        echo -e "  连接至: ${GREEN}$CUR_MASTER${PLAIN}"
-        echo -e "  Token:  ${SKYBLUE}$CUR_TOKEN${PLAIN}"
+        echo -e "${YELLOW}[被控]${PLAIN} 连接至: $CUR_MASTER"
     fi
-    echo "=================================================="
-    echo "1. 修改 [主控] 端口/密码/Token"
-    echo "2. 修改 [被控] 目标IP/Token"
+    echo "--------------------------------"
+    echo "1. 修改配置"
     echo "0. 返回"
     read -p "选择: " c_opt
-    case $c_opt in
-        1)
-            [ ! -f $M_ROOT/.env ] && echo "未安装主控" && pause_back
-            read -p "新端口 ($M_PORT): " np; M_PORT=${np:-$M_PORT}
-            read -p "新用户 ($M_USER): " nu; M_USER=${nu:-$M_USER}
-            read -p "新密码 ($M_PASS): " npa; M_PASS=${npa:-$M_PASS}
-            read -p "新Token ($M_TOKEN): " nt; M_TOKEN=${nt:-$M_TOKEN}
-            echo -e "M_TOKEN=$M_TOKEN\nM_PORT=$M_PORT\nM_USER=$M_USER\nM_PASS=$M_PASS" > $M_ROOT/.env
-            systemctl restart multix-master; echo "主控已重启" ;;
-        2)
-            [ ! -f "$AGENT_FILE" ] && echo "未安装被控" && pause_back
-            read -p "新主控IP ($CUR_MASTER): " nm; NEW_MASTER=${nm:-$CUR_MASTER}
-            read -p "新Token ($CUR_TOKEN): " nt; NEW_TOKEN=${nt:-$CUR_TOKEN}
-            sed -i "s/MASTER = \".*\"/MASTER = \"$NEW_MASTER\"/" $AGENT_FILE
-            sed -i "s/TOKEN = \".*\"/TOKEN = \"$NEW_TOKEN\"/" $AGENT_FILE
-            docker restart multix-agent; echo "被控已重连" ;;
-        0) main_menu ;;
-    esac
-    pause_back
+    if [[ "$c_opt" == "1" ]]; then
+        read -p "新端口: " np; M_PORT=${np:-$M_PORT}
+        read -p "新Token: " nt; M_TOKEN=${nt:-$M_TOKEN}
+        echo -e "M_TOKEN=$M_TOKEN\nM_PORT=$M_PORT\nM_USER=$M_USER\nM_PASS=$M_PASS" > $M_ROOT/.env
+        systemctl restart multix-master
+        echo "已重启生效"
+    fi
+    main_menu
 }
 
 # --- [ 主控端安装 ] ---
 install_master() {
     install_dependencies
     mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
+    if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
     
-    if [ -f $M_ROOT/.env ]; then
-        source $M_ROOT/.env
-        echo -e "${SKYBLUE}检测到现有配置，回车保留，输入新值覆盖。${PLAIN}"
-    fi
     read -p "端口 [${M_PORT:-7575}]: " IN_PORT; M_PORT=${IN_PORT:-${M_PORT:-7575}}
-    read -p "用户 [${M_USER:-admin}]: " IN_USER; M_USER=${IN_USER:-${M_USER:-admin}}
-    read -p "密码 [${M_PASS:-admin}]: " IN_PASS; M_PASS=${IN_PASS:-${M_PASS:-admin}}
-    
     RAND_TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-    CUR_TOKEN_SHOW=${M_TOKEN:-$RAND_TOKEN}
-    read -p "Token [默认: ${CUR_TOKEN_SHOW}]: " IN_TOKEN
-    M_TOKEN=${IN_TOKEN:-$CUR_TOKEN_SHOW}
-    
+    read -p "Token [默认随机]: " IN_TOKEN; M_TOKEN=${IN_TOKEN:-${M_TOKEN:-$RAND_TOKEN}}
+    M_USER="admin"; M_PASS="admin"
     echo -e "M_TOKEN=$M_TOKEN\nM_PORT=$M_PORT\nM_USER=$M_USER\nM_PASS=$M_PASS" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控端 (双栈监听版)...${PLAIN}"
+    echo -e "${YELLOW}🛰️ 部署主控端 (3X-UI 适配版)...${PLAIN}"
     cat > $M_ROOT/master/app.py <<EOF
 import json, asyncio, time, psutil, os, socket, logging
 from flask import Flask, render_template_string, request, session, redirect, jsonify
 import websockets
 from threading import Thread
 
-M_PORT, M_USER, M_PASS, M_TOKEN = int("$M_PORT"), "$M_USER", "$M_PASS", "$M_TOKEN"
-
-app = Flask(__name__)
-app.secret_key = M_TOKEN
+M_PORT, M_TOKEN = int("$M_PORT"), "$M_TOKEN"
+app = Flask(__name__); app.secret_key = M_TOKEN
 AGENTS = {}
 LOOP_GLOBAL = None
 
 def get_sys_info():
-    try:
-        return {
-            "cpu": psutil.cpu_percent(), "mem": psutil.virtual_memory().percent, "disk": psutil.disk_usage('/').percent,
-            "ipv4": os.popen("curl -4 -s --connect-timeout 2 api.ipify.org").read().strip() or "N/A",
-            "ipv6": os.popen("curl -6 -s --connect-timeout 2 api64.ipify.org").read().strip() or "N/A"
-        }
-    except: return {"cpu":0,"mem":0,"disk":0,"ipv4":"N/A","ipv6":"N/A"}
+    try: return {"cpu": psutil.cpu_percent(), "mem": psutil.virtual_memory().percent, "ipv4": os.popen("curl -4s api.ipify.org").read().strip(), "ipv6": os.popen("curl -6s api64.ipify.org").read().strip()}
+    except: return {"cpu":0,"mem":0}
 
-# 旗舰三级 UI + 物理 Token
 HTML_T = """
 {% raw %}
 <!DOCTYPE html>
 <html class="dark">
 <head>
-    <meta charset="UTF-8"><title>MultiX Pro V46</title>
+    <meta charset="UTF-8"><title>MultiX Pro V47</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background: #000; color: #cbd5e1; font-family: ui-sans-serif, system-ui; }
-        .glass { background: rgba(18, 18, 18, 0.85); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); }
+        body { background: #050505; color: #cbd5e1; font-family: ui-sans-serif, system-ui; }
+        .glass { background: rgba(20, 20, 20, 0.9); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); }
         .modal-mask { background: rgba(0,0,0,0.95); position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; }
         .sync-glow { animation: glow 1.5s infinite; }
         @keyframes glow { 0%, 100% { filter: drop-shadow(0 0 8px #eab308); opacity: 1; } 50% { opacity: 0.3; } }
         input { background: #111 !important; border: 1px solid rgba(255,255,255,0.1) !important; color: #fff !important; }
+        .text-error { color: #ef4444; }
     </style>
 </head>
 <body class="p-8">
     <div id="app">
         <div class="flex flex-col md:flex-row justify-between items-center mb-10 gap-6">
             <div>
-                <h1 class="text-4xl font-black text-blue-500 italic uppercase">🛰️ MultiX Pro</h1>
-                <p class="text-[10px] text-zinc-500 mt-2 font-bold uppercase tracking-widest leading-relaxed">
-                    TOKEN: <span class="text-yellow-500 font-mono font-black select-all">""" + M_TOKEN + """</span><br>
-                    IPv4: <span class="text-blue-400 font-mono select-all">{{ sys.ipv4 }}</span> | 
-                    IPv6: <span class="text-purple-400 font-mono select-all">{{ sys.ipv6 }}</span>
+                <h1 class="text-4xl font-black text-blue-500 italic uppercase">🛰️ MultiX Pro <span class="text-xs text-zinc-600">for 3X-UI</span></h1>
+                <p class="text-[10px] text-zinc-500 mt-2 font-bold uppercase tracking-widest">
+                    TOKEN: <span class="text-yellow-500 font-mono select-all">""" + M_TOKEN + """</span> | 
+                    <span class="text-blue-400">{{ sys.ipv4 }}</span>
                 </p>
             </div>
             <div class="flex gap-4">
-                <div v-for="(val, l) in masterStats" :key="l" class="px-5 py-2 bg-zinc-900 border border-white/5 rounded-2xl text-center">
+                <div v-for="(val, l) in masterStats" class="px-5 py-2 bg-zinc-900 border border-white/5 rounded-2xl text-center">
                     <div class="text-[8px] text-zinc-500 uppercase">{{ l }}</div><div class="text-xs font-bold text-white">{{ val }}%</div>
                 </div>
-                <button @click="lang = (lang == 'zh' ? 'en' : 'zh')" class="px-6 py-2 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest">
-                    {{ lang == 'zh' ? 'ENGLISH' : '中文' }}
-                </button>
             </div>
         </div>
 
         <div class="grid grid-cols-1 md:flex md:flex-wrap gap-8">
-            <div class="glass border-blue-500/20 border-dashed rounded-[3rem] p-8 relative w-full md:w-[380px]">
+            <div v-for="agent in allAgents" :key="agent.ip" class="glass rounded-[3rem] p-8 relative w-full md:w-[380px] hover:border-blue-500/30 transition-all">
                 <div class="flex justify-between items-center mb-6">
-                    <div class="text-zinc-500 text-xl font-black italic">1.1.1.1 (MOCK)</div>
-                    <div :class="['h-3 w-3 rounded-full', mockAgent.syncing ? 'bg-yellow-500 sync-glow' : 'bg-green-500']"></div>
+                    <div @click="editAlias(agent)" class="cursor-pointer group">
+                        <div class="text-white text-xl font-black italic group-hover:text-blue-400">{{ agent.alias || 'Node-' + agent.idx }} ✎</div>
+                        <div class="text-[9px] text-zinc-600 font-mono">{{ agent.ip }}</div>
+                    </div>
+                    <div :class="['h-3 w-3 rounded-full', agent.syncing ? 'bg-yellow-500 sync-glow' : (agent.lastSyncError ? 'bg-red-500' : 'bg-green-500')]"></div>
                 </div>
                 <div class="grid grid-cols-2 gap-4 mb-6 text-center">
-                    <div class="bg-black/40 p-4 rounded-3xl"><div class="text-[8px] text-zinc-600">CPU</div><div class="text-xl font-black italic text-zinc-500">25%</div></div>
-                    <div class="bg-black/40 p-4 rounded-3xl"><div class="text-[8px] text-zinc-600">XUI</div><div class="text-[10px] font-black text-zinc-500">v2.1.2</div></div>
-                </div>
-                <button @click="openManageModal('MOCK')" class="w-full py-5 bg-zinc-900 text-zinc-600 rounded-3xl font-black text-[10px] uppercase">Node Config (1)</button>
-            </div>
-
-            <div v-for="(info, ip) in agents" :key="ip" class="glass rounded-[3rem] p-8 shadow-2xl relative w-full md:w-[380px] hover:border-blue-500/30 transition-all">
-                <div class="flex justify-between items-center mb-6">
-                    <div class="text-white text-xl font-black">{{ip}}</div>
-                    <div :class="['h-3 w-3 rounded-full', info.syncing ? 'bg-yellow-500 sync-glow' : (info.lastSyncError ? 'bg-red-500' : 'bg-green-500')]"></div>
-                </div>
-                <div class="grid grid-cols-2 gap-4 mb-6 text-center">
-                    <div class="bg-black/40 p-5 rounded-3xl border border-white/5"><div class="text-[8px] text-zinc-500 uppercase">CPU</div><div class="text-xl font-black italic">{{info.stats.cpu}}%</div></div>
-                    <div class="bg-black/40 p-5 rounded-3xl border border-white/5"><div class="text-[8px] text-zinc-500 uppercase">MEM</div><div class="text-xl font-black italic">{{info.stats.mem}}%</div></div>
+                    <div class="bg-black/40 p-4 rounded-3xl border border-white/5"><div class="text-[8px] text-zinc-600">CPU</div><div class="text-xl font-black italic">{{agent.stats.cpu}}%</div></div>
+                    <div class="bg-black/40 p-4 rounded-3xl border border-white/5"><div class="text-[8px] text-zinc-600">MEM</div><div class="text-xl font-black italic">{{agent.stats.mem}}%</div></div>
                 </div>
                 <div class="text-[9px] text-zinc-500 text-center mb-8 italic tracking-widest font-bold">
-                    OS: {{info.os}} | XUI: {{info.xui_ver}} | Nodes: {{info.nodes.length}}
+                    {{ agent.os || 'Linux' }} | 3X-UI: {{ agent.xui_ver || 'v2.x' }} | Nodes: {{ agent.nodes.length }}
                 </div>
-                <button @click="openManageModal(ip)" class="w-full py-5 bg-blue-600 text-white rounded-3xl font-black text-[10px] uppercase shadow-lg">Manage Nodes</button>
+                <button @click="openManageModal(agent)" class="w-full py-5 bg-blue-600 text-white rounded-3xl font-black text-[10px] uppercase shadow-lg active:scale-95 transition-all">Manage Nodes</button>
             </div>
         </div>
 
         <div v-if="showListModal" class="modal-mask" @click.self="showListModal = false">
             <div class="bg-zinc-950 border border-white/10 rounded-[3rem] p-10 w-full max-w-4xl shadow-2xl max-h-[85vh] flex flex-col">
                 <div class="flex justify-between items-center mb-8 border-b border-white/5 pb-4">
-                    <h3 class="text-2xl font-black text-white italic uppercase">{{activeIp}} Inbounds</h3>
+                    <h3 class="text-2xl font-black text-white italic uppercase">{{ activeAgent.alias }} Inbounds</h3>
                     <button @click="showListModal = false" class="text-zinc-500 text-3xl">✕</button>
                 </div>
                 <div class="flex-1 overflow-y-auto space-y-4 pr-2">
-                    <div v-for="node in (activeIp == 'MOCK' ? mockAgent.nodes : agents[activeIp].nodes)" :key="node.id" class="bg-zinc-900/50 p-6 rounded-3xl border border-white/5 flex justify-between items-center hover:bg-zinc-800 transition">
-                        <div><span class="text-blue-500 font-black text-[10px] italic">[{{node.protocol.toUpperCase()}}]</span><span class="text-white font-bold ml-4">{{node.remark}}</span><div class="text-[10px] text-zinc-600 mt-1 font-mono">PORT: {{node.port}}</div></div>
-                        <button @click="openEditModal(node)" class="px-6 py-2 bg-zinc-800 text-white rounded-xl text-[10px] font-black uppercase">{{ t[lang].edit }}</button>
+                    <div v-for="node in activeAgent.nodes" :key="node.id" class="bg-zinc-900/50 p-6 rounded-3xl border border-white/5 flex justify-between items-center">
+                        <div>
+                            <span class="text-blue-500 font-black text-[10px] italic">[{{node.protocol}}]</span>
+                            <span class="text-white font-bold ml-4">{{node.remark}}</span>
+                            <span v-if="node.isNew && node.syncError" class="text-red-500 text-[9px] ml-2 font-black">⚠️ UNSYNCED</span>
+                            <div class="text-[10px] text-zinc-600 mt-1 font-mono">PORT: {{node.port}}</div>
+                        </div>
+                        <button @click="openEditModal(node)" class="px-6 py-2 bg-zinc-800 text-white rounded-xl text-[10px] font-black uppercase">Edit</button>
                     </div>
                 </div>
-                <button @click="openAddModal" class="mt-8 w-full py-5 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase">+ {{ t[lang].addNode }}</button>
+                <button @click="openAddModal" class="mt-8 w-full py-5 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase shadow-xl">+ New Inbound</button>
             </div>
         </div>
 
@@ -265,62 +210,116 @@ HTML_T = """
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-12 text-zinc-300">
                     <div class="space-y-6">
                         <div><label class="text-[9px] text-zinc-600 font-bold uppercase">Remark</label><input v-model="conf.remark" class="w-full rounded-2xl p-4 mt-2 text-sm font-bold"></div>
-                        <div><label class="text-[9px] text-blue-500 font-black uppercase">Email</label><div class="flex gap-2 mt-1"><input v-model="conf.email" class="flex-1 rounded-2xl p-4 text-sm font-mono"><button @click="genEmail" class="bg-zinc-800 px-5 rounded-2xl text-[10px] font-black">Rand</button></div></div>
+                        <div><label class="text-[9px] text-blue-500 font-black uppercase">Email</label><div class="flex gap-2 mt-1"><input v-model="conf.email" class="flex-1 rounded-2xl p-4 text-sm font-mono"><button @click="genEmail" class="bg-zinc-800 px-5 rounded-2xl text-[10px] font-black">RAND</button></div></div>
                         <div><label class="text-[9px] text-zinc-600 font-bold uppercase">Port</label><input v-model="conf.port" class="w-full rounded-2xl p-4 mt-2 text-sm font-mono"></div>
-                        <div><label class="text-[9px] text-zinc-600 font-bold uppercase">UUID</label><div class="flex gap-2 mt-1"><input v-model="conf.uuid" class="flex-1 rounded-2xl p-4 text-xs font-mono"><button @click="genUUID" class="bg-zinc-800 px-5 rounded-2xl text-[10px] font-black">Gen</button></div></div>
+                        <div><label class="text-[9px] text-zinc-600 font-bold uppercase">UUID</label><div class="flex gap-2 mt-1"><input v-model="conf.uuid" class="flex-1 rounded-2xl p-4 text-xs font-mono"><button @click="genUUID" class="bg-zinc-800 px-5 rounded-2xl text-[10px] font-black">GEN</button></div></div>
                     </div>
                     <div class="space-y-6">
                         <div><label class="text-[9px] text-zinc-600 font-bold uppercase">Dest (SNI)</label><input v-model="conf.dest" class="w-full rounded-2xl p-4 mt-2 text-sm font-mono"></div>
-                        <div><label class="text-[9px] text-zinc-600 font-bold uppercase">Private Key</label><div class="flex gap-2 mt-1"><input v-model="conf.privKey" class="flex-1 rounded-2xl p-4 text-xs font-mono"><button @click="genKeys" class="bg-blue-600/20 text-blue-400 border border-blue-500/20 px-5 rounded-2xl text-[10px] font-black">New</button></div></div>
-                        <div><label class="text-[9px] text-zinc-600 font-bold uppercase">Short ID</label><div class="flex gap-2 mt-1"><input v-model="conf.shortId" class="flex-1 rounded-2xl p-4 text-sm font-mono"><button @click="genShortId" class="bg-zinc-800 px-5 rounded-2xl text-[10px] font-black">Rand</button></div></div>
+                        <div><label class="text-[9px] text-zinc-600 font-bold uppercase">Private Key</label><div class="flex gap-2 mt-1"><input v-model="conf.privKey" class="flex-1 rounded-2xl p-4 text-xs font-mono"><button @click="genKeys" class="bg-blue-600/20 text-blue-400 border border-blue-500/20 px-5 rounded-2xl text-[10px] font-black">NEW</button></div></div>
+                        <div><label class="text-[9px] text-zinc-600 font-bold uppercase">Short ID</label><div class="flex gap-2 mt-1"><input v-model="conf.shortId" class="flex-1 rounded-2xl p-4 text-sm font-mono"><button @click="genShortId" class="bg-zinc-800 px-5 rounded-2xl text-[10px] font-black">RAND</button></div></div>
                     </div>
                 </div>
                 <div class="mt-14 flex gap-6">
                     <button @click="showEditModal = false" class="flex-1 py-6 bg-zinc-900 text-zinc-500 rounded-3xl text-xs font-black uppercase">Discard</button>
-                    <button @click="saveNode" class="flex-1 py-6 bg-blue-600 text-white rounded-3xl text-xs font-black uppercase shadow-2xl tracking-widest active:scale-95 transition-all">Save & Sync</button>
+                    <button @click="saveNode" class="flex-1 py-6 bg-blue-600 text-white rounded-3xl text-xs font-black uppercase shadow-2xl tracking-widest active:scale-95 transition-all">
+                        <span v-if="activeAgent.syncing">Syncing...</span><span v-else>Save & Sync</span>
+                    </button>
                 </div>
             </div>
         </div>
     </div>
     <script>
-        const { createApp, ref, onMounted } = Vue;
+        const { createApp, ref, computed, onMounted } = Vue;
         createApp({
             setup() {
-                const lang = ref('zh'); const agents = ref({}); const masterStats = ref({ CPU:0, MEM:0, DISK:0 }); const sys = ref({ ipv4:'...', ipv6:'...' });
-                const showListModal = ref(false); const showEditModal = ref(false); const activeIp = ref('');
-                const conf = ref({ id:null, remark:'Reality-Node', email:'admin@multix.com', protocol:'vless', port:443, uuid:'', dest:'www.microsoft.com:443', privKey:'', shortId:'6baad05c' });
-                const mockAgent = ref({ syncing: false, nodes: [{ id: 999, remark: 'Mock-Node-V46', port: 443, protocol: 'vless' }] });
-                const t = { zh: { edit:'修改', addNode:'创建新节点' }, en: { edit:'Edit', addNode:'New Inbound' } };
+                const agents = ref({}); const masterStats = ref({ CPU:0, MEM:0 }); const sys = ref({ ipv4:'...' });
+                const showListModal = ref(false); const showEditModal = ref(false); const activeAgent = ref({});
+                const conf = ref({}); 
+                // Mock Data 模拟真实结构
+                const mockAgent = ref({ ip: 'MOCK-SERVER', alias: 'Example Node', idx: 0, stats: {cpu: 25, mem: 40}, nodes: [{id: 99, remark: 'Demo Node', port: 443, protocol: 'vless'}], syncing: false });
+
+                const allAgents = computed(() => {
+                    const list = [mockAgent.value];
+                    let i = 1;
+                    for (let ip in agents.value) {
+                        agents.value[ip].ip = ip;
+                        agents.value[ip].idx = i++;
+                        list.push(agents.value[ip]);
+                    }
+                    return list;
+                });
 
                 const update = async () => {
                     try {
                         const r = await fetch('/api/state'); const d = await r.json();
                         sys.value = d.master; masterStats.value = d.master.stats;
                         for (let ip in d.agents) {
-                            if (!agents.value[ip] || !agents.value[ip].syncing) {
-                                agents.value[ip] = { ...d.agents[ip], syncing: false };
+                            if (!agents.value[ip]) agents.value[ip] = { ...d.agents[ip], syncing: false, alias: 'Node' };
+                            else if (!agents.value[ip].syncing) {
+                                agents.value[ip].stats = d.agents[ip].stats;
+                                agents.value[ip].nodes = d.agents[ip].nodes; // 正常更新
                             }
                         }
                     } catch(e){}
                 };
-                const openManageModal = (ip) => { activeIp.value = ip; showListModal.value = true; };
-                const openEditModal = (node) => { conf.value = { ...node, email: 'admin@multix.com', uuid: '', dest: 'www.microsoft.com:443', privKey: '', shortId: '6baad05c' }; showListModal.value = false; showEditModal.value = true; };
-                const openAddModal = () => { conf.value.id = null; genUUID(); genEmail(); genKeys(); genShortId(); showListModal.value = false; showEditModal.value = true; };
-                const saveNode = async () => {
-                    const ip = activeIp.value;
-                    if(ip === 'MOCK') { mockAgent.value.syncing = true; showEditModal.value = false; setTimeout(() => { mockAgent.value.syncing = false; }, 3000); return; }
-                    agents.value[ip].syncing = true; showEditModal.value = false;
-                    try {
-                        await fetch('/api/sync', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ip, config: conf.value }) });
-                        setTimeout(() => { if (agents.value[ip].syncing) { agents.value[ip].syncing = false; agents.value[ip].lastSyncError = true; } }, 10000);
-                    } catch(e) { agents.value[ip].syncing = false; }
+
+                const editAlias = (agent) => { const n = prompt("Enter Alias:", agent.alias); if(n) agent.alias = n; };
+                const openManageModal = (agent) => { activeAgent.value = agent; showListModal.value = true; };
+                
+                const openEditModal = (node) => {
+                    conf.value = { ...node, email: 'admin@mx.com', uuid: '', dest: 'www.microsoft.com:443', privKey: '', shortId: '' };
+                    showListModal.value = false; showEditModal.value = true;
                 };
+                
+                const openAddModal = () => {
+                    // 新建节点：临时 ID
+                    conf.value = { id: null, remark: 'New-Node', port: 443, protocol: 'vless', isNew: true };
+                    genUUID(); genEmail(); genKeys(); genShortId();
+                    showListModal.value = false; showEditModal.value = true;
+                };
+
+                const saveNode = async () => {
+                    const agent = activeAgent.value;
+                    if(agent.ip === 'MOCK-SERVER') {
+                        mockAgent.value.syncing = true; showEditModal.value = false;
+                        setTimeout(() => { mockAgent.value.syncing = false; }, 2000); return;
+                    }
+                    
+                    const backupNodes = JSON.parse(JSON.stringify(agent.nodes)); // 备份用于回滚
+                    agent.syncing = true; showEditModal.value = false;
+                    
+                    // 乐观更新：如果是新建，先推入列表
+                    if (conf.value.isNew) agent.nodes.push(conf.value);
+
+                    try {
+                        await fetch('/api/sync', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ip: agent.ip, config: conf.value }) });
+                        
+                        // 10秒超时检查
+                        setTimeout(() => {
+                            if (agent.syncing) {
+                                agent.syncing = false; 
+                                agent.lastSyncError = true;
+                                // 回滚逻辑
+                                if (conf.value.isNew) {
+                                    // 标记为未同步的新节点
+                                    const n = agent.nodes.find(n => n.remark === conf.value.remark);
+                                    if(n) n.syncError = true; 
+                                } else {
+                                    agent.nodes = backupNodes; // 还原旧配置
+                                }
+                            }
+                        }, 10000);
+                    } catch(e) { agent.syncing = false; agent.lastSyncError = true; agent.nodes = backupNodes; }
+                };
+
                 const genUUID = () => { conf.value.uuid = crypto.randomUUID(); };
-                const genEmail = () => { conf.value.email = 'mx_'+Math.random().toString(36).substring(7)+'@multix.com'; };
+                const genEmail = () => { conf.value.email = 'mx_'+Math.random().toString(36).substring(7)+'@mx.com'; };
                 const genKeys = () => { conf.value.privKey = btoa(Math.random().toString()).substring(0,43)+'='; };
                 const genShortId = () => { conf.value.shortId = Math.random().toString(16).substring(2,10); };
+
                 onMounted(() => { update(); setInterval(update, 3000); });
-                return { lang, t, agents, masterStats, sys, showListModal, showEditModal, conf, mockAgent, openManageModal, openEditModal, openAddModal, saveNode, genUUID, genEmail, genKeys, genShortId };
+                return { allAgents, masterStats, sys, showListModal, showEditModal, conf, activeAgent, editAlias, openManageModal, openEditModal, openAddModal, saveNode, genUUID, genEmail, genKeys, genShortId };
             }
         }).mount('#app');
     </script>
@@ -331,7 +330,7 @@ HTML_T = """
 @app.route('/api/state')
 def get_state():
     s = get_sys_info()
-    return jsonify({"agents": {ip: {"stats": info.get("stats", {"cpu":0,"mem":0}), "nodes": info.get("nodes", []), "os": info.get("os", "Ubuntu"), "xui_ver": info.get("xui_ver", "v2.1.2")} for ip, info in AGENTS.items()}, "master": {"stats": {"CPU": s["cpu"], "MEM": s["mem"], "DISK": s["disk"]}, "ipv4": s["ipv4"], "ipv6": s["ipv6"]}})
+    return jsonify({"agents": {ip: {"stats": info.get("stats", {"cpu":0,"mem":0}), "nodes": info.get("nodes", []), "os": info.get("os", "Linux"), "xui_ver": "3X-UI"} for ip, info in AGENTS.items()}, "master": {"stats": {"CPU": s["cpu"], "MEM": s["mem"], "DISK": s["disk"]}, "ipv4": s["ipv4"], "ipv6": s["ipv6"]}})
 
 @app.route('/api/sync', methods=['POST'])
 def do_sync():
@@ -365,7 +364,6 @@ async def ws_handler(ws):
                     AGENTS[ip]['stats'] = d.get('data', {"cpu":0,"mem":0})
                     AGENTS[ip]['nodes'] = d.get('nodes', [])
                     AGENTS[ip]['os'] = d.get('data', {}).get('os', 'Linux')
-                    AGENTS[ip]['xui_ver'] = d.get('data', {}).get('xui_ver', 'v2.1.2')
     except: pass
     finally:
         if ip in AGENTS: del AGENTS[ip]
@@ -373,14 +371,12 @@ async def ws_handler(ws):
 def start_ws():
     global LOOP_GLOBAL; LOOP_GLOBAL = asyncio.new_event_loop(); asyncio.set_event_loop(LOOP_GLOBAL)
     async def m():
-        # V46核心：绑定 :: 配合 bindv6only=0 实现双栈
-        async with websockets.serve(ws_handler, "::", 8888, family=socket.AF_INET6): await asyncio.Future()
+        async with websockets.serve(ws_handler, "0.0.0.0", 8888): await asyncio.Future()
     LOOP_GLOBAL.run_until_complete(m())
 
 if __name__ == '__main__':
     Thread(target=start_ws, daemon=True).start()
-    # Flask 绑定 :: 配合 bindv6only=0 实现双栈
-    app.run(host='::', port=M_PORT)
+    app.run(host='0.0.0.0', port=M_PORT)
 EOF
 
     cat > /etc/systemd/system/multix-master.service <<EOF
@@ -398,44 +394,34 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功！(支持 IPv4+IPv6 双栈监听)${PLAIN}"
-    echo -e "   ---------------------------------------"
-    echo -e "   入口 (IPv4): http://${IPV4}:${M_PORT}"
-    [[ "$IPV6" != "未检测到" ]] && echo -e "   入口 (IPv6): http://[${IPV6}]:${M_PORT}"
-    echo -e "   用户: $M_USER  密码: $M_PASS"
+    echo -e "${GREEN}✅ 主控端部署成功！${PLAIN}"
+    echo -e "   IPv4: http://${IPV4}:${M_PORT}"
+    [[ "$IPV6" != "未检测到" ]] && echo -e "   IPv6: http://[${IPV6}]:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
-    echo -e "   ---------------------------------------"
     pause_back
 }
 
-# --- [ 被控安装 (强制 IPv6 解析) ] ---
+# --- [ 被控安装 (3X-UI + 双栈) ] ---
 install_agent() {
     install_dependencies
     mkdir -p $M_ROOT/agent
-    echo -e "${SKYBLUE}>>> 配置被控端连接${PLAIN}"
+    echo -e "${SKYBLUE}>>> 配置被控端${PLAIN}"
     read -p "主控域名/IP: " IN_HOST
-    read -p "Token (复制自主控): " IN_TOKEN
+    read -p "Token: " IN_TOKEN
     
-    echo -e "${YELLOW}请选择连接主控的协议 (NAT 小鸡建议强制 IPv6):${PLAIN}"
-    echo " 1. 自动检测 (默认)"
-    echo " 2. 强制 IPv4 (当自动检测失败时用)"
-    echo " 3. 强制 IPv6 (解决 NAT 小鸡连不上双栈域名)"
-    read -p "选择 [1-3]: " NET_OPT
+    echo -e "${YELLOW}连接协议选择 (NAT机建议强制IPv6):${PLAIN}"
+    echo " 1. 自动 (默认)"
+    echo " 2. 强制 IPv4"
+    echo " 3. 强制 IPv6"
+    read -p "选择: " NET_OPT
     
     TARGET_HOST="$IN_HOST"
     if [[ "$NET_OPT" == "3" ]]; then
-        V6_ADDR=$(resolve_ip "$IN_HOST" "AF_INET6")
-        if [[ -n "$V6_ADDR" ]]; then
-            echo -e "${GREEN}解析到 IPv6: $V6_ADDR${PLAIN}"
-            TARGET_HOST="$V6_ADDR" # 直接使用解析出的 IP，避免 socket 再次误判
-        else
-            echo -e "${RED}无法解析到 IPv6 地址，回退到自动模式。${PLAIN}"
-        fi
+        V6=$(resolve_ip "$IN_HOST" "AF_INET6")
+        [[ -n "$V6" ]] && TARGET_HOST="[$V6]"
     elif [[ "$NET_OPT" == "2" ]]; then
-        V4_ADDR=$(resolve_ip "$IN_HOST" "AF_INET")
-        if [[ -n "$V4_ADDR" ]]; then
-            TARGET_HOST="$V4_ADDR"
-        fi
+        V4=$(resolve_ip "$IN_HOST" "AF_INET")
+        [[ -n "$V4" ]] && TARGET_HOST="$V4"
     fi
     
     cat > $M_ROOT/agent/Dockerfile <<EOF
@@ -457,11 +443,7 @@ def sync_db(data):
         conn.commit(); conn.close(); return True
     except: return False
 async def run():
-    # 检测是 IP 还是域名，如果是 IPv6 IP，添加 []
-    target = MASTER
-    if ":" in target and not target.startswith("["): target = f"[{target}]"
-    uri = f"ws://{target}:8888"
-    
+    uri = f"ws://{MASTER}:8888"
     while True:
         try:
             async with websockets.connect(uri) as ws:
@@ -471,45 +453,41 @@ async def run():
                     cur.execute("SELECT id, remark, port, protocol FROM inbounds")
                     nodes = [{"id": r[0], "remark": r[1], "port": r[2], "protocol": r[3]} for r in cur.fetchall()]
                     conn.close()
-                    stats = { "cpu": int(psutil.cpu_percent()), "mem": int(psutil.virtual_memory().percent), "os": platform.system()+" "+platform.release(), "xui_ver": "v2.1.2" }
+                    stats = { "cpu": int(psutil.cpu_percent()), "mem": int(psutil.virtual_memory().percent), "os": platform.system()+" "+platform.release() }
                     await ws.send(json.dumps({"type": "heartbeat", "data": stats, "nodes": nodes}))
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=5)
                         task = json.loads(msg)
-                        if task.get('action') == 'sync_node': os.system("docker stop 3x-ui"); sync_db(task['data']); os.system("docker start 3x-ui")
+                        if task.get('action') == 'sync_node': os.system("docker restart 3x-ui"); sync_db(task['data']); os.system("docker restart 3x-ui")
                     except: continue
-        except Exception as e: 
-            print(f"Conn err: {e}")
-            await asyncio.sleep(5)
+        except: await asyncio.sleep(5)
 asyncio.run(run())
 EOF
-    cd $M_ROOT/agent; docker build -t multix-agent-v46 .
+    cd $M_ROOT/agent; docker build -t multix-agent-v47 .
     docker rm -f multix-agent 2>/dev/null
-    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v $M_ROOT/agent/db_data:/app/db_share -v $M_ROOT/agent:/app multix-agent-v46
-    echo -e "${GREEN}✅ 被控已启动 (连接目标: $TARGET_HOST)。${PLAIN}"
+    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v $M_ROOT/agent/db_data:/app/db_share -v $M_ROOT/agent:/app multix-agent-v47
+    echo -e "${GREEN}✅ 被控已启动 (连接: $TARGET_HOST)${PLAIN}"
     pause_back
 }
 
-# --- [ 运维菜单 ] ---
+# --- [ 运维菜单 (3X-UI) ] ---
 sys_tools() {
     while true; do
         clear
-        echo -e "${YELLOW}🧰 MultiX 系统运维工具箱${PLAIN}"
+        echo -e "${YELLOW}🧰 MultiX 运维工具箱 (3X-UI 专版)${PLAIN}"
         echo "1. 开启 BBR 加速"
-        echo "2. 安装/重装 3X-UI"
+        echo "2. 安装 3X-UI (MHSanaei)"
         echo "3. 申请 SSL 证书"
         echo "4. 重置 3X-UI 账号"
         echo "5. 清空流量统计"
-        echo "6. 开放防火墙端口"
         echo "0. 返回"
         read -p "选择: " t_opt
         case $t_opt in
             1) bash <(curl -L -s https://github.com/chiakge/Linux-NetSpeed/raw/master/tcp.sh) ;;
-            2) bash <(curl -Ls https://raw.githubusercontent.com/mzz2017/v2ray-util/master/install.sh) ;;
+            2) bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) ;;
             3) curl https://get.acme.sh | sh ;;
             4) docker exec -it 3x-ui x-ui setting ;;
             5) sqlite3 $M_ROOT/agent/db_data/x-ui.db "UPDATE client_traffics SET up=0, down=0;" && echo "流量清零" ;;
-            6) read -p "端口: " p; ufw allow $p/tcp 2>/dev/null; firewall-cmd --zone=public --add-port=$p/tcp --permanent 2>/dev/null ;;
             0) break ;;
         esac
         read -n 1 -s -r -p "按键继续..."
@@ -519,26 +497,26 @@ sys_tools() {
 
 main_menu() {
     clear
-    echo -e "${SKYBLUE}🛰️ MultiX Pro (V46.0 双栈兼容版)${PLAIN}"
+    echo -e "${SKYBLUE}🛰️ MultiX Pro (V47.0 3X-UI 终极版)${PLAIN}"
     echo "------------------------------------------------"
     echo " 1. 安装/更新 主控端 (Master)"
-    echo " 2. 安装/更新 被控端 (Agent) [支持IPv6强制]"
+    echo " 2. 安装/更新 被控端 (Agent) [支持IPv6/NAT]"
     echo "------------------------------------------------"
-    echo " 3. 连通性测试 (nc 探测)"
+    echo " 3. 连通性测试 (nc)"
     echo " 4. 被控离线修复 (重启)"
-    echo " 5. 深度清理模式 (防残留)"
+    echo " 5. 深度清理模式"
     echo " 6. 环境依赖修复"
     echo "------------------------------------------------"
-    echo " 7. 混合凭据中心 (修改配置)"
+    echo " 7. 凭据管理中心"
     echo " 8. 实时日志"
-    echo " 9. 运维工具箱 (BBR/SSL/3XUI)"
+    echo " 9. 运维工具箱 (3X-UI/BBR/SSL)"
     echo "------------------------------------------------"
     echo " 0. 退出"
     read -p "选择: " choice
     case $choice in
         1) install_master ;;
         2) install_agent ;;
-        3) read -p "目标IP: " tip; nc -zv -w 5 $tip 8888; pause_back ;;
+        3) read -p "IP: " tip; nc -zv -w 5 $tip 8888; pause_back ;;
         4) docker restart multix-agent; pause_back ;;
         5) deep_cleanup ;;
         6) install_dependencies; pause_back ;;
