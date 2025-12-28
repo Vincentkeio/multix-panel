@@ -2,7 +2,7 @@
 
 # ==========================================
 # MultiX Panel - 分布式节点管理系统 (被控端)
-# GitHub 托管版
+# GitHub 托管版 (v2.1 提示语修正)
 # ==========================================
 
 # 颜色定义
@@ -16,7 +16,7 @@ PLAIN='\033[0m'
 CONFIG_FILE="/etc/multix/node_config.json"
 KEY_FILE="/etc/multix/node_key.txt"
 
-# !!! 关键设置 (已根据你的截图自动修正) !!!
+# !!! 关键设置 !!!
 GITHUB_RAW_URL="https://raw.githubusercontent.com/Vincentkeio/multix-panel/main/multix.sh"
 
 # 检查 root
@@ -75,21 +75,24 @@ install_dependencies() {
 deploy_node() {
     install_dependencies
 
-    # --- 网络选择 ---
-    echo -e "${YELLOW}正在探测网络环境...${PLAIN}"
+    # --- 网络选择 (提示语修正版) ---
+    echo -e "${YELLOW}正在探测本机公网 IP...${PLAIN}"
     IPV4=$(curl -4 -s --connect-timeout 3 ifconfig.co)
     IPV6=$(curl -6 -s --connect-timeout 3 ifconfig.co)
     FINAL_IP=""
 
     if [[ -n "$IPV4" && -n "$IPV6" ]]; then
-        echo -e "${GREEN}检测到双栈网络:${PLAIN}"
-        echo -e " 1. 使用 IPv4 (${BLUE}${IPV4}${PLAIN})"
-        echo -e " 2. 使用 IPv6 (${BLUE}${IPV6}${PLAIN})"
-        read -p "请选择 (默认1): " CHOICE
+        echo -e "${GREEN}检测到双栈网络 (Dual Stack)${PLAIN}"
+        echo -e "${YELLOW}请选择 Master 连接此节点时使用的通道 (将写入Key):${PLAIN}"
+        echo -e " 1. 使用 IPv4 通道 (${BLUE}${IPV4}${PLAIN}) - 兼容性好"
+        echo -e " 2. 使用 IPv6 通道 (${BLUE}${IPV6}${PLAIN}) - 穿透性好(推荐NAT机)"
+        read -p "请选择 [1/2] (默认1): " CHOICE
         [[ "$CHOICE" == "2" ]] && FINAL_IP="$IPV6" || FINAL_IP="$IPV4"
     elif [[ -n "$IPV4" ]]; then
+        echo -e "${GREEN}自动选择 IPv4 作为隧道入口。${PLAIN}"
         FINAL_IP="$IPV4"
     elif [[ -n "$IPV6" ]]; then
+        echo -e "${GREEN}自动选择 IPv6 作为隧道入口。${PLAIN}"
         FINAL_IP="$IPV6"
     else
         echo -e "${RED}无法获取公网IP，请检查网络。${PLAIN}" && return
@@ -166,7 +169,7 @@ show_menu() {
     clear
     install_shortcut
     check_status
-    echo -e "MultiX Panel 节点管理脚本 ${BLUE}v2.0 (GitHub版)${PLAIN}"
+    echo -e "MultiX Panel 节点管理脚本 ${BLUE}v2.1 (GitHub版)${PLAIN}"
     echo -e "--------------------------------"
     echo -e "3X-UI状态: ${XUI_STATUS}"
     echo -e "节点配置:  ${KEY_STATUS}"
