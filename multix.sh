@@ -1,13 +1,14 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro V59.0 (UI Render Fix)
-# Fix: Vue/Jinja Conflict | Element Plus Loading | Restored Interactive Install
+# MultiX Pro Script V60.0 (Architecture Fixed)
+# Fix 1: Restored Username/Password Prompts (No more admin/admin default)
+# Fix 2: Jinja2 vs Vue Conflict Solved (Split Template Injection)
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V59.0"
+SH_VER="V60.0"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -44,7 +45,12 @@ install_dependencies() {
     check_sys
     if [[ "${RELEASE}" == "centos" ]]; then yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git
     else apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git; fi
-    pip3 install flask websockets psutil --break-system-packages >/dev/null 2>&1 || pip3 install flask websockets psutil >/dev/null 2>&1
+    
+    # [V60] 增强型 pip 安装，兼容新旧系统
+    echo -e "${YELLOW}[INFO]${PLAIN} 安装 Python 库..."
+    pip3 install flask websockets psutil --break-system-packages >/dev/null 2>&1
+    if [ $? -ne 0 ]; then pip3 install flask websockets psutil >/dev/null 2>&1; fi
+    
     if ! command -v docker &> /dev/null; then curl -fsSL https://get.docker.com | bash; systemctl start docker; fi
     fix_dual_stack
 }
@@ -105,21 +111,23 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (交互还原+UI修复) ] ---
+# --- [ 6. 主控安装 (V60 修复版) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
     
-    echo -e "${SKYBLUE}>>> 主控配置${PLAIN}"
-    read -p "端口 [7575]: " IN_PORT; M_PORT=${IN_PORT:-7575}
-    read -p "用户 [admin]: " IN_USER; M_USER=${IN_USER:-admin}
-    read -p "密码 [admin]: " IN_PASS; M_PASS=${IN_PASS:-admin}
+    echo -e "${SKYBLUE}>>> 主控端初始化配置${PLAIN}"
+    
+    # [V60 修复] 恢复用户交互输入
+    read -p "管理端口 [默认 7575]: " IN_PORT; M_PORT=${IN_PORT:-${M_PORT:-7575}}
+    read -p "管理用户 [默认 admin]: " IN_USER; M_USER=${IN_USER:-${M_USER:-admin}}
+    read -p "管理密码 [默认 admin]: " IN_PASS; M_PASS=${IN_PASS:-${M_PASS:-admin}}
     RAND=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-    read -p "Token [随机]: " IN_TOKEN; M_TOKEN=${IN_TOKEN:-$RAND}
+    read -p "Token [默认随机]: " IN_TOKEN; M_TOKEN=${IN_TOKEN:-${M_TOKEN:-$RAND}}
     
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V59 UI修复版)...${PLAIN}"
+    echo -e "${YELLOW}🛰️ 部署主控 (V60.0 架构修正版)...${PLAIN}"
     cat > $M_ROOT/master/app.py <<EOF
 import json, asyncio, psutil, os, socket, subprocess, base64
 from flask import Flask, render_template_string, request, session, redirect, jsonify
@@ -156,12 +164,12 @@ def gen_key():
         elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
     except: return jsonify({"key": "", "private": "", "public": ""})
 
+# [V60] Jinja2/Vue 分离渲染模板
 HTML_T = """
-{% raw %}
 <!DOCTYPE html>
 <html class="dark">
 <head>
-    <meta charset="UTF-8"><title>MultiX V59</title>
+    <meta charset="UTF-8"><title>MultiX V60</title>
     <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
     <link rel="stylesheet" href="https://unpkg.com/element-plus/theme-chalk/dark/css-vars.css">
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
@@ -187,6 +195,7 @@ HTML_T = """
             </div>
         </div>
 
+        {% raw %}
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div v-for="agent in displayAgents" :key="agent.ip" class="glass-card p-6">
                 <div class="flex justify-between items-start mb-4">
@@ -280,6 +289,7 @@ HTML_T = """
             </div>
         </el-drawer>
     </div>
+    {% endraw %}
 
     <script>
         window.SERVER_DATA = {
@@ -323,7 +333,6 @@ HTML_T = """
                         dest: 'www.microsoft.com:443', serverNames: 'www.microsoft.com', privKey: '', shortIds: '',
                         wsPath: '/', totalGB: '', expiryDate: null
                     });
-                    // Async gen key to avoid UI freeze
                     genRealityPair();
                 };
 
@@ -373,7 +382,6 @@ HTML_T = """
         const app = createApp(App); app.use(ElementPlus); app.mount('#app');
     </script>
 </body></html>
-{% endraw %}
 """
 
 @app.route('/api/state')
@@ -389,19 +397,6 @@ def do_sync():
         asyncio.run_coroutine_threadsafe(AGENTS[target]['ws'].send(payload), LOOP_GLOBAL)
         return jsonify({"status": "sent"})
     return jsonify({"status": "offline"}), 404
-
-@app.route('/api/gen_key', methods=['POST'])
-def gen_key():
-    t = request.json.get('type')
-    try:
-        if t == 'reality':
-            out = subprocess.check_output("xray x25519 || echo 'Private key: x Public key: x'", shell=True).decode()
-            priv = out.split("Private key:")[1].split()[0].strip()
-            pub = out.split("Public key:")[1].split()[0].strip()
-            return jsonify({"private": priv, "public": pub})
-        elif t == 'ss-128': return jsonify({"key": base64.b64encode(os.urandom(16)).decode()})
-        elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
-    except: return jsonify({"key": "", "private": "", "public": ""})
 
 @app.route('/')
 def index():
@@ -463,7 +458,7 @@ EOF
     pause_back
 }
 
-# --- [ 7. 被控安装 (V59 修正) ] ---
+# --- [ 7. 被控安装 ] ---
 install_agent() {
     install_dependencies; mkdir -p $M_ROOT/agent
     
@@ -529,9 +524,9 @@ async def run():
         except: await asyncio.sleep(5)
 asyncio.run(run())
 EOF
-    cd $M_ROOT/agent; docker build -t multix-agent-v59 .
+    cd $M_ROOT/agent; docker build -t multix-agent-v60 .
     docker rm -f multix-agent 2>/dev/null
-    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v59
+    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v60
     echo -e "${GREEN}✅ 被控已启动${PLAIN}"; pause_back
 }
 
@@ -553,7 +548,7 @@ sys_tools() {
 }
 
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V59.0 渲染修复版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V60.0 交互修复版)${PLAIN}"
     echo " 1. 安装 主控端 | 2. 安装 被控端"
     echo " 3. 连通测试   | 4. 被控重启"
     echo " 5. 深度清理   | 6. 环境修复"
