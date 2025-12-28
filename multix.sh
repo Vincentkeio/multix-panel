@@ -1,197 +1,273 @@
 #!/bin/bash
 
-# ==========================================
-# MultiX Panel - 分布式节点管理系统 (被控端)
-# GitHub 托管版 (v2.1 提示语修正)
-# ==========================================
+# ==================================================
+# MultiX 监控系统一键管理脚本
+# ==================================================
+# 配置区域
+SERVER_PORT=7575                  # 强制使用 7575 端口
+APP_DIR="/opt/multix_monitor"     # 程序安装目录
+SERVICE_NAME_MASTER="multix-master"
+SERVICE_NAME_AGENT="multix-agent"
+# ==================================================
 
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
-BLUE='\033[0;36m'
 PLAIN='\033[0m'
 
-# 配置文件路径
-CONFIG_FILE="/etc/multix/node_config.json"
-KEY_FILE="/etc/multix/node_key.txt"
+# 检查 Root 权限
+if [[ $EUID -ne 0 ]]; then
+   echo -e "${RED}错误: 请使用 root 用户运行此脚本！${PLAIN}"
+   exit 1
+fi
 
-# !!! 关键设置 !!!
-GITHUB_RAW_URL="https://raw.githubusercontent.com/Vincentkeio/multix-panel/main/multix.sh"
+# ==================================================
+# 基础函数
+# ==================================================
 
-# 检查 root
-[[ $EUID -ne 0 ]] && echo -e "${RED}错误: 必须使用 root 用户运行此脚本！${PLAIN}" && exit 1
-
-# ==========================================
-# 0. 快捷指令安装
-# ==========================================
-install_shortcut() {
-    if [ ! -f "/usr/bin/multix" ]; then
-        echo -e "${YELLOW}正在安装 multix 快捷指令...${PLAIN}"
-        curl -s -o /usr/bin/multix "$GITHUB_RAW_URL"
-        chmod +x /usr/bin/multix
-        
-        if [ -f "/usr/bin/multix" ]; then
-            echo -e "${GREEN}快捷指令 'multix' 安装成功！${PLAIN}"
-        else
-            echo -e "${RED}快捷指令安装失败，请检查 GITHUB_RAW_URL 设置。${PLAIN}"
-        fi
-    fi
-}
-
-# ==========================================
-# 1. 基础环境与状态检测
-# ==========================================
-check_status() {
-    if systemctl is-active x-ui &>/dev/null; then
-        XUI_STATUS="${GREEN}运行中${PLAIN}"
-    elif [ -f "/usr/local/x-ui/x-ui" ]; then
-        XUI_STATUS="${YELLOW}已安装但未运行${PLAIN}"
-    else
-        XUI_STATUS="${RED}未安装${PLAIN}"
-    fi
-
-    if [ -f "$KEY_FILE" ]; then
-        KEY_STATUS="${GREEN}已配置${PLAIN}"
-    else
-        KEY_STATUS="${RED}未配置${PLAIN}"
-    fi
-}
-
-install_dependencies() {
-    local CMD=""
+# 检查系统并安装依赖
+check_sys_depend() {
+    echo -e "${YELLOW}正在检查并安装系统依赖...${PLAIN}"
     if [ -f /etc/debian_version ]; then
-        CMD="apt-get update -y && apt-get install -y curl jq sqlite3 openssl net-tools"
+        apt-get update -y
+        apt-get install -y wget curl python3 python3-pip git ufw
     elif [ -f /etc/redhat-release ]; then
-        CMD="yum update -y && yum install -y curl jq sqlite3 openssl net-tools"
+        yum install -y wget curl python3 python3-pip git firewalld
     fi
-    eval "$CMD" >/dev/null 2>&1
-    mkdir -p /etc/multix
+    echo -e "${GREEN}依赖安装完成。${PLAIN}"
 }
 
-# ==========================================
-# 2. 核心部署逻辑
-# ==========================================
-deploy_node() {
-    install_dependencies
-
-    # --- 网络选择 (提示语修正版) ---
-    echo -e "${YELLOW}正在探测本机公网 IP...${PLAIN}"
-    IPV4=$(curl -4 -s --connect-timeout 3 ifconfig.co)
-    IPV6=$(curl -6 -s --connect-timeout 3 ifconfig.co)
-    FINAL_IP=""
-
-    if [[ -n "$IPV4" && -n "$IPV6" ]]; then
-        echo -e "${GREEN}检测到双栈网络 (Dual Stack)${PLAIN}"
-        echo -e "${YELLOW}请选择 Master 连接此节点时使用的通道 (将写入Key):${PLAIN}"
-        echo -e " 1. 使用 IPv4 通道 (${BLUE}${IPV4}${PLAIN}) - 兼容性好"
-        echo -e " 2. 使用 IPv6 通道 (${BLUE}${IPV6}${PLAIN}) - 穿透性好(推荐NAT机)"
-        read -p "请选择 [1/2] (默认1): " CHOICE
-        [[ "$CHOICE" == "2" ]] && FINAL_IP="$IPV6" || FINAL_IP="$IPV4"
-    elif [[ -n "$IPV4" ]]; then
-        echo -e "${GREEN}自动选择 IPv4 作为隧道入口。${PLAIN}"
-        FINAL_IP="$IPV4"
-    elif [[ -n "$IPV6" ]]; then
-        echo -e "${GREEN}自动选择 IPv6 作为隧道入口。${PLAIN}"
-        FINAL_IP="$IPV6"
-    else
-        echo -e "${RED}无法获取公网IP，请检查网络。${PLAIN}" && return
+# 配置防火墙
+open_firewall_port() {
+    echo -e "${YELLOW}正在开放防火墙端口: ${SERVER_PORT}...${PLAIN}"
+    if [ -f /etc/debian_version ]; then
+        ufw allow ${SERVER_PORT}/tcp
+        ufw reload
+    elif [ -f /etc/redhat-release ]; then
+        firewall-cmd --zone=public --add-port=${SERVER_PORT}/tcp --permanent
+        firewall-cmd --reload
     fi
-
-    # --- 3X-UI 安装/配置 ---
-    echo -e "${YELLOW}正在配置 3X-UI...${PLAIN}"
-    if ! command -v x-ui &> /dev/null; then
-        bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) -y >/dev/null 2>&1
-    fi
-    
-    PANEL_USER="admin_$(openssl rand -hex 3)"
-    PANEL_PASS="pass_$(openssl rand -hex 6)"
-    PANEL_PORT=$(shuf -i 10000-60000 -n 1)
-    
-    /usr/local/x-ui/x-ui setting -username "$PANEL_USER" -password "$PANEL_PASS" -port "$PANEL_PORT" >/dev/null 2>&1
-    /usr/local/x-ui/x-ui restart >/dev/null 2>&1
-
-    # --- 隧道与密钥 ---
-    echo -e "${YELLOW}正在配置加密隧道...${PLAIN}"
-    TUNNEL_USER="node_tunnel"
-    id "$TUNNEL_USER" &>/dev/null || useradd -m -s /sbin/nologin $TUNNEL_USER
-    
-    USER_HOME="/home/$TUNNEL_USER"
-    mkdir -p "$USER_HOME/.ssh" && chmod 700 "$USER_HOME/.ssh"
-    rm -f "$USER_HOME/.ssh/id_rsa" "$USER_HOME/.ssh/id_rsa.pub"
-    ssh-keygen -t rsa -b 2048 -f "$USER_HOME/.ssh/id_rsa" -N "" -q
-    cat "$USER_HOME/.ssh/id_rsa.pub" > "$USER_HOME/.ssh/authorized_keys"
-    chmod 600 "$USER_HOME/.ssh/authorized_keys"
-    chown -R $TUNNEL_USER:$TUNNEL_USER "$USER_HOME/.ssh"
-    
-    PRIVATE_KEY=$(cat "$USER_HOME/.ssh/id_rsa")
-    SSH_PORT=$(grep "^Port" /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
-    [[ -z "$SSH_PORT" ]] && SSH_PORT=22
-
-    # --- 生成并保存 Key ---
-    JSON_DATA=$(jq -n \
-                  --arg ip "$FINAL_IP" \
-                  --arg ssh_port "$SSH_PORT" \
-                  --arg ssh_user "$TUNNEL_USER" \
-                  --arg ssh_key "$PRIVATE_KEY" \
-                  --arg target_port "$PANEL_PORT" \
-                  --arg panel_user "$PANEL_USER" \
-                  --arg panel_pass "$PANEL_PASS" \
-                  '{ip: $ip, ssh_port: $ssh_port, ssh_user: $ssh_user, ssh_key: $ssh_key, target_port: $target_port, panel_user: $panel_user, panel_pass: $panel_pass}')
-
-    NODE_KEY=$(echo -n "$JSON_DATA" | base64 -w 0)
-    
-    echo "$NODE_KEY" > "$KEY_FILE"
-    echo -e "${GREEN}部署完成！Key 已保存。${PLAIN}"
-    
-    show_key
 }
 
-# ==========================================
-# 3. 显示 Key
-# ==========================================
-show_key() {
-    if [ ! -f "$KEY_FILE" ]; then
-        echo -e "${RED}错误: 尚未部署，请先执行部署操作。${PLAIN}"
-        return
-    fi
-    KEY=$(cat "$KEY_FILE")
-    echo -e ""
-    echo -e "${GREEN}====== 您的节点 Key (复制下方内容) ======${PLAIN}"
-    echo -e "${YELLOW}${KEY}${PLAIN}"
-    echo -e "${GREEN}=========================================${PLAIN}"
+# 停止服务
+stop_service() {
+    systemctl stop ${SERVICE_NAME_MASTER} 2>/dev/null
+    systemctl stop ${SERVICE_NAME_AGENT} 2>/dev/null
 }
 
-# ==========================================
-# 4. 主菜单
-# ==========================================
+# ==================================================
+# 安装逻辑
+# ==================================================
+
+# 1. 安装主控端 (Master)
+install_master() {
+    check_sys_depend
+    stop_service
+    
+    echo -e "${GREEN}>>> 正在安装 [主控面板] 到 ${APP_DIR} ...${PLAIN}"
+    mkdir -p ${APP_DIR}
+    
+    # ----------------------------------------------------
+    # [关键] 写入主控端代码
+    # 这里使用 cat EOF 写入演示代码，实际使用时可替换为 git clone
+    # ----------------------------------------------------
+    cat > ${APP_DIR}/server.py <<EOF
+import sys
+from flask import Flask
+app = Flask(__name__)
+
+@app.route('/')
+def hello():
+    return "MultiX Master Panel is Running on Port ${SERVER_PORT}"
+
+if __name__ == '__main__':
+    # 监听所有IP，端口 ${SERVER_PORT}
+    print("Starting Master on port ${SERVER_PORT}...")
+    app.run(host='0.0.0.0', port=${SERVER_PORT})
+EOF
+
+    # 安装 Python 依赖
+    pip3 install flask
+
+    # 创建系统服务
+    cat > /etc/systemd/system/${SERVICE_NAME_MASTER}.service <<EOF
+[Unit]
+Description=MultiX Master Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${APP_DIR}
+ExecStart=/usr/bin/python3 ${APP_DIR}/server.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # 启动
+    systemctl daemon-reload
+    systemctl enable ${SERVICE_NAME_MASTER}
+    systemctl start ${SERVICE_NAME_MASTER}
+    
+    open_firewall_port
+    
+    # 标记安装类型
+    echo "master" > ${APP_DIR}/.role
+
+    echo -e "------------------------------------------------"
+    echo -e "${GREEN}主控端安装成功！${PLAIN}"
+    echo -e "访问地址: http://$(curl -s ifconfig.me):${SERVER_PORT}"
+    echo -e "------------------------------------------------"
+}
+
+# 2. 安装被控端 (Agent)
+install_agent() {
+    check_sys_depend
+    stop_service
+
+    echo -e "${YELLOW}请输入主控端 IP 地址:${PLAIN}"
+    read -p "(默认: 127.0.0.1): " MASTER_IP
+    [[ -z "${MASTER_IP}" ]] && MASTER_IP="127.0.0.1"
+
+    echo -e "${GREEN}>>> 正在安装 [被控端 Agent] 到 ${APP_DIR} ...${PLAIN}"
+    mkdir -p ${APP_DIR}
+
+    # ----------------------------------------------------
+    # [关键] 写入被控端代码
+    # ----------------------------------------------------
+    cat > ${APP_DIR}/agent.py <<EOF
+import time
+import sys
+
+def main():
+    print("MultiX Agent Started...")
+    print("Connecting to Master at ${MASTER_IP}:${SERVER_PORT}")
+    while True:
+        # 这里写你的上报逻辑
+        time.sleep(10)
+
+if __name__ == '__main__':
+    main()
+EOF
+    
+    # 创建配置文件
+    echo "MASTER_IP=${MASTER_IP}" > ${APP_DIR}/config.env
+    echo "MASTER_PORT=${SERVER_PORT}" >> ${APP_DIR}/config.env
+
+    # 创建系统服务
+    cat > /etc/systemd/system/${SERVICE_NAME_AGENT}.service <<EOF
+[Unit]
+Description=MultiX Agent Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${APP_DIR}
+ExecStart=/usr/bin/python3 ${APP_DIR}/agent.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # 启动
+    systemctl daemon-reload
+    systemctl enable ${SERVICE_NAME_AGENT}
+    systemctl start ${SERVICE_NAME_AGENT}
+
+    # 标记安装类型
+    echo "agent" > ${APP_DIR}/.role
+
+    echo -e "${GREEN}被控端安装成功！正在后台运行。${PLAIN}"
+}
+
+# 3. 卸载
+uninstall_all() {
+    echo -e "${YELLOW}正在停止并移除服务...${PLAIN}"
+    systemctl stop ${SERVICE_NAME_MASTER} 2>/dev/null
+    systemctl disable ${SERVICE_NAME_MASTER} 2>/dev/null
+    rm -f /etc/systemd/system/${SERVICE_NAME_MASTER}.service
+    
+    systemctl stop ${SERVICE_NAME_AGENT} 2>/dev/null
+    systemctl disable ${SERVICE_NAME_AGENT} 2>/dev/null
+    rm -f /etc/systemd/system/${SERVICE_NAME_AGENT}.service
+    
+    systemctl daemon-reload
+    
+    echo -e "${YELLOW}正在删除文件...${PLAIN}"
+    rm -rf ${APP_DIR}
+    
+    echo -e "${GREEN}卸载完成。${PLAIN}"
+}
+
+# ==================================================
+# 菜单界面
+# ==================================================
 show_menu() {
     clear
-    install_shortcut
-    check_status
-    echo -e "MultiX Panel 节点管理脚本 ${BLUE}v2.1 (GitHub版)${PLAIN}"
-    echo -e "--------------------------------"
-    echo -e "3X-UI状态: ${XUI_STATUS}"
-    echo -e "节点配置:  ${KEY_STATUS}"
-    echo -e "--------------------------------"
-    echo -e " 1. 🚀 一键部署 / 重置配置"
-    echo -e " 2. 🔑 查看当前 Key"
-    echo -e " 3. 🗑️ 卸载脚本与清理用户"
-    echo -e " 0. 退出"
-    echo -e "--------------------------------"
-    read -p "请选择操作 [0-3]: " num
-
-    case "$num" in
-        1) deploy_node ;;
-        2) show_key ;;
+    echo -e "============================================"
+    echo -e "    ${GREEN}MultiX 监控系统一键脚本${PLAIN} ${YELLOW}[Port: ${SERVER_PORT}]${PLAIN}"
+    echo -e "============================================"
+    
+    # 状态检测
+    if [ -f "${APP_DIR}/.role" ]; then
+        ROLE=$(cat ${APP_DIR}/.role)
+        if [ "$ROLE" == "master" ]; then
+            STATUS=$(systemctl is-active ${SERVICE_NAME_MASTER})
+            echo -e "当前状态: ${GREEN}已安装主控端 (Master)${PLAIN} | 运行状态: ${YELLOW}${STATUS}${PLAIN}"
+        elif [ "$ROLE" == "agent" ]; then
+            STATUS=$(systemctl is-active ${SERVICE_NAME_AGENT})
+            echo -e "当前状态: ${GREEN}已安装被控端 (Agent)${PLAIN} | 运行状态: ${YELLOW}${STATUS}${PLAIN}"
+        fi
+    else
+        echo -e "当前状态: ${RED}未安装${PLAIN}"
+    fi
+    
+    echo -e "============================================"
+    echo -e "1. 安装/重装 主控面板 (Master)"
+    echo -e "2. 安装/重装 被控端 (Agent)"
+    echo -e "--------------------------------------------"
+    echo -e "3. 启动服务"
+    echo -e "4. 停止服务"
+    echo -e "5. 重启服务"
+    echo -e "6. 查看运行日志"
+    echo -e "--------------------------------------------"
+    echo -e "9. 卸载程序"
+    echo -e "0. 退出"
+    echo -e "============================================"
+    read -p "请输入选项 [0-9]: " OPT
+    
+    case $OPT in
+        1) install_master ;;
+        2) install_agent ;;
         3) 
-            userdel -r node_tunnel 2>/dev/null
-            rm -rf /etc/multix /usr/bin/multix
-            echo -e "${GREEN}清理完成。${PLAIN}"
+           systemctl start ${SERVICE_NAME_MASTER} 2>/dev/null
+           systemctl start ${SERVICE_NAME_AGENT} 2>/dev/null
+           echo -e "${GREEN}服务已尝试启动${PLAIN}"
+           ;;
+        4) stop_service; echo -e "${GREEN}服务已停止${PLAIN}" ;;
+        5) 
+           stop_service
+           systemctl start ${SERVICE_NAME_MASTER} 2>/dev/null
+           systemctl start ${SERVICE_NAME_AGENT} 2>/dev/null
+           echo -e "${GREEN}服务已重启${PLAIN}" 
+           ;;
+        6) 
+            if [ -f "${APP_DIR}/.role" ] && [ "$(cat ${APP_DIR}/.role)" == "master" ]; then
+                journalctl -u ${SERVICE_NAME_MASTER} -f
+            else
+                journalctl -u ${SERVICE_NAME_AGENT} -f
+            fi
             ;;
+        9) uninstall_all ;;
         0) exit 0 ;;
-        *) echo -e "${RED}输入错误${PLAIN}" ;;
+        *) echo -e "${RED}无效选项${PLAIN}" ;;
     esac
 }
 
+# 运行菜单
 show_menu
