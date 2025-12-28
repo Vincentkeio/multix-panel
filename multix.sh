@@ -65,7 +65,6 @@ install_master() {
     read -p "设置通信 Token [默认 $DEF_TOKEN]: " M_TOKEN
     M_TOKEN=${M_TOKEN:-$DEF_TOKEN}
 
-    # 持久化存储
     cat > $CONFIG_FILE <<EOF
 TYPE=MASTER
 M_PORT=$M_PORT
@@ -117,13 +116,11 @@ HTML_TEMPLATE = """
             </nav>
             <div class="pt-4 border-t border-white/5"><a href="/logout" class="text-zinc-500 hover:text-red-400 text-sm">🚪 退出系统</a></div>
         </aside>
-
         <main class="flex-1 p-8 overflow-y-auto">
             <div class="flex justify-between items-center mb-10">
                 <h2 class="text-2xl font-bold text-white">集群节点 <span class="text-blue-500">({{ agents_count }})</span></h2>
                 <div class="text-xs font-mono bg-zinc-900 border border-white/5 px-4 py-2 rounded-full">Token: <span class="text-yellow-500">{{ auth_token }}</span></div>
             </div>
-
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {% for ip, info in agents.items() %}
                 <div class="bg-zinc-900/50 border border-white/5 rounded-2xl p-6 hover:border-blue-500/50 transition shadow-2xl">
@@ -141,7 +138,6 @@ HTML_TEMPLATE = """
             </div>
         </main>
     </div>
-
     <div id="editorModal" class="fixed inset-0 bg-black/90 backdrop-blur-sm hidden items-center justify-center z-50">
         <div class="bg-zinc-900 border border-white/10 w-[500px] rounded-3xl p-8 shadow-2xl">
             <h3 class="text-xl font-bold text-white mb-6">配置推送: <span id="target_ip_display" class="text-blue-400"></span></h3>
@@ -152,17 +148,16 @@ HTML_TEMPLATE = """
                 <div><label class="text-[10px] uppercase font-bold text-zinc-500 mb-1 block">Reality 私钥</label>
                     <div class="flex gap-2"><input type="text" id="node_priv" class="flex-1 bg-black border border-white/5 rounded-xl p-3 text-sm focus:border-blue-500 outline-none"><button onclick="genKeys()" class="px-3 bg-green-900/20 text-green-500 border border-green-500/20 rounded-xl hover:bg-green-600/30">生成</button></div>
                 </div>
-                <div><label class="text-[10px] uppercase font-bold text-green-600 mb-1 block italic">Reality 公钥 (客户端配置用)</label>
+                <div><label class="text-[10px] uppercase font-bold text-green-600 mb-1 block italic">Reality 公钥</label>
                     <input type="text" id="node_pub" readonly class="w-full bg-zinc-800/50 border border-dashed border-zinc-700 rounded-xl p-3 text-[10px] text-zinc-500" placeholder="随私钥自动生成">
                 </div>
                 <div class="flex gap-4 pt-4">
                     <button onclick="closeEditor()" class="flex-1 py-3 bg-zinc-800 rounded-2xl font-bold hover:bg-zinc-700">取消</button>
-                    <button onclick="saveSync()" class="flex-1 py-3 bg-blue-600 text-white rounded-2xl font-bold hover:bg-blue-500 shadow-lg shadow-blue-600/20 transition">🚀 强行覆盖写入</button>
+                    <button onclick="saveSync()" class="flex-1 py-3 bg-blue-600 text-white rounded-2xl font-bold hover:bg-blue-500 shadow-lg shadow-blue-600/20 transition">🚀 强行同步写入</button>
                 </div>
             </div>
         </div>
     </div>
-
     <script>
         let curIP = "";
         const $ = (id) => document.getElementById(id);
@@ -220,7 +215,7 @@ def send():
     payload = json.dumps({"action": "sync_node", "data": node_data, "token": AUTH_TOKEN})
     if req['ip'] in AGENTS:
         asyncio.run_coroutine_threadsafe(AGENTS[req['ip']]['ws'].send(payload), LOOP)
-        return jsonify({"msg": "✅ 指令已送达，被控正在暴力重装配置..."})
+        return jsonify({"msg": "✅ 指令已送达，被控正在暴力同步..."})
     return jsonify({"msg": "❌ 小鸡离线"}), 404
 
 async def ws_server(websocket):
@@ -252,7 +247,8 @@ EOF
     pkill -9 -f app.py 2>/dev/null
     nohup python3 ${INSTALL_PATH}/master/app.py > ${INSTALL_PATH}/master/master.log 2>&1 &
     install_shortcut
-    echo -e "🎉 MultiX V5.5 主控部署成功！快捷命令: multix"
+    echo -e "${G}🎉 主控部署成功！快捷命令: multix${NC}"
+    read -p "按回车继续..."
 }
 
 # --- 功能：安装被控端 ---
@@ -283,16 +279,12 @@ def get_db_fields():
 async def handle_task(task):
     try:
         if task.get('action') == 'sync_node':
-            # 暴力备份与停止
             subprocess.run(f"cp {DB_PATH} {DB_PATH}.bak", shell=True)
             subprocess.run("docker stop 3x-ui", shell=True)
             time.sleep(1)
-            
-            # SQL 嗅探写入
             fields = get_db_fields()
             data = task['data']
             valid_data = {k: v for k, v in data.items() if k in fields}
-            
             conn = sqlite3.connect(DB_PATH)
             keys = ", ".join(valid_data.keys())
             placeholders = ", ".join(["?"] * len(valid_data))
@@ -300,17 +292,13 @@ async def handle_task(task):
             conn.execute(sql, list(valid_data.values()))
             conn.commit()
             conn.close()
-            
-            # 重启服务
             subprocess.run("docker start 3x-ui", shell=True)
-            print("[*] 节点配置已强行同步")
     except Exception as e: print(f"Error: {e}")
 
 async def run_agent():
     while True:
         try:
             async with websockets.connect(MASTER_WS) as ws:
-                # 握手时发送字段列表，供主控参考
                 await ws.send(json.dumps({"token": TOKEN, "fields": get_db_fields()}))
                 while True:
                     stats = {"cpu": int(psutil.cpu_percent()), "mem": int(psutil.virtual_memory().percent)}
@@ -339,22 +327,23 @@ EOF
     
     install_shortcut
     echo -e "${G}✅ 被控端部署完成！${NC}"
+    read -p "按回车继续..."
 }
 
 # --- 执行入口流程 ---
 install_shortcut
 cp "$0" "$INSTALL_PATH/multix.sh" 2>/dev/null
 
-# 真正的入口：循环显示菜单
 while true; do
     show_menu
     case $choice in
         1) install_master ;;
         2) install_agent ;;
-        3) clear; [ -f $CONFIG_FILE ] && cat $CONFIG_FILE || echo "未安装主控"; read -p "回车继续..." ;;
+        3) clear; [ -f $CONFIG_FILE ] && cat $CONFIG_FILE || echo "未发现配置"; read -p "回车继续..." ;;
         5) clear; echo "1. 重启主控 2. 重启被控 0. 返回"; read -p "选择: " s_opt; 
-           [ "$s_opt" == "1" ] && pkill -9 -f app.py && nohup python3 ${INSTALL_PATH}/master/app.py > /dev/null 2>&1 &;
-           [ "$s_opt" == "2" ] && docker restart multix-agent 3x-ui; ;;
+           if [ "$s_opt" == "1" ]; then pkill -9 -f app.py && nohup python3 ${INSTALL_PATH}/master/app.py > /dev/null 2>&1 & echo "已重启"; fi
+           if [ "$s_opt" == "2" ]; then docker restart multix-agent 3x-ui && echo "已重启"; fi
+           ;;
         9) docker rm -f 3x-ui multix-agent; rm -rf $INSTALL_PATH; exit 0 ;;
         0) exit 0 ;;
     esac
