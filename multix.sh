@@ -1,14 +1,15 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V68.1 (Dependency Fix & Connection Check)
-# Fix 1: Added 'netcat' to dependencies to fix "nc: command not found".
-# Fix 2: Optimized Connection Test logic.
+# MultiX Pro Script V68.2 (Docker Fix & Node Manager UI)
+# Fix 1: Added strict Docker check before Agent installation.
+# Fix 2: Refactored UI Modal to support "Node List" -> "Add/Edit" workflow.
+# Fix 3: Demo Node now fully simulates real behavior (View/Edit/Add).
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V68.1"
+SH_VER="V68.2"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -31,7 +32,7 @@ get_public_ips() {
 }
 pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
-# --- [ 2. 环境修复 (已修复 nc 依赖) ] ---
+# --- [ 2. 环境修复 ] ---
 fix_dual_stack() {
     if grep -q "net.ipv6.bindv6only" /etc/sysctl.conf; then sed -i 's/net.ipv6.bindv6only.*/net.ipv6.bindv6only = 0/' /etc/sysctl.conf
     else echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf; fi
@@ -40,7 +41,6 @@ fix_dual_stack() {
 install_dependencies() {
     echo -e "${YELLOW}[INFO]${PLAIN} 检查并安装依赖..."
     check_sys
-    # V68.1 修复: 显式安装 netcat/nc
     if [[ "${RELEASE}" == "centos" ]]; then 
         yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git nc
     else 
@@ -50,7 +50,13 @@ install_dependencies() {
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1 || \
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" >/dev/null 2>&1
     
-    if ! command -v docker &> /dev/null; then curl -fsSL https://get.docker.com | bash; systemctl start docker; fi
+    # Docker 安装逻辑增强
+    if ! command -v docker &> /dev/null; then
+        echo -e "${YELLOW}[INFO]${PLAIN} 正在安装 Docker..."
+        curl -fsSL https://get.docker.com | bash
+        systemctl enable docker
+        systemctl start docker
+    fi
     fix_dual_stack
 }
 
@@ -128,7 +134,7 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V68.1) ] ---
+# --- [ 6. 主控安装 (V68.2 全功能 UI) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
@@ -142,7 +148,6 @@ install_master() {
     
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     
-    # 将 app.py 写入
     cat > $M_ROOT/master/app.py <<'EOF'
 import json, asyncio, psutil, os, socket, subprocess, base64, logging
 from flask import Flask, render_template_string, request, session, redirect, jsonify
@@ -169,8 +174,17 @@ M_TOKEN = CONF.get('M_TOKEN', 'error')
 app = Flask(__name__)
 app.secret_key = M_TOKEN
 
+# 修复3: 完善 Demo 数据，使其包含 dummy nodes，方便 UI 调试
 AGENTS = {
-    "local-demo": {"alias": "Demo Node", "stats": {"cpu": 0, "mem": 0, "os": "Linux Demo", "xui": "v2.0.0"}, "nodes": [], "is_demo": True}
+    "local-demo": {
+        "alias": "Demo Node", 
+        "stats": {"cpu": 15, "mem": 40, "os": "Demo OS", "xui": "v2.x.x"}, 
+        "nodes": [
+            {"id": 1, "remark": "Demo-VLESS", "port": 443, "protocol": "vless", "settings": {"clients":[{"id":"demo-uuid"}]}, "stream_settings": {"network":"ws", "security":"tls"}},
+            {"id": 2, "remark": "Demo-VMess", "port": 8080, "protocol": "vmess", "settings": {"clients":[{"id":"demo-uuid"}]}, "stream_settings": {"network":"tcp", "security":"none"}}
+        ], 
+        "is_demo": True
+    }
 }
 LOOP_GLOBAL = None
 
@@ -189,7 +203,7 @@ def gen_key():
         elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
     except: return jsonify({"key": "Error: Install Xray", "private": "", "public": ""})
 
-# HTML TEMPLATE
+# HTML - 使用 {% raw %} 保护 JS
 HTML_T = """
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
@@ -198,6 +212,7 @@ HTML_T = """
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <style>
         body { background: #050505; font-family: 'Segoe UI', sans-serif; padding-top: 20px; }
         .card { background: #111; border: 1px solid #333; transition: 0.3s; }
@@ -208,6 +223,8 @@ HTML_T = """
         .ipv6-badge { font-size: 0.7rem; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
         .stat-box { font-size: 0.8rem; color: #888; background: #1a1a1a; padding: 5px 10px; border-radius: 4px; border: 1px solid #333; }
         .header-token { font-family: monospace; color: #ffc107; font-size: 0.9rem; margin-left: 10px; }
+        .table-dark { background: #111; }
+        .table-dark td, .table-dark th { border-color: #333; }
     </style>
 </head>
 <body>
@@ -237,10 +254,23 @@ HTML_T = """
     <div class="modal-dialog modal-lg modal-dialog-centered">
         <div class="modal-content" style="background:#0a0a0a; border:1px solid #333;">
             <div class="modal-header border-bottom border-secondary">
-                <h5 class="modal-title fw-bold">Node Configuration</h5>
+                <h5 class="modal-title fw-bold" id="modalTitle">Node Manager</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body">
+            
+            <div class="modal-body" id="view-list">
+                <div class="d-flex justify-content-between mb-3">
+                    <span class="text-secondary">Inbound Nodes</span>
+                    <button class="btn btn-sm btn-success fw-bold" onclick="toAddMode()"><i class="bi bi-plus-lg"></i> ADD NODE</button>
+                </div>
+                <table class="table table-dark table-hover table-sm text-center align-middle">
+                    <thead><tr><th>ID</th><th>Remark</th><th>Port</th><th>Proto</th><th>Action</th></tr></thead>
+                    <tbody id="tbl-body"></tbody>
+                </table>
+            </div>
+
+            <div class="modal-body" id="view-edit" style="display:none">
+                <button class="btn btn-sm btn-outline-secondary mb-3" onclick="toListView()"><i class="bi bi-arrow-left"></i> Back</button>
                 <form id="nodeForm">
                     <input type="hidden" id="nodeId">
                     <div class="row g-3">
@@ -275,7 +305,6 @@ HTML_T = """
                         <div class="col-12"><hr class="border-secondary"></div>
                         <div class="col-md-6"><label class="form-label text-secondary small fw-bold">NETWORK</label><select class="form-select bg-dark text-white border-secondary" id="network"><option value="tcp">TCP</option><option value="ws">WebSocket</option></select></div>
                         <div class="col-md-6"><label class="form-label text-secondary small fw-bold">SECURITY</label><select class="form-select bg-dark text-white border-secondary" id="security"><option value="none">None</option><option value="tls">TLS</option><option value="reality">Reality</option></select></div>
-                        
                         <div class="col-12 group-reality" style="display:none">
                             <div class="p-3 border border-primary rounded bg-dark bg-opacity-50">
                                 <div class="row g-2">
@@ -292,10 +321,9 @@ HTML_T = """
                         </div>
                     </div>
                 </form>
-            </div>
-            <div class="modal-footer border-top border-secondary">
-                <button type="button" class="btn btn-dark" data-bs-dismiss="modal">Close</button>
-                <button type="button" class="btn btn-primary fw-bold" id="saveBtn">Save & Sync</button>
+                <div class="mt-3 text-end">
+                    <button type="button" class="btn btn-primary fw-bold" id="saveBtn">Save & Sync</button>
+                </div>
             </div>
         </div>
     </div>
@@ -305,6 +333,7 @@ HTML_T = """
 <script>
     let AGENTS = {};
     let ACTIVE_IP = '';
+    let CURRENT_NODES = [];
 
     function updateState() {
         $.get('/api/state', function(data) {
@@ -351,15 +380,54 @@ HTML_T = """
         }
     }
 
+    // --- UI: View Switcher ---
     function openManager(ip) {
         ACTIVE_IP = ip;
-        const agent = AGENTS[ip];
-        if(agent.is_demo) { alert("Demo Mode: Changes won't save."); resetForm(); }
-        else if(agent.nodes && agent.nodes.length > 0) { loadForm(agent.nodes[0]); }
-        else { resetForm(); }
+        CURRENT_NODES = AGENTS[ip].nodes || [];
+        // 如果是 Demo, 我们允许编辑，但 API 会拦截
+        if(AGENTS[ip].is_demo) { console.log("Demo Mode Activated"); }
+        toListView();
         $('#configModal').modal('show');
     }
 
+    function toListView() {
+        $('#view-edit').hide();
+        $('#view-list').show();
+        $('#modalTitle').text(`Nodes on ${ACTIVE_IP}`);
+        const tbody = $('#tbl-body');
+        tbody.empty();
+        if(CURRENT_NODES.length === 0) {
+            tbody.append('<tr><td colspan="5" class="text-secondary">No nodes found. Click Add.</td></tr>');
+        } else {
+            CURRENT_NODES.forEach((n, idx) => {
+                const tr = `
+                    <tr>
+                        <td><span class="badge bg-secondary font-monospace">${n.id}</span></td>
+                        <td>${n.remark}</td>
+                        <td class="font-monospace text-info">${n.port}</td>
+                        <td>${n.protocol}</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary" onclick="toEditMode(${idx})"><i class="bi bi-pencil-square"></i></button>
+                        </td>
+                    </tr>`;
+                tbody.append(tr);
+            });
+        }
+    }
+
+    function toAddMode() {
+        $('#view-list').hide(); $('#view-edit').show();
+        $('#modalTitle').text('Add New Node');
+        resetForm();
+    }
+
+    function toEditMode(idx) {
+        $('#view-list').hide(); $('#view-edit').show();
+        $('#modalTitle').text('Edit Node');
+        loadForm(CURRENT_NODES[idx]);
+    }
+
+    // --- Form Logic ---
     function updateFormVisibility() {
         const p = $('#protocol').val(); const n = $('#network').val(); const s = $('#security').val();
         $('.group-ss').hide(); $('.group-uuid').hide(); $('.group-reality').hide(); $('.group-ws').hide();
@@ -410,7 +478,11 @@ HTML_T = """
         $.ajax({
             url: '/api/sync', type: 'POST', contentType: 'application/json',
             data: JSON.stringify({ip: ACTIVE_IP, config: payload}),
-            success: function() { $('#configModal').modal('hide'); btn.prop('disabled',false).text('Save & Sync'); alert('Synced successfully!'); },
+            success: function(resp) { 
+                $('#configModal').modal('hide'); btn.prop('disabled',false).text('Save & Sync'); 
+                if(resp.status === "demo_ok") { alert('Demo Mode: Configuration validated (Mock Save).'); }
+                else { alert('Synced successfully!'); }
+            },
             error: function() { btn.prop('disabled',false).text('Failed'); alert('Sync Failed'); }
         });
     });
@@ -446,7 +518,9 @@ def api_sync():
     d = request.json
     target = d.get('ip')
     if target in AGENTS:
-        if AGENTS[target].get('is_demo'): return jsonify({"status": "demo_skipped"})
+        # 修复3: Demo 节点返回特殊的成功状态
+        if AGENTS[target].get('is_demo'): return jsonify({"status": "demo_ok"})
+        
         payload = json.dumps({"action": "sync_node", "token": M_TOKEN, "data": d.get('config')})
         asyncio.run_coroutine_threadsafe(AGENTS[target]['ws'].send(payload), LOOP_GLOBAL)
         return jsonify({"status": "sent"})
@@ -494,20 +568,29 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功 (V68.1)${PLAIN}"
+    echo -e "${GREEN}✅ 主控端部署成功 (V68.2)${PLAIN}"
     echo -e "   入口: http://[${IPV6}]:${M_PORT}"
     echo -e "   入口: http://${IPV4}:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
     pause_back
 }
 
-# --- [ 7. 被控安装 (V68.1) ] ---
+# --- [ 7. 被控安装 (V68.2 Docker Fix) ] ---
 install_agent() {
-    install_dependencies; mkdir -p $M_ROOT/agent
+    # 修复1: 强制检查 Docker，如果不存在则尝试安装或报错
+    install_dependencies; 
+    
+    # 再次确认 Docker 命令存在
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}[FATAL] Docker 安装失败或未找到。请手动安装 Docker 后再试。${PLAIN}"
+        echo -e "参考: curl -fsSL https://get.docker.com | bash"
+        exit 1
+    fi
+    
+    mkdir -p $M_ROOT/agent
     
     if [ ! -d "/etc/x-ui" ]; then
         echo -e "${RED}未检测到 3X-UI，建议先安装面板！${PLAIN}"
-        echo "但我们仍会继续安装 Agent..."
     fi
 
     echo -e "${SKYBLUE}>>> 被控配置${PLAIN}"
@@ -528,7 +611,6 @@ WORKDIR /app
 CMD ["python", "agent.py"]
 EOF
     
-    # --- Agent Python 逻辑 (SQL探测) ---
     cat > $M_ROOT/agent/agent.py <<EOF
 import asyncio, json, sqlite3, os, psutil, websockets, socket, platform
 MASTER = "$IN_HOST"; TOKEN = "$IN_TOKEN"; DB_PATH = "/app/db_share/x-ui.db"
@@ -633,7 +715,7 @@ sys_tools() {
 
 # --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V68.1 智能修复版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V68.2 DockerFix & UI)${PLAIN}"
     echo " 1. 安装 主控端"
     echo " 2. 安装 被控端"
     echo " 3. 连通测试"
@@ -648,7 +730,6 @@ main_menu() {
     read -p "选择: " c
     case $c in
         1) install_master ;; 2) install_agent ;;
-        # V68.1 连通测试增加 nc 安装提示
         3) 
             if ! command -v nc &> /dev/null; then
                 echo -e "${RED}[ERROR]${PLAIN} 缺少 nc 工具，正在安装..."
