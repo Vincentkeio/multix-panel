@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==================================================
-# MultiX 监控系统一键管理脚本
+# MultiX 监控系统一键管理脚本 (Fix版)
 # ==================================================
 # 配置区域
 SERVER_PORT=7575                  # 强制使用 7575 端口
@@ -26,15 +26,23 @@ fi
 # 基础函数
 # ==================================================
 
-# 检查系统并安装依赖
+# 检查系统并安装依赖 (修复 Flask 安装问题)
 check_sys_depend() {
     echo -e "${YELLOW}正在检查并安装系统依赖...${PLAIN}"
     if [ -f /etc/debian_version ]; then
         apt-get update -y
-        apt-get install -y wget curl python3 python3-pip git ufw
+        # 优先尝试 apt 安装 python3-flask (最稳妥)
+        apt-get install -y wget curl python3 python3-pip git ufw python3-flask
     elif [ -f /etc/redhat-release ]; then
         yum install -y wget curl python3 python3-pip git firewalld
     fi
+    
+    # 再次检查 flask，如果没装上（比如 yum 源里没有），用 pip 强制安装
+    if ! python3 -c "import flask" &>/dev/null; then
+        echo -e "${YELLOW}正在使用 pip 补充安装 Flask...${PLAIN}"
+        pip3 install flask --break-system-packages 2>/dev/null || pip3 install flask
+    fi
+    
     echo -e "${GREEN}依赖安装完成。${PLAIN}"
 }
 
@@ -56,6 +64,26 @@ stop_service() {
     systemctl stop ${SERVICE_NAME_AGENT} 2>/dev/null
 }
 
+# 获取并显示访问地址 (仿宝塔双栈显示)
+show_access_info() {
+    echo -e "------------------------------------------------"
+    echo -e "${GREEN}主控端安装成功！请通过以下地址访问：${PLAIN}"
+    
+    # 获取 IPv4
+    IPV4=$(curl -s -4 -m 5 ifconfig.me)
+    if [[ -n "$IPV4" ]]; then
+        echo -e "IPv4 访问:  ${GREEN}http://${IPV4}:${SERVER_PORT}${PLAIN}"
+    fi
+
+    # 获取 IPv6
+    IPV6=$(curl -s -6 -m 5 ifconfig.me)
+    if [[ -n "$IPV6" ]]; then
+        echo -e "IPv6 访问:  ${GREEN}http://[${IPV6}]:${SERVER_PORT}${PLAIN}"
+    fi
+    
+    echo -e "------------------------------------------------"
+}
+
 # ==================================================
 # 安装逻辑
 # ==================================================
@@ -70,7 +98,7 @@ install_master() {
     
     # ----------------------------------------------------
     # [关键] 写入主控端代码
-    # 这里使用 cat EOF 写入演示代码，实际使用时可替换为 git clone
+    # 修改：host='::' 以支持 IPv6 + IPv4 双栈监听
     # ----------------------------------------------------
     cat > ${APP_DIR}/server.py <<EOF
 import sys
@@ -82,13 +110,15 @@ def hello():
     return "MultiX Master Panel is Running on Port ${SERVER_PORT}"
 
 if __name__ == '__main__':
-    # 监听所有IP，端口 ${SERVER_PORT}
-    print("Starting Master on port ${SERVER_PORT}...")
-    app.run(host='0.0.0.0', port=${SERVER_PORT})
+    # 监听 :: (IPv6)，Linux 系统通常会自动映射支持 IPv4
+    print("Starting Master on port ${SERVER_PORT} (Dual Stack)...")
+    try:
+        app.run(host='::', port=${SERVER_PORT})
+    except Exception:
+        # 如果不支持双栈，回退到 ipv4
+        print("Dual stack failed, falling back to IPv4...")
+        app.run(host='0.0.0.0', port=${SERVER_PORT})
 EOF
-
-    # 安装 Python 依赖
-    pip3 install flask
 
     # 创建系统服务
     cat > /etc/systemd/system/${SERVICE_NAME_MASTER}.service <<EOF
@@ -117,10 +147,8 @@ EOF
     # 标记安装类型
     echo "master" > ${APP_DIR}/.role
 
-    echo -e "------------------------------------------------"
-    echo -e "${GREEN}主控端安装成功！${PLAIN}"
-    echo -e "访问地址: http://$(curl -s ifconfig.me):${SERVER_PORT}"
-    echo -e "------------------------------------------------"
+    # 显示访问信息
+    show_access_info
 }
 
 # 2. 安装被控端 (Agent)
