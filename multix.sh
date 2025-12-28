@@ -1,15 +1,16 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro NAT/IPv6 Specialized Edition (V45.0)
-# 特性：强制 IPv6 解析 | 双栈优先权选择 | 完整运维菜单 | 零阉割保留
+# MultiX Pro Dual-Stack Ultimate (V46.0)
+# 核心修复：内核级双栈监听 (bindv6only=0) | Agent 强制 IPv6 解析
+# 功能保留：三级 UI | 凭据中心 | 深度清理 | 完整运维菜单 | 物理 Token
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
-# --- [ 0. 快捷命令：开局即驻留 ] ---
+# --- [ 0. 快捷命令驻留 ] ---
 if [[ "$(readlink -f /usr/bin/multix)" != "$(readlink -f $0)" ]]; then
     cp "$0" /usr/bin/multix && chmod +x /usr/bin/multix
     echo -e "${GREEN}✅ multix 快捷命令已就绪，随时输入 multix 调出菜单。${PLAIN}"
@@ -24,10 +25,10 @@ get_public_ips() {
     IPV6=$(curl -s6m 2 api64.ipify.org || echo "未检测到")
 }
 
-# --- [ V45 新增：智能域名解析与协议选择 ] ---
-resolve_host() {
+# --- [ V46 核心：智能域名解析 (解决 NAT 小鸡连不上双栈) ] ---
+resolve_ip() {
     local host=$1
-    local type=$2
+    local type=$2 # AF_INET 或 AF_INET6
     python3 -c "import socket; 
 try: 
     print(socket.getaddrinfo('$host', None, socket.$type)[0][4][0])
@@ -35,9 +36,20 @@ except:
     pass"
 }
 
+# --- [ V46 核心：双栈环境修复 ] ---
+fix_dual_stack() {
+    # 这一步至关重要：允许 IPv6 socket 监听 IPv4 流量
+    if grep -q "net.ipv6.bindv6only" /etc/sysctl.conf; then
+        sed -i 's/net.ipv6.bindv6only.*/net.ipv6.bindv6only = 0/' /etc/sysctl.conf
+    else
+        echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf
+    fi
+    sysctl -p >/dev/null 2>&1
+}
+
 # --- [ 环境修复与依赖 ] ---
 install_dependencies() {
-    echo -e "${YELLOW}⚙️ 检查环境依赖...${PLAIN}"
+    echo -e "${YELLOW}⚙️ 检查并修复环境依赖...${PLAIN}"
     if [[ -f /etc/redhat-release ]]; then
         yum install -y epel-release && yum install -y python3 python3-devel python3-pip curl wget socat tar openssl
     else
@@ -49,14 +61,7 @@ install_dependencies() {
         curl -fsSL https://get.docker.com | bash
         systemctl enable docker && systemctl start docker
     fi
-    
-    # 修复双栈监听
-    if grep -q "net.ipv6.bindv6only" /etc/sysctl.conf; then
-        sed -i 's/net.ipv6.bindv6only.*/net.ipv6.bindv6only = 0/' /etc/sysctl.conf
-    else
-        echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf
-    fi
-    sysctl -p >/dev/null 2>&1
+    fix_dual_stack # 应用双栈补丁
 }
 
 # --- [ 深度清理 ] ---
@@ -82,8 +87,8 @@ credential_center() {
         source $M_ROOT/.env
         get_public_ips
         echo -e "${YELLOW}[主控端配置]${PLAIN}"
-        echo -e "  入口(v4): http://${IPV4}:${M_PORT}"
-        [[ "$IPV6" != "未检测到" ]] && echo -e "  入口(v6): http://[${IPV6}]:${M_PORT}"
+        echo -e "  面板入口: http://${IPV4}:${M_PORT} (IPv4)"
+        [[ "$IPV6" != "未检测到" ]] && echo -e "  面板入口: http://[${IPV6}]:${M_PORT} (IPv6)"
         echo -e "  用户: ${GREEN}$M_USER${PLAIN} | 密码: ${GREEN}$M_PASS${PLAIN}"
         echo -e "  Token: ${SKYBLUE}$M_TOKEN${PLAIN}"
     else
@@ -139,13 +144,12 @@ install_master() {
     
     RAND_TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
     CUR_TOKEN_SHOW=${M_TOKEN:-$RAND_TOKEN}
-    # 交互式 Token 设置
     read -p "Token [默认: ${CUR_TOKEN_SHOW}]: " IN_TOKEN
     M_TOKEN=${IN_TOKEN:-$CUR_TOKEN_SHOW}
     
     echo -e "M_TOKEN=$M_TOKEN\nM_PORT=$M_PORT\nM_USER=$M_USER\nM_PASS=$M_PASS" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控端 (双栈兼容版)...${PLAIN}"
+    echo -e "${YELLOW}🛰️ 部署主控端 (双栈监听版)...${PLAIN}"
     cat > $M_ROOT/master/app.py <<EOF
 import json, asyncio, time, psutil, os, socket, logging
 from flask import Flask, render_template_string, request, session, redirect, jsonify
@@ -168,13 +172,13 @@ def get_sys_info():
         }
     except: return {"cpu":0,"mem":0,"disk":0,"ipv4":"N/A","ipv6":"N/A"}
 
-# 旗舰三级 UI (V39+) + 物理 Token
+# 旗舰三级 UI + 物理 Token
 HTML_T = """
 {% raw %}
 <!DOCTYPE html>
 <html class="dark">
 <head>
-    <meta charset="UTF-8"><title>MultiX Pro V45</title>
+    <meta charset="UTF-8"><title>MultiX Pro V46</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -285,7 +289,7 @@ HTML_T = """
                 const lang = ref('zh'); const agents = ref({}); const masterStats = ref({ CPU:0, MEM:0, DISK:0 }); const sys = ref({ ipv4:'...', ipv6:'...' });
                 const showListModal = ref(false); const showEditModal = ref(false); const activeIp = ref('');
                 const conf = ref({ id:null, remark:'Reality-Node', email:'admin@multix.com', protocol:'vless', port:443, uuid:'', dest:'www.microsoft.com:443', privKey:'', shortId:'6baad05c' });
-                const mockAgent = ref({ syncing: false, nodes: [{ id: 999, remark: 'Mock-Node-V45', port: 443, protocol: 'vless' }] });
+                const mockAgent = ref({ syncing: false, nodes: [{ id: 999, remark: 'Mock-Node-V46', port: 443, protocol: 'vless' }] });
                 const t = { zh: { edit:'修改', addNode:'创建新节点' }, en: { edit:'Edit', addNode:'New Inbound' } };
 
                 const update = async () => {
@@ -369,13 +373,14 @@ async def ws_handler(ws):
 def start_ws():
     global LOOP_GLOBAL; LOOP_GLOBAL = asyncio.new_event_loop(); asyncio.set_event_loop(LOOP_GLOBAL)
     async def m():
-        # 双栈核心：不指定family，让 OS 同时监听 v4/v6
-        async with websockets.serve(ws_handler, "0.0.0.0", 8888): await asyncio.Future()
+        # V46核心：绑定 :: 配合 bindv6only=0 实现双栈
+        async with websockets.serve(ws_handler, "::", 8888, family=socket.AF_INET6): await asyncio.Future()
     LOOP_GLOBAL.run_until_complete(m())
 
 if __name__ == '__main__':
     Thread(target=start_ws, daemon=True).start()
-    app.run(host='0.0.0.0', port=M_PORT)
+    # Flask 绑定 :: 配合 bindv6only=0 实现双栈
+    app.run(host='::', port=M_PORT)
 EOF
 
     cat > /etc/systemd/system/multix-master.service <<EOF
@@ -393,7 +398,7 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功！${PLAIN}"
+    echo -e "${GREEN}✅ 主控端部署成功！(支持 IPv4+IPv6 双栈监听)${PLAIN}"
     echo -e "   ---------------------------------------"
     echo -e "   入口 (IPv4): http://${IPV4}:${M_PORT}"
     [[ "$IPV6" != "未检测到" ]] && echo -e "   入口 (IPv6): http://[${IPV6}]:${M_PORT}"
@@ -403,7 +408,7 @@ EOF
     pause_back
 }
 
-# --- [ 被控安装 (NAT IPv6 特别优化) ] ---
+# --- [ 被控安装 (强制 IPv6 解析) ] ---
 install_agent() {
     install_dependencies
     mkdir -p $M_ROOT/agent
@@ -411,25 +416,23 @@ install_agent() {
     read -p "主控域名/IP: " IN_HOST
     read -p "Token (复制自主控): " IN_TOKEN
     
-    # 智能协议选择
     echo -e "${YELLOW}请选择连接主控的协议 (NAT 小鸡建议强制 IPv6):${PLAIN}"
     echo " 1. 自动检测 (默认)"
-    echo " 2. 强制 IPv4"
+    echo " 2. 强制 IPv4 (当自动检测失败时用)"
     echo " 3. 强制 IPv6 (解决 NAT 小鸡连不上双栈域名)"
     read -p "选择 [1-3]: " NET_OPT
     
     TARGET_HOST="$IN_HOST"
     if [[ "$NET_OPT" == "3" ]]; then
-        # 强制解析 IPv6
-        V6_ADDR=$(resolve_host "$IN_HOST" "AF_INET6")
+        V6_ADDR=$(resolve_ip "$IN_HOST" "AF_INET6")
         if [[ -n "$V6_ADDR" ]]; then
             echo -e "${GREEN}解析到 IPv6: $V6_ADDR${PLAIN}"
-            TARGET_HOST="[$V6_ADDR]"
+            TARGET_HOST="$V6_ADDR" # 直接使用解析出的 IP，避免 socket 再次误判
         else
             echo -e "${RED}无法解析到 IPv6 地址，回退到自动模式。${PLAIN}"
         fi
     elif [[ "$NET_OPT" == "2" ]]; then
-        V4_ADDR=$(resolve_host "$IN_HOST" "AF_INET")
+        V4_ADDR=$(resolve_ip "$IN_HOST" "AF_INET")
         if [[ -n "$V4_ADDR" ]]; then
             TARGET_HOST="$V4_ADDR"
         fi
@@ -454,10 +457,14 @@ def sync_db(data):
         conn.commit(); conn.close(); return True
     except: return False
 async def run():
-    uri = f"ws://{MASTER}:8888"
+    # 检测是 IP 还是域名，如果是 IPv6 IP，添加 []
+    target = MASTER
+    if ":" in target and not target.startswith("["): target = f"[{target}]"
+    uri = f"ws://{target}:8888"
+    
     while True:
         try:
-            async with websockets.connect(uri, family=socket.AF_UNSPEC) as ws:
+            async with websockets.connect(uri) as ws:
                 await ws.send(json.dumps({"token": TOKEN}))
                 while True:
                     conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
@@ -471,12 +478,14 @@ async def run():
                         task = json.loads(msg)
                         if task.get('action') == 'sync_node': os.system("docker stop 3x-ui"); sync_db(task['data']); os.system("docker start 3x-ui")
                     except: continue
-        except: await asyncio.sleep(5)
+        except Exception as e: 
+            print(f"Conn err: {e}")
+            await asyncio.sleep(5)
 asyncio.run(run())
 EOF
-    cd $M_ROOT/agent; docker build -t multix-agent-v45 .
+    cd $M_ROOT/agent; docker build -t multix-agent-v46 .
     docker rm -f multix-agent 2>/dev/null
-    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v $M_ROOT/agent/db_data:/app/db_share -v $M_ROOT/agent:/app multix-agent-v45
+    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v $M_ROOT/agent/db_data:/app/db_share -v $M_ROOT/agent:/app multix-agent-v46
     echo -e "${GREEN}✅ 被控已启动 (连接目标: $TARGET_HOST)。${PLAIN}"
     pause_back
 }
@@ -510,10 +519,10 @@ sys_tools() {
 
 main_menu() {
     clear
-    echo -e "${SKYBLUE}🛰️ MultiX Pro (V45.0 NAT专用版)${PLAIN}"
+    echo -e "${SKYBLUE}🛰️ MultiX Pro (V46.0 双栈兼容版)${PLAIN}"
     echo "------------------------------------------------"
     echo " 1. 安装/更新 主控端 (Master)"
-    echo " 2. 安装/更新 被控端 (Agent) [支持IPv6强制解析]"
+    echo " 2. 安装/更新 被控端 (Agent) [支持IPv6强制]"
     echo "------------------------------------------------"
     echo " 3. 连通性测试 (nc 探测)"
     echo " 4. 被控离线修复 (重启)"
