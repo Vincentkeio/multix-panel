@@ -1,13 +1,17 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro V57.0 (Element Plus Edition)
-# UI: Element Plus (Dark) | Logic: Dynamic Forms | Protocol: SS-2022/Reality
+# MultiX Pro Script V58.0 (Legacy Flow Restoration)
+# Base: GitHub Commit 1ca0549 (Restored Prompts)
+# Core: V57 (Element Plus UI + Protocol Adapters)
 # ==============================================================================
 
+# --- [ 全局变量 ] ---
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V57.0"
+SH_VER="V58.0"
+
+# --- [ 颜色配置 ] ---
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -19,19 +23,23 @@ install_shortcut() {
 install_shortcut
 
 # --- [ 1. 基础函数 ] ---
-check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[ERROR]${PLAIN} Root required" && exit 1; }
+check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[ERROR]${PLAIN} 必须使用 Root 用户运行！" && exit 1; }
+
 check_sys() {
     if [[ -f /etc/redhat-release ]]; then RELEASE="centos";
     elif cat /etc/issue | grep -q -E -i "debian"; then RELEASE="debian";
     else RELEASE="ubuntu"; fi
 }
+
 get_public_ips() {
     IPV4=$(curl -s4m 2 api.ipify.org || echo "N/A"); IPV6=$(curl -s6m 2 api64.ipify.org || echo "N/A")
 }
+
 resolve_ip() {
     python3 -c "import socket; try: print(socket.getaddrinfo('$1', None, socket.$2)[0][4][0]); except: pass"
 }
-pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s -r; main_menu; }
+
+pause_back() { echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
 # --- [ 2. 环境修复 ] ---
 fix_dual_stack() {
@@ -39,20 +47,27 @@ fix_dual_stack() {
     else echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf; fi
     sysctl -p >/dev/null 2>&1
 }
+
 install_dependencies() {
-    echo -e "${YELLOW}[INFO]${PLAIN} 检查环境..."
+    echo -e "${YELLOW}[INFO]${PLAIN} 正在检查并安装依赖..."
     check_sys
     if [[ "${RELEASE}" == "centos" ]]; then yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git
     else apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git; fi
+    
+    # 安装 Python 库
     pip3 install flask websockets psutil --break-system-packages >/dev/null 2>&1 || pip3 install flask websockets psutil >/dev/null 2>&1
+    
+    # 安装 Docker
     if ! command -v docker &> /dev/null; then curl -fsSL https://get.docker.com | bash; systemctl start docker; fi
     fix_dual_stack
 }
 
 # --- [ 3. 深度清理 ] ---
 deep_cleanup() {
-    echo -e "${RED}⚠️  警告：清理所有组件！${PLAIN}"; read -p "确认? [y/N]: " confirm
+    echo -e "${RED}⚠️  警告：此操作将删除所有 MultiX 组件及数据！${PLAIN}"
+    read -p "确认执行? [y/N]: " confirm
     [[ "$confirm" != "y" ]] && return
+    
     systemctl stop multix-master 2>/dev/null; rm -f /etc/systemd/system/multix-master.service
     systemctl daemon-reload
     docker stop multix-agent 2>/dev/null; docker rm -f multix-agent 2>/dev/null
@@ -64,9 +79,15 @@ deep_cleanup() {
 # --- [ 4. 服务管理 ] ---
 service_manager() {
     while true; do
-        clear; echo -e "${SKYBLUE}⚙️ 服务管理${PLAIN}"
-        echo " 1. 启动主控  2. 停止主控  3. 重启主控  4. 主控日志"
-        echo " 5. 重启被控  6. 被控日志  0. 返回"
+        clear; echo -e "${SKYBLUE}⚙️ 服务状态管理${PLAIN}"
+        echo " 1. 启动 主控端"
+        echo " 2. 停止 主控端"
+        echo " 3. 重启 主控端 (应用配置)"
+        echo " 4. 查看 主控日志"
+        echo "----------------"
+        echo " 5. 重启 被控端 (Agent)"
+        echo " 6. 查看 被控日志"
+        echo " 0. 返回"
         read -p "选择: " s
         case $s in
             1) systemctl start multix-master && echo "Done" ;; 2) systemctl stop multix-master && echo "Done" ;;
@@ -78,46 +99,75 @@ service_manager() {
 
 # --- [ 5. 凭据中心 ] ---
 credential_center() {
-    clear; echo -e "${SKYBLUE}🔐 凭据管理${PLAIN}"
+    clear; echo -e "${SKYBLUE}🔐 凭据管理中心${PLAIN}"
     if [ -f $M_ROOT/.env ]; then
-        M_PORT=$(grep "M_PORT" $M_ROOT/.env | cut -d'=' -f2 | tr -d "'\""); M_TOKEN=$(grep "M_TOKEN" $M_ROOT/.env | cut -d'=' -f2 | tr -d "'\"")
+        M_PORT=$(grep "M_PORT" $M_ROOT/.env | cut -d'=' -f2 | tr -d "'\""); 
+        M_USER=$(grep "M_USER" $M_ROOT/.env | cut -d'=' -f2 | tr -d "'\"");
+        M_PASS=$(grep "M_PASS" $M_ROOT/.env | cut -d'=' -f2 | tr -d "'\"");
+        M_TOKEN=$(grep "M_TOKEN" $M_ROOT/.env | cut -d'=' -f2 | tr -d "'\"")
         get_public_ips
-        echo -e "${YELLOW}[主控]${PLAIN} http://[${IPV6}]:${M_PORT} | Token: ${SKYBLUE}$M_TOKEN${PLAIN}"
+        echo -e "${YELLOW}[主控端]${PLAIN} 入口: http://[${IPV6}]:${M_PORT}"
+        echo -e "用户: ${GREEN}$M_USER${PLAIN} | 密码: ${GREEN}$M_PASS${PLAIN}"
+        echo -e "Token: ${SKYBLUE}$M_TOKEN${PLAIN}"
     fi
     if [ -f "$M_ROOT/agent/agent.py" ]; then
         CUR_MASTER=$(grep 'MASTER =' $M_ROOT/agent/agent.py | cut -d'"' -f2)
-        echo -e "${YELLOW}[被控]${PLAIN} 连至: $CUR_MASTER"
+        echo -e "${YELLOW}[被控端]${PLAIN} 连接至: $CUR_MASTER"
     fi
     echo "--------------------------------"
-    echo " 1. 修改配置  2. 修改连接  0. 返回"; read -p "选择: " c
+    echo " 1. 修改主控配置 (端口/用户/密码/Token)"
+    echo " 2. 修改被控连接 (主控IP/Token)"
+    echo " 0. 返回"
+    read -p "选择: " c
     if [[ "$c" == "1" ]]; then
-        read -p "端口: " np; M_PORT=${np:-$M_PORT}; read -p "Token: " nt; M_TOKEN=${nt:-$M_TOKEN}
-        echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='admin'\nM_PASS='admin'" > $M_ROOT/.env
-        fix_dual_stack; systemctl restart multix-master; echo "已重启"
+        read -p "新端口 ($M_PORT): " np; M_PORT=${np:-$M_PORT}
+        read -p "新用户 ($M_USER): " nu; M_USER=${nu:-$M_USER}
+        read -p "新密码 ($M_PASS): " npa; M_PASS=${npa:-$M_PASS}
+        read -p "新Token ($M_TOKEN): " nt; M_TOKEN=${nt:-$M_TOKEN}
+        echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
+        fix_dual_stack; systemctl restart multix-master; echo "主控已重启生效"
     fi
     if [[ "$c" == "2" ]]; then
-        read -p "IP: " nip; sed -i "s/MASTER = \".*\"/MASTER = \"$nip\"/" $M_ROOT/agent/agent.py
-        docker restart multix-agent; echo "已重连"
+        read -p "新主控IP: " nip; sed -i "s/MASTER = \".*\"/MASTER = \"$nip\"/" $M_ROOT/agent/agent.py
+        docker restart multix-agent; echo "被控已重连"
     fi
     main_menu
 }
 
-# --- [ 6. 主控安装 (V57 Element Plus) ] ---
+# --- [ 6. 主控安装 (恢复完整交互 + V57内核) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
-    read -p "端口 [7575]: " IN_PORT; M_PORT=${IN_PORT:-7575}
-    RAND=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-    read -p "Token [$RAND]: " IN_TOKEN; M_TOKEN=${IN_TOKEN:-$RAND}
-    echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='admin'\nM_PASS='admin'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V57.0 旗舰UI)...${PLAIN}"
+    echo -e "${SKYBLUE}>>> 配置主控端参数${PLAIN}"
+    
+    # [恢复点] 完整的交互式询问
+    read -p "请输入管理端口 [默认 7575]: " IN_PORT
+    M_PORT=${IN_PORT:-${M_PORT:-7575}}
+    
+    read -p "请输入管理用户名 [默认 admin]: " IN_USER
+    M_USER=${IN_USER:-${M_USER:-admin}}
+    
+    read -p "请输入管理密码 [默认 admin]: " IN_PASS
+    M_PASS=${IN_PASS:-${M_PASS:-admin}}
+    
+    RAND=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+    read -p "请输入API Token [默认随机]: " IN_TOKEN
+    M_TOKEN=${IN_TOKEN:-${M_TOKEN:-$RAND}}
+    
+    # 写入配置
+    echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
+    
+    echo -e "${YELLOW}🛰️ 正在部署主控端 (V58 Element Plus Edition)...${PLAIN}"
+    
+    # 生成 app.py (V57 Element Plus 内核)
     cat > $M_ROOT/master/app.py <<EOF
 import json, asyncio, psutil, os, socket, subprocess, base64
 from flask import Flask, render_template_string, request, session, redirect, jsonify
 import websockets
 from threading import Thread
 
+# 动态读取配置
 def load_conf():
     c = {}
     try:
@@ -128,7 +178,11 @@ def load_conf():
     return c
 
 CONF = load_conf()
-M_PORT, M_TOKEN = int(CONF.get('M_PORT', 7575)), CONF.get('M_TOKEN', 'err')
+M_PORT = int(CONF.get('M_PORT', 7575))
+M_USER = CONF.get('M_USER', 'admin')
+M_PASS = CONF.get('M_PASS', 'admin')
+M_TOKEN = CONF.get('M_TOKEN', 'error')
+
 app = Flask(__name__); app.secret_key = M_TOKEN
 AGENTS = {}; LOOP_GLOBAL = None
 
@@ -136,83 +190,67 @@ def get_sys_info():
     try: return {"cpu": psutil.cpu_percent(), "mem": psutil.virtual_memory().percent, "ipv4": os.popen("curl -4s api.ipify.org").read().strip(), "ipv6": os.popen("curl -6s api64.ipify.org").read().strip()}
     except: return {"cpu":0,"mem":0}
 
-# [V57] Advanced Key Gen Logic
+# 密钥生成API
 @app.route('/api/gen_key', methods=['POST'])
 def gen_key():
     type = request.json.get('type')
     try:
         if type == 'reality':
             out = subprocess.check_output("xray x25519", shell=True).decode()
-            priv = out.split("Private key:")[1].split()[0].strip()
-            pub = out.split("Public key:")[1].split()[0].strip()
-            return jsonify({"private": priv, "public": pub})
-        elif type == 'ss-128':
-            return jsonify({"key": base64.b64encode(os.urandom(16)).decode()})
-        elif type == 'ss-256':
-            return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
-    except: pass
-    return jsonify({"key": "", "private": "", "public": ""})
+            return jsonify({"private": out.split("Private key:")[1].split()[0].strip(), "public": out.split("Public key:")[1].split()[0].strip()})
+        elif type == 'ss-128': return jsonify({"key": base64.b64encode(os.urandom(16)).decode()})
+        elif type == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
+    except: return jsonify({"key": "", "private": "", "public": ""})
 
 HTML_T = """
 {% raw %}
 <!DOCTYPE html>
 <html class="dark">
 <head>
-    <meta charset="UTF-8"><title>MultiX V57</title>
+    <meta charset="UTF-8"><title>MultiX V58</title>
     <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
     <link rel="stylesheet" href="https://unpkg.com/element-plus/theme-chalk/dark/css-vars.css">
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/element-plus"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background: #020202; color: #cfd3dc; font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif; margin: 0; padding: 20px; }
+        body { background: #020202; color: #cfd3dc; font-family: sans-serif; margin: 0; padding: 20px; }
         .el-drawer__body { padding: 0 !important; background: #0a0a0a !important; }
-        .el-drawer__header { background: #0a0a0a; margin-bottom: 0; border-bottom: 1px solid #222; }
         .glass-card { background: #141414; border: 1px solid #2c2c2c; border-radius: 12px; transition: all 0.3s; }
-        .glass-card:hover { border-color: #409eff; transform: translateY(-2px); }
-        /* Dark mode overrides for Element Plus */
+        .glass-card:hover { border-color: #409eff; }
         :root { --el-bg-color: #141414; --el-text-color-primary: #E5EAF3; --el-border-color: #333; --el-fill-color-blank: #0a0a0a; }
-        .el-input__wrapper, .el-select__wrapper { background-color: #0a0a0a !important; box-shadow: 0 0 0 1px #333 inset !important; }
-        .el-drawer { background-color: #0a0a0a !important; }
+        .el-input__wrapper { background-color: #0a0a0a !important; box-shadow: 0 0 0 1px #333 inset !important; }
     </style>
 </head>
 <body>
     <div id="app">
         <div class="flex justify-between items-center mb-8 px-4">
             <div>
-                <h1 class="text-3xl font-black italic text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-600">MultiX <span class="text-white">Pro</span></h1>
-                <div class="text-xs text-zinc-500 font-mono mt-1">TOKEN: <span class="text-blue-400">{{ token }}</span></div>
+                <h1 class="text-3xl font-black italic text-blue-500">MultiX <span class="text-white">Pro</span></h1>
+                <div class="text-xs text-zinc-500 mt-1 font-mono">TOKEN: {{ token }}</div>
             </div>
             <div class="flex gap-4">
-                <el-tag type="info" effect="dark" round>CPU: {{ masterStats.CPU }}%</el-tag>
-                <el-tag type="info" effect="dark" round>MEM: {{ masterStats.MEM }}%</el-tag>
+                <el-tag type="info" effect="dark">CPU: {{ masterStats.CPU }}%</el-tag>
+                <el-tag type="info" effect="dark">MEM: {{ masterStats.MEM }}%</el-tag>
             </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div v-for="agent in displayAgents" :key="agent.ip" class="glass-card p-6 relative">
+            <div v-for="agent in displayAgents" :key="agent.ip" class="glass-card p-6">
                 <div class="flex justify-between items-start mb-4">
                     <div>
-                        <div class="text-lg font-bold text-white cursor-pointer hover:text-blue-400" @click="editAlias(agent)">{{ agent.alias || 'Node' }} <el-icon><Edit /></el-icon></div>
+                        <div class="text-lg font-bold text-white cursor-pointer hover:text-blue-400" @click="editAlias(agent)">{{ agent.alias || 'Node' }} ✎</div>
                         <div class="text-xs text-zinc-500 font-mono mt-1">{{ agent.ip }}</div>
                     </div>
-                    <div :class="['h-2 w-2 rounded-full', agent.syncing ? 'bg-yellow-500 animate-pulse' : (agent.lastSyncError ? 'bg-red-500' : 'bg-green-500')]"></div>
+                    <div :class="['h-2 w-2 rounded-full', agent.syncing ? 'bg-yellow-500 animate-pulse' : 'bg-green-500']"></div>
                 </div>
-                
                 <div class="grid grid-cols-2 gap-4 mb-6">
-                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5">
-                        <div class="text-[10px] text-zinc-500 uppercase">Load</div>
-                        <div class="text-sm font-bold text-blue-400">{{ agent.stats.cpu }}%</div>
-                    </div>
-                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5">
-                        <div class="text-[10px] text-zinc-500 uppercase">RAM</div>
-                        <div class="text-sm font-bold text-purple-400">{{ agent.stats.mem }}%</div>
-                    </div>
+                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">CPU</div><div class="text-sm font-bold text-blue-400">{{ agent.stats.cpu }}%</div></div>
+                    <div class="bg-black/30 p-3 rounded-lg text-center border border-white/5"><div class="text-[10px] text-zinc-500">MEM</div><div class="text-sm font-bold text-purple-400">{{ agent.stats.mem }}%</div></div>
                 </div>
-
-                <div class="flex items-center justify-between mt-4">
+                <div class="flex justify-between mt-4">
                     <el-tag size="small" type="info">{{ agent.nodes.length }} Nodes</el-tag>
-                    <el-button type="primary" size="small" @click="openManage(agent)" round>Manage</el-button>
+                    <el-button type="primary" size="small" @click="openManage(agent)">Manage</el-button>
                 </div>
             </div>
         </div>
@@ -220,17 +258,12 @@ HTML_T = """
         <el-drawer v-model="drawerVisible" :title="activeAgent.alias + ' / Inbounds'" size="50%">
             <div class="p-6 h-full flex flex-col">
                 <div v-if="!isEditing" class="flex-1 overflow-y-auto space-y-3">
-                    <el-empty v-if="activeAgent.nodes.length === 0" description="No inbounds"></el-empty>
-                    <div v-for="node in activeAgent.nodes" :key="node.id" class="bg-zinc-900 border border-white/5 p-4 rounded-lg flex justify-between items-center hover:border-blue-500/50 transition">
+                    <div v-for="node in activeAgent.nodes" :key="node.id" class="bg-zinc-900 border border-white/5 p-4 rounded-lg flex justify-between items-center hover:border-blue-500/50">
                         <div>
                             <div class="flex items-center gap-2">
                                 <el-tag size="small" effect="dark">{{ node.protocol.toUpperCase() }}</el-tag>
                                 <span class="font-bold text-sm">{{ node.remark }}</span>
-                                <el-tag v-if="node.port" size="small" type="warning" effect="plain">{{ node.port }}</el-tag>
-                            </div>
-                            <div class="text-xs text-zinc-600 mt-1 font-mono">
-                                <span v-if="node.total > 0">Limit: {{ (node.total/1073741824).toFixed(1) }}GB | </span>
-                                <span v-if="node.stream_settings?.security">Sec: {{ node.stream_settings.security }}</span>
+                                <el-tag size="small" type="warning" effect="plain">{{ node.port }}</el-tag>
                             </div>
                         </div>
                         <el-button type="primary" link @click="editNode(node)">Edit</el-button>
@@ -239,138 +272,88 @@ HTML_T = """
 
                 <div v-else class="flex-1 overflow-y-auto pr-2">
                     <el-form :model="form" label-position="top" size="large">
-                        
                         <div class="grid grid-cols-2 gap-4">
                             <el-form-item label="Remark"><el-input v-model="form.remark" /></el-form-item>
                             <el-form-item label="Port"><el-input v-model.number="form.port" type="number" /></el-form-item>
                         </div>
-                        
                         <div class="grid grid-cols-2 gap-4">
                             <el-form-item label="Protocol">
-                                <el-select v-model="form.protocol" @change="handleProtoChange">
-                                    <option value="vless">VLESS</option>
-                                    <option value="vmess">VMess</option>
-                                    <option value="shadowsocks">Shadowsocks</option>
-                                </el-select>
+                                <el-select v-model="form.protocol"><el-option value="vless">VLESS</el-option><el-option value="vmess">VMess</el-option><el-option value="shadowsocks">Shadowsocks</el-option></el-select>
                             </el-form-item>
-                            
                             <el-form-item label="UUID" v-if="['vless','vmess'].includes(form.protocol)">
-                                <el-input v-model="form.uuid">
-                                    <template #append><el-button @click="genUUID">GEN</el-button></template>
-                                </el-input>
+                                <el-input v-model="form.uuid"><template #append><el-button @click="genUUID">GEN</el-button></template></el-input>
                             </el-form-item>
-
                             <el-form-item label="Cipher" v-if="form.protocol === 'shadowsocks'">
                                 <el-select v-model="form.ssCipher">
-                                    <el-option value="aes-256-gcm">aes-256-gcm (Legacy)</el-option>
+                                    <el-option value="aes-256-gcm">aes-256-gcm</el-option>
                                     <el-option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</el-option>
                                     <el-option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</el-option>
                                 </el-select>
                             </el-form-item>
                         </div>
-
                         <el-form-item label="Password" v-if="form.protocol === 'shadowsocks'">
-                            <el-input v-model="form.ssPass">
-                                <template #append><el-button @click="genSSKey">GEN</el-button></template>
-                            </el-input>
+                            <el-input v-model="form.ssPass"><template #append><el-button @click="genSSKey">GEN</el-button></template></el-input>
                         </el-form-item>
-
                         <el-form-item label="Flow" v-if="form.protocol === 'vless' && form.security === 'reality'">
                             <el-select v-model="form.flow"><el-option value="xtls-rprx-vision">xtls-rprx-vision</el-option></el-select>
                         </el-form-item>
 
                         <el-divider content-position="left">Transport & Security</el-divider>
-
                         <div class="grid grid-cols-2 gap-4">
-                            <el-form-item label="Network">
-                                <el-select v-model="form.network">
-                                    <el-option value="tcp">TCP</el-option>
-                                    <el-option value="ws">WebSocket</el-option>
-                                </el-select>
-                            </el-form-item>
-                            <el-form-item label="Security">
-                                <el-select v-model="form.security">
-                                    <el-option value="none">None</el-option>
-                                    <el-option value="tls">TLS</el-option>
-                                    <el-option value="reality" v-if="form.protocol === 'vless'">Reality</el-option>
-                                </el-select>
-                            </el-form-item>
+                            <el-form-item label="Network"><el-select v-model="form.network"><el-option value="tcp">TCP</el-option><el-option value="ws">WebSocket</el-option></el-select></el-form-item>
+                            <el-form-item label="Security"><el-select v-model="form.security"><el-option value="none">None</el-option><el-option value="tls">TLS</el-option><el-option value="reality" v-if="form.protocol === 'vless'">Reality</el-option></el-select></el-form-item>
                         </div>
 
                         <div v-if="form.security === 'reality'" class="bg-blue-900/10 p-4 rounded-lg border border-blue-500/20 mb-4">
-                            <el-form-item label="Dest (SNI)"><el-input v-model="form.dest" placeholder="www.microsoft.com:443" /></el-form-item>
-                            <el-form-item label="Server Names"><el-input v-model="form.serverNames" placeholder="google.com, ..." /></el-form-item>
-                            <el-form-item label="Private Key">
-                                <el-input v-model="form.privKey" type="textarea" :rows="2" placeholder="Private Key">
-                                    <template #append><el-button @click="genRealityPair">PAIR</el-button></template>
-                                </el-input>
-                            </el-form-item>
-                            <el-form-item label="Public Key (Auto)"><el-input v-model="form.pubKey" readonly disabled /></el-form-item>
+                            <el-form-item label="Dest (SNI)"><el-input v-model="form.dest" /></el-form-item>
+                            <el-form-item label="Server Names"><el-input v-model="form.serverNames" /></el-form-item>
+                            <el-form-item label="Private Key"><el-input v-model="form.privKey"><template #append><el-button @click="genRealityPair">PAIR</el-button></template></el-input></el-form-item>
+                            <el-form-item label="Public Key"><el-input v-model="form.pubKey" readonly /></el-form-item>
                             <el-form-item label="Short IDs"><el-input v-model="form.shortIds" /></el-form-item>
-                            <el-form-item label="Fingerprint"><el-input v-model="form.fingerprint" placeholder="chrome" /></el-form-item>
                         </div>
 
                         <div v-if="form.network === 'ws'" class="bg-zinc-800/30 p-4 rounded-lg border border-zinc-700 mb-4">
-                            <el-form-item label="Path"><el-input v-model="form.wsPath" placeholder="/" /></el-form-item>
-                            <el-form-item label="Host"><el-input v-model="form.wsHost" placeholder="domain.com" /></el-form-item>
+                            <el-form-item label="Path"><el-input v-model="form.wsPath" /></el-form-item>
+                            <el-form-item label="Host"><el-input v-model="form.wsHost" /></el-form-item>
+                        </div>
+
+                        <div v-if="form.security === 'tls'" class="bg-green-900/10 p-4 rounded-lg border border-green-500/20 mb-4">
+                            <el-form-item label="Cert Path"><el-input v-model="form.certPath" /></el-form-item>
+                            <el-form-item label="Key Path"><el-input v-model="form.keyPath" /></el-form-item>
                         </div>
 
                         <el-divider content-position="left">Limits</el-divider>
                         <div class="grid grid-cols-2 gap-4">
-                            <el-form-item label="Traffic Limit (GB)">
-                                <el-input v-model="form.totalGB" type="number" placeholder="0 = Unlimited" />
-                            </el-form-item>
-                            <el-form-item label="Expiry Date">
-                                <el-date-picker v-model="form.expiryDate" type="date" placeholder="Unlimited" style="width: 100%" />
-                            </el-form-item>
+                            <el-form-item label="Traffic (GB)"><el-input v-model="form.totalGB" type="number" /></el-form-item>
+                            <el-form-item label="Expiry Date"><el-date-picker v-model="form.expiryDate" type="date" style="width: 100%" /></el-form-item>
                         </div>
-
                     </el-form>
                 </div>
 
                 <div class="mt-4 pt-4 border-t border-zinc-800 flex gap-3">
                     <el-button v-if="isEditing" @click="isEditing = false" class="flex-1">Back</el-button>
-                    <el-button v-if="isEditing" type="primary" @click="saveNode" class="flex-1" :loading="activeAgent.syncing">Save & Restart</el-button>
-                    <el-button v-else type="primary" @click="openAdd" class="w-full">Create New Inbound</el-button>
+                    <el-button v-if="isEditing" type="primary" @click="saveNode" class="flex-1" :loading="activeAgent.syncing">Save</el-button>
+                    <el-button v-else type="primary" @click="openAdd" class="w-full">Add Inbound</el-button>
                 </div>
             </div>
         </el-drawer>
     </div>
-
     <script>
         const { createApp, ref, computed, onMounted, reactive } = Vue;
         const App = {
             setup() {
-                const agents = ref({}); const masterStats = ref({ CPU:0, MEM:0 }); const sys = ref({ ipv4:'...' });
+                const agents = ref({}); const masterStats = ref({}); const sys = ref({});
                 const drawerVisible = ref(false); const isEditing = ref(false);
-                const activeAgent = ref({ nodes: [] });
-                const mockAgent = ref({ ip: 'MOCK', alias: 'Demo Node', stats: {cpu:15,mem:25}, nodes: [], syncing: false });
-                
-                const form = reactive({
-                    id: null, remark: '', port: 2096, protocol: 'vless', uuid: '', email: '', flow: '',
-                    ssCipher: 'aes-256-gcm', ssPass: '',
-                    network: 'tcp', security: 'none',
-                    dest: '', serverNames: '', privKey: '', pubKey: '', shortIds: '', fingerprint: 'chrome',
-                    wsPath: '/', wsHost: '',
-                    totalGB: '', expiryDate: null
-                });
+                const activeAgent = ref({ nodes: [] }); const form = reactive({});
+                const mockAgent = ref({ ip: 'MOCK', alias: 'Demo', stats: {cpu:10,mem:20}, nodes: [], syncing: false });
 
                 const displayAgents = computed(() => {
-                    const list = [mockAgent.value];
-                    for(let k in agents.value) { agents.value[k].ip = k; list.push(agents.value[k]); }
-                    return list;
+                    const list = [mockAgent.value]; for(let k in agents.value) { agents.value[k].ip=k; list.push(agents.value[k]); } return list;
                 });
 
                 const update = async () => {
-                    try {
-                        const r = await fetch('/api/state'); const d = await r.json();
-                        sys.value = d.master; masterStats.value = d.master.stats;
-                        for(let ip in d.agents) {
-                            if(!agents.value[ip] || !agents.value[ip].syncing) {
-                                agents.value[ip] = { ...agents.value[ip], ...d.agents[ip], syncing: false };
-                            }
-                        }
-                    } catch(e){}
+                    try { const r = await fetch('/api/state'); const d = await r.json(); sys.value = d.master; masterStats.value = d.master.stats; 
+                    for(let ip in d.agents) if(!agents.value[ip] || !agents.value[ip].syncing) agents.value[ip] = { ...agents.value[ip], ...d.agents[ip], syncing: false }; } catch(e){}
                 };
 
                 const openManage = (agent) => { activeAgent.value = agent; drawerVisible.value = true; isEditing.value = false; };
@@ -378,107 +361,44 @@ HTML_T = """
                 const editAlias = (agent) => { const n = prompt("Rename:", agent.alias); if(n) agent.alias = n; };
 
                 const resetForm = () => {
-                    Object.assign(form, {
-                        id: null, remark: 'New Inbound', port: Math.floor(Math.random()*10000)+10000, protocol: 'vless',
-                        uuid: crypto.randomUUID(), email: 'user@mx.com', flow: 'xtls-rprx-vision',
-                        ssCipher: '2022-blake3-aes-128-gcm', ssPass: '',
-                        network: 'tcp', security: 'reality',
-                        dest: 'www.microsoft.com:443', serverNames: 'www.microsoft.com', privKey: '', pubKey: '', shortIds: '',
-                        totalGB: '', expiryDate: null
-                    });
-                    genRealityPair(); // Pre-fill reality keys for convenience
+                    Object.assign(form, { id: null, remark: 'New', port: Math.floor(Math.random()*10000)+10000, protocol: 'vless', uuid: crypto.randomUUID(), email: 'u@mx.com', flow: 'xtls-rprx-vision', ssCipher: 'aes-256-gcm', ssPass: '', network: 'tcp', security: 'reality', dest: 'microsoft.com:443', serverNames: 'microsoft.com', privKey: '', pubKey: '', shortIds: '', totalGB: '', expiryDate: null });
+                    genRealityPair();
                 };
 
                 const editNode = (node) => {
-                    const s = node.settings || {}; const ss = node.stream_settings || {};
-                    const client = s.clients ? s.clients[0] : {};
-                    
-                    form.id = node.id; form.remark = node.remark; form.port = node.port; form.protocol = node.protocol;
-                    form.uuid = client.id; form.email = client.email; form.flow = client.flow;
-                    form.ssCipher = s.method; form.ssPass = s.password;
-                    
-                    form.network = ss.network || 'tcp'; form.security = ss.security || 'none';
-                    
-                    // Reality
-                    const r = ss.realitySettings || {};
-                    form.dest = r.dest; form.serverNames = (r.serverNames||[]).join(',');
-                    form.privKey = r.privateKey; form.shortIds = (r.shortIds||[]).join(','); form.fingerprint = r.fingerprint;
-                    
-                    // WS
-                    const w = ss.wsSettings || {};
-                    form.wsPath = w.path; form.wsHost = w.headers?.Host;
-
-                    // Limits
-                    form.totalGB = node.total > 0 ? (node.total / 1073741824).toFixed(2) : '';
-                    form.expiryDate = node.expiry_time > 0 ? new Date(node.expiry_time) : null;
-
+                    const s = node.settings||{}; const ss = node.stream_settings||{}; const c = s.clients?s.clients[0]:{};
+                    Object.assign(form, {
+                        id: node.id, remark: node.remark, port: node.port, protocol: node.protocol, uuid: c.id, email: c.email, flow: c.flow, ssCipher: s.method, ssPass: s.password, network: ss.network||'tcp', security: ss.security||'none',
+                        dest: ss.realitySettings?.dest, serverNames: (ss.realitySettings?.serverNames||[]).join(','), privKey: ss.realitySettings?.privateKey, shortIds: (ss.realitySettings?.shortIds||[]).join(','), fingerprint: ss.realitySettings?.fingerprint,
+                        wsPath: ss.wsSettings?.path, wsHost: ss.wsSettings?.headers?.Host, certPath: ss.tlsSettings?.certificates?.[0]?.certificateFile, keyPath: ss.tlsSettings?.certificates?.[0]?.keyFile,
+                        totalGB: node.total>0?(node.total/1073741824).toFixed(2):'', expiryDate: node.expiry_time>0?new Date(node.expiry_time):null
+                    });
                     isEditing.value = true;
                 };
 
                 const saveNode = async () => {
-                    const agent = activeAgent.value;
-                    if(agent.ip === 'MOCK') return;
-                    agent.syncing = true;
-                    
-                    // Build 3X-UI JSON
-                    const clients = [];
-                    if(form.protocol === 'shadowsocks') {
-                        // SS Logic
-                    } else {
-                        clients.push({ id: form.uuid, email: form.email, flow: form.flow, alterId: 0 });
-                    }
-
+                    if(activeAgent.value.ip === 'MOCK') return;
+                    activeAgent.value.syncing = true;
+                    const clients = []; if(form.protocol !== 'shadowsocks') clients.push({ id: form.uuid, email: form.email, flow: form.flow, alterId: 0 });
                     const stream = { network: form.network, security: form.security };
-                    if(form.security === 'reality') {
-                        stream.realitySettings = {
-                            dest: form.dest, privateKey: form.privKey, shortIds: form.shortIds.split(','),
-                            serverNames: form.serverNames.split(','), fingerprint: form.fingerprint
-                        };
-                    }
+                    if(form.security === 'reality') stream.realitySettings = { dest: form.dest, privateKey: form.privKey, shortIds: form.shortIds.split(','), serverNames: form.serverNames.split(','), fingerprint: form.fingerprint };
                     if(form.network === 'ws') stream.wsSettings = { path: form.wsPath, headers: { Host: form.wsHost } };
-
-                    const settings = form.protocol === 'shadowsocks' 
-                        ? { method: form.ssCipher, password: form.ssPass, network: "tcp,udp" }
-                        : { clients, decryption: "none" };
-
-                    const payload = {
-                        id: form.id, remark: form.remark, port: parseInt(form.port), protocol: form.protocol,
-                        total: form.totalGB > 0 ? Math.floor(form.totalGB * 1073741824) : 0,
-                        expiry_time: form.expiryDate ? new Date(form.expiryDate).getTime() : 0,
-                        settings: JSON.stringify(settings),
-                        stream_settings: JSON.stringify(stream),
-                        sniffing: JSON.stringify({ enabled: true, destOverride: ["http","tls","quic"] })
-                    };
-
-                    try {
-                        await fetch('/api/sync', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ip: agent.ip, config: payload }) });
-                        setTimeout(() => { agent.syncing = false; drawerVisible.value = false; }, 4000);
-                    } catch(e) { agent.syncing = false; }
+                    if(form.security === 'tls') stream.tlsSettings = { certificates: [{ certificateFile: form.certPath, keyFile: form.keyPath }] };
+                    const settings = form.protocol === 'shadowsocks' ? { method: form.ssCipher, password: form.ssPass, network: "tcp,udp" } : { clients, decryption: "none" };
+                    const payload = { id: form.id, remark: form.remark, port: parseInt(form.port), protocol: form.protocol, total: form.totalGB>0?Math.floor(form.totalGB*1073741824):0, expiry_time: form.expiryDate?new Date(form.expiryDate).getTime():0, settings: JSON.stringify(settings), stream_settings: JSON.stringify(stream), sniffing: JSON.stringify({ enabled: true, destOverride: ["http","tls","quic"] }) };
+                    try { await fetch('/api/sync', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ip: activeAgent.value.ip, config: payload }) }); setTimeout(() => { activeAgent.value.syncing = false; drawerVisible.value = false; }, 4000); } catch(e) { activeAgent.value.syncing = false; }
                 };
 
-                // Generators
                 const genUUID = () => form.uuid = crypto.randomUUID();
                 const genEmail = () => form.email = Math.random().toString(36).substring(7)+'@mx.com';
-                const genRealityPair = async () => {
-                    const res = await fetch('/api/gen_key', {method:'POST',headers:{'Content-Type':'application/json'}, body: JSON.stringify({type:'reality'})});
-                    const d = await res.json(); form.privKey = d.private; form.pubKey = d.public;
-                };
-                const genSSKey = async () => {
-                    let type = 'ss-128';
-                    if(form.ssCipher.includes('256')) type = 'ss-256';
-                    if(!form.ssCipher.includes('2022')) { form.ssPass = Math.random().toString(36).slice(-8); return; }
-                    
-                    const res = await fetch('/api/gen_key', {method:'POST',headers:{'Content-Type':'application/json'}, body: JSON.stringify({type})});
-                    const d = await res.json(); form.ssPass = d.key;
-                };
+                const genRealityPair = async () => { const r = await fetch('/api/gen_key', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'reality'})}); const d = await r.json(); form.privKey=d.private; form.pubKey=d.public; };
+                const genSSKey = async () => { let t='ss-128'; if(form.ssCipher.includes('256')) t='ss-256'; const r = await fetch('/api/gen_key', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:t})}); const d=await r.json(); form.ssPass=d.key; };
 
                 onMounted(() => { update(); setInterval(update, 3000); });
                 return { masterStats, sys, drawerVisible, isEditing, activeAgent, displayAgents, form, openManage, openAdd, editAlias, editNode, saveNode, genUUID, genEmail, genRealityPair, genSSKey };
             }
         };
-        const app = createApp(App);
-        app.use(ElementPlus);
-        app.mount('#app');
+        const app = createApp(App); app.use(ElementPlus); app.mount('#app');
     </script>
 </body></html>
 {% endraw %}
@@ -497,20 +417,6 @@ def do_sync():
         asyncio.run_coroutine_threadsafe(AGENTS[target]['ws'].send(payload), LOOP_GLOBAL)
         return jsonify({"status": "sent"})
     return jsonify({"status": "offline"}), 404
-
-@app.route('/api/gen_key', methods=['POST'])
-def gen_key():
-    t = request.json.get('type')
-    try:
-        if t == 'reality':
-            # 优先使用 xray 生成，确保兼容性
-            out = subprocess.check_output("xray x25519", shell=True).decode()
-            priv = out.split("Private key:")[1].split()[0].strip()
-            pub = out.split("Public key:")[1].split()[0].strip()
-            return jsonify({"private": priv, "public": pub})
-        elif t == 'ss-128': return jsonify({"key": base64.b64encode(os.urandom(16)).decode()})
-        elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
-    except: return jsonify({"key": "", "private": "Error: Install Xray", "public": ""})
 
 @app.route('/')
 def index():
@@ -548,7 +454,7 @@ if __name__ == '__main__':
     app.run(host='::', port=M_PORT)
 EOF
 
-    # Systemd
+    # Systemd 配置
     cat > /etc/systemd/system/multix-master.service <<EOF
 [Unit]
 Description=MultiX Master
@@ -564,29 +470,32 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功${PLAIN}"
-    echo -e "   入口: http://${IPV4}:${M_PORT}"
-    [[ "$IPV6" != "N/A" ]] && echo -e "   IPv6: http://[${IPV6}]:${M_PORT}"
+    echo -e "${GREEN}✅ 主控端部署成功！${PLAIN}"
+    echo -e "   IPv4入口: http://${IPV4}:${M_PORT}"
+    [[ "$IPV6" != "N/A" ]] && echo -e "   IPv6入口: http://[${IPV6}]:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
     pause_back
 }
 
-# --- [ 7. 被控安装 ] ---
+# --- [ 7. 被控安装 (V57 数据闭环) ] ---
 install_agent() {
-    install_base; check_docker; mkdir -p $M_ROOT/agent
+    install_dependencies; mkdir -p $M_ROOT/agent
     
+    # 自动安装 3X-UI
     if [ ! -d "/etc/x-ui" ]; then
         echo -e "${RED}未检测到 3X-UI 面板！${PLAIN}"
-        read -p "自动安装? [Y/n]: " i
+        read -p "是否自动安装 3X-UI (MHSanaei)? [Y/n]: " i
         if [[ "$i" != "n" ]]; then
             bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
             ufw allow 2053/tcp 2>/dev/null; firewall-cmd --zone=public --add-port=2053/tcp --permanent 2>/dev/null
-        else exit 1; fi
+        else
+            echo "已取消，退出。"; exit 1
+        fi
     fi
 
-    echo -e "${SKYBLUE}>>> 被控配置${PLAIN}"
-    read -p "主控域名/IP: " IN_HOST; read -p "Token: " IN_TOKEN
-    echo -e "${YELLOW}协议:${PLAIN} 1.自动  2.IPv4  3.IPv6"; read -p "选择: " NET_OPT
+    echo -e "${SKYBLUE}>>> 被控端配置${PLAIN}"
+    read -p "主控域名/IP: " IN_HOST; read -p "主控Token: " IN_TOKEN
+    echo -e "${YELLOW}连接协议:${PLAIN} 1.自动  2.IPv4  3.IPv6"; read -p "选择: " NET_OPT
     TARGET_HOST="$IN_HOST"
     if [[ "$NET_OPT" == "3" ]]; then V6=$(resolve_ip "$IN_HOST" "AF_INET6"); [[ -n "$V6" ]] && TARGET_HOST="[$V6]"; fi
     if [[ "$NET_OPT" == "2" ]]; then V4=$(resolve_ip "$IN_HOST" "AF_INET"); [[ -n "$V4" ]] && TARGET_HOST="$V4"; fi
@@ -635,13 +544,13 @@ async def run():
         except: await asyncio.sleep(5)
 asyncio.run(run())
 EOF
-    cd $M_ROOT/agent; docker build -t multix-agent-v57 .
+    cd $M_ROOT/agent; docker build -t multix-agent-v58 .
     docker rm -f multix-agent 2>/dev/null
-    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v57
+    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v58
     echo -e "${GREEN}✅ 被控已启动${PLAIN}"; pause_back
 }
 
-# --- [ 8. 运维菜单 ] ---
+# --- [ 8. 运维工具箱 ] ---
 sys_tools() {
     while true; do
         clear; echo -e "${SKYBLUE}🧰 运维工具箱${PLAIN}"
@@ -654,12 +563,13 @@ sys_tools() {
             5) sqlite3 $M_ROOT/agent/db_data/x-ui.db "UPDATE client_traffics SET up=0, down=0;" && echo "已清空" ;;
             6) read -p "端口: " p; ufw allow $p/tcp 2>/dev/null; firewall-cmd --zone=public --add-port=$p/tcp --permanent 2>/dev/null; echo "Done" ;;
             0) break ;;
-        esac; read -n 1 -s -r -p "按键继续..."
+        esac; read -n 1 -s -r -p "继续..."
     done; main_menu
 }
 
+# --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V57.0 旗舰版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V58.0 还原+增强版)${PLAIN}"
     echo " 1. 安装 主控端 | 2. 安装 被控端"
     echo " 3. 连通测试   | 4. 被控重启"
     echo " 5. 深度清理   | 6. 环境修复"
