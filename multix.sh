@@ -1,5 +1,5 @@
 #!/bin/bash
-# MultiX V5.2 - 修正版 (修复重启语法错误 + 优化 Agent 引导安装)
+# MultiX V5.2 - 修正版 (修复重启语法错误 + 优化安装引导逻辑)
 
 INSTALL_PATH="/opt/multix_mvp"
 G='\033[0;32m'
@@ -31,10 +31,10 @@ show_menu() {
     echo "2. 📡 安装/重装 被控端 (Agent)"
     echo "----------------------------------"
     echo "3. 🔍 查看配置档案 (Token/地址)"
-    echo "4. 📊 连通性自检 (诊断握手状态)"
-    echo "5. ⚙️  修改配置/凭据 (不重装直接修改)"
+    echo "4. ⚙️  修改配置/凭据 (不重装直接修改)"
+    echo "5. 📊 服务运行状态查询"
     echo "----------------------------------"
-    echo "7. ⚡ 重启所有服务"
+    echo "7. ⚡ 重启所有服务 (修复)"
     echo "9. 🗑️  完全卸载"
     echo "0. 🚪 退出"
     echo -e "${G}==================================${NC}"
@@ -89,8 +89,8 @@ HTML_TEMPLATE = """
             <div class="mt-auto"><a href="/logout" class="text-zinc-500 text-sm">退出登录</a></div>
         </div>
         <div class="flex-1 p-10">
-            <h2 class="text-2xl font-bold mb-8 text-white text-3xl font-bold">在线节点 ({{ agents_count }})</h2>
-            <div class="grid grid-cols-3 gap-6">
+            <h2 class="text-2xl font-bold mb-8 text-white">在线小鸡 ({{ agents_count }})</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {% for ip, info in agents.items() %}
                 <div class="bg-zinc-900 border border-white/5 p-6 rounded-2xl">
                     <div class="flex justify-between mb-4"><b>{{ ip }}</b><span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span></div>
@@ -105,7 +105,7 @@ HTML_TEMPLATE = """
             <h3 class="text-white mb-6 font-bold text-lg italic">节点配置: <span id="tip" class="text-blue-500"></span></h3>
             <div class="space-y-4">
                 <input id="uuid" placeholder="节点 UUID" class="w-full bg-black border border-white/5 p-3 rounded-xl text-sm">
-                <div class="flex gap-2"><input id="priv" placeholder="Reality 私钥" class="flex-1 bg-black border border-white/5 p-3 rounded-xl text-sm"><button onclick="gk()" class="bg-green-600/20 text-green-500 px-4 rounded-xl text-xs font-bold border border-green-500/20">生成密钥对</button></div>
+                <div class="flex gap-2"><input id="priv" placeholder="Reality 私钥" class="flex-1 bg-black border border-white/5 p-3 rounded-xl text-sm"><button onclick="gk()" class="bg-green-600/20 text-green-500 px-4 rounded-xl text-xs font-bold">生成密钥对</button></div>
                 <input id="pub" readonly placeholder="公钥 (随私钥同步生成)" class="w-full bg-zinc-800/50 p-3 rounded-xl text-xs text-zinc-500 border-dashed border border-zinc-700">
                 <div class="flex gap-4 pt-4"><button onclick="closeM()" class="flex-1 py-3 bg-zinc-800 rounded-xl">取消</button><button onclick="ss()" class="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-500/20">下发配置</button></div>
             </div>
@@ -137,7 +137,7 @@ def login():
         if request.form['u'] == "admin" and request.form['p'] == "admin":
             session['logged'] = True
             return redirect('/')
-    return '<h3>Login</h3><form method="post"><input name="u" placeholder="User"><input name="p" type="password" placeholder="Pass"><button>Go</button></form>'
+    return '<h3>Auth</h3><form method="post"><input name="u" placeholder="User"><input name="p" type="password" placeholder="Pass"><button>Go</button></form>'
 
 @app.route('/')
 def index():
@@ -151,7 +151,7 @@ def send():
     payload = json.dumps({"action": "sync_node", "data": node_data, "token": AUTH_TOKEN})
     if req['ip'] in AGENTS:
         asyncio.run_coroutine_threadsafe(AGENTS[req['ip']]['ws'].send(payload), LOOP)
-        return jsonify({"msg": "✅ 指令已送达队列"})
+        return jsonify({"msg": "✅ 已下发"})
     return jsonify({"msg": "❌ 离线"})
 
 async def ws_server(websocket):
@@ -183,17 +183,17 @@ EOF
     read -p "按回车继续..."
 }
 
-# --- 被控端引导安装 (凭据设置先行) ---
+# --- 被控端安装 (引导式) ---
 install_agent() {
     clear
-    echo -e "${G}--- 启动被控端引导安装 ---${NC}"
-    echo -e "${Y}[步骤 1/3] 设置通信凭据${NC}"
-    read -p "请输入主控端 IP 地址: " M_IP
-    read -p "请输入通信 Token (须与主控一致): " A_TOKEN
-    echo -e "${Y}[步骤 2/3] 设置本地面板端口${NC}"
-    read -p "自定义被控面板端口 [默认 2053]: " P_WEB
+    echo -e "${G}--- 启动被控端引导安装 (V5.2) ---${NC}"
+    echo -e "${Y}[步骤 1/3] 请输入主控端公网 IP:${NC}"
+    read -p "IP: " M_IP
+    echo -e "${Y}[步骤 2/3] 请输入通信 Token (须与主控一致):${NC}"
+    read -p "Token: " A_TOKEN
+    echo -e "${Y}[步骤 3/3] 设置被控面板端口 [默认 2053]:${NC}"
+    read -p "Port: " P_WEB
     P_WEB=${P_WEB:-2053}
-    echo -e "${Y}[步骤 3/3] 环境部署中...${NC}"
 
     apt update && apt install -y sqlite3 docker.io psmisc lsof curl
     mkdir -p ${INSTALL_PATH}/agent/db_data
@@ -247,24 +247,24 @@ EOF
       -v ${INSTALL_PATH}/agent/db_data:/app/db_share multix-agent-image
     
     install_shortcut
-    echo -e "${G}✅ 被控端安装完成并已上线！${NC}"
-    read -p "按回车返回菜单..."
+    echo -e "${G}✅ 被控端已完成凭据配置并上线！${NC}"
+    read -p "按回车继续..."
 }
 
-# --- 修改被控凭据 (不重装直接更新) ---
+# --- 修改被控凭据 ---
 modify_config() {
     clear
-    echo -e "${Y}--- 快速修改配置 (无需重装) ---${NC}"
+    echo -e "${Y}--- 快速修改凭据 (无需重装) ---${NC}"
     read -p "新主控 IP (回车跳过): " nip
     read -p "新 Token (回车跳过): " ntk
     [ ! -z "$nip" ] && sed -i "s/MASTER_WS = .*/MASTER_WS = \"ws:\/\/$nip:8888\"/" $INSTALL_PATH/agent/agent.py
     [ ! -z "$ntk" ] && sed -i "s/TOKEN = .*/TOKEN = \"$ntk\"/" $INSTALL_PATH/agent/agent.py
     docker restart multix-agent
-    echo -e "${G}✅ 凭据更新成功，Agent 已重启。${NC}"
+    echo -e "${G}✅ 凭据更新成功，Agent 已重连。${NC}"
     sleep 1
 }
 
-# --- 执行主流程 ---
+# --- 执行流程 ---
 mkdir -p $INSTALL_PATH
 cp "$0" "$INSTALL_PATH/multix.sh" 2>/dev/null
 install_shortcut
@@ -275,34 +275,26 @@ while true; do
         2) install_agent ;;
         3) 
             clear
-            echo -e "${G}==================================${NC}"
-            echo -e "      🛰️ MultiX V5.2 档案库        "
-            echo -e "${G}==================================${NC}"
+            echo -e "${G}=== 配置档案 ===${NC}"
             [ -f "$INSTALL_PATH/master/app.py" ] && echo -e "主控 Token: ${Y}$(grep "AUTH_TOKEN =" "$INSTALL_PATH/master/app.py" | cut -d'"' -f2)${NC}"
-            [ -f "$INSTALL_PATH/agent/agent.py" ] && echo -e "被控连接: ${G}$(grep "MASTER_WS =" "$INSTALL_PATH/agent/agent.py" | cut -d'"' -f2)${NC}"
-            echo -e "${G}==================================${NC}"
-            read -p "按回车返回..." ;;
-        4) 
-            echo -e "${Y}[*] 正在执行日志诊断...${NC}"
-            docker restart multix-agent >/dev/null
-            sleep 3
-            docker logs --tail 20 multix-agent
-            read -p "诊断完成，按任意键返回..." -n 1 -r ;;
-        5) modify_config ;;
+            [ -f "$INSTALL_PATH/agent/agent.py" ] && echo -e "Agent 指向: ${G}$(grep "MASTER_WS =" "$INSTALL_PATH/agent/agent.py" | cut -d'"' -f2)${NC}"
+            read -p "返回..." ;;
+        4) modify_config ;;
+        5) 
+            echo -e "${Y}[*] 正在检索服务状态...${NC}"
+            pgrep -f "app.py" && echo "主控进程: OK" || echo "主控进程: DOWN"
+            docker ps | grep "multix-agent" && echo "被控容器: OK" || echo "被控容器: DOWN"
+            read -p "返回..." ;;
         7) 
             pkill -9 -f app.py
             [ -f "$INSTALL_PATH/master/app.py" ] && nohup python3 $INSTALL_PATH/master/app.py > /dev/null 2>&1 &
             docker restart multix-agent 3x-ui
-            echo -e "${G}✅ 服务已完成重启流程。${NC}"
+            echo "✅ 服务已平滑重启"
             sleep 1 ;;
         9) 
-            read -p "确认卸载？(y/n): " confirm
-            if [ "$confirm" == "y" ]; then
-                docker rm -f 3x-ui multix-agent multix-engine 2>/dev/null
-                rm -rf $INSTALL_PATH /usr/local/bin/multix
-                echo "已彻底清除系统。"
-                exit 0
-            fi ;;
+            docker rm -f 3x-ui multix-agent multix-engine 2>/dev/null
+            rm -rf $INSTALL_PATH /usr/local/bin/multix
+            exit 0 ;;
         0) exit 0 ;;
         *) echo "无效选项" ; sleep 1 ;;
     esac
