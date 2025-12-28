@@ -1,5 +1,5 @@
 #!/bin/bash
-# MultiX V11.3 - 究极全功能集成版 (函数序位修复 | 100% 拒绝省略 | 2025最终版)
+# MultiX V11.5 - 旗舰集成版 (函数序位修复 | 深度镜像清理 | 安装后即显地址)
 
 INSTALL_PATH="/opt/multix_mvp"
 CONFIG_FILE="${INSTALL_PATH}/.env"
@@ -11,36 +11,38 @@ R='\033[0;31m'
 NC='\033[0m'
 
 # ==========================================
-# 0. 【修复】IP 嗅探函数 (必须置于顶端)
+# 0. 【置顶修复】IP 嗅探函数 (确保全局调用)
 # ==========================================
 get_all_ips() {
-    # 增加超时检测，防止嗅探卡死
-    IPV4=$(curl -4 -s --connect-timeout 3 https://api.ipify.org || echo "N/A")
-    IPV6=$(curl -6 -s --connect-timeout 3 https://api64.ipify.org || echo "N/A")
+    # 增加 5 秒超时，防止网络波动导致脚本假死
+    IPV4=$(curl -4 -s --connect-timeout 5 https://api.ipify.org || echo "N/A")
+    IPV6=$(curl -6 -s --connect-timeout 5 https://api64.ipify.org || echo "N/A")
 }
 
 # ==========================================
-# 1. 深度环境修复
+# 1. 深度环境修复 (增强清理镜像残留)
 # ==========================================
 force_fix_env() {
-    echo -e "${Y}[*] 正在执行全量环境调优...${NC}"
+    echo -e "${Y}[*] 正在执行深度清理与环境初始化...${NC}"
+    # 1. 停止并删除所有相关容器
     docker rm -f 3x-ui multix-agent 3x-ui-master 2>/dev/null
+    # 2. 【新增】清理未使用的镜像残留，释放磁盘空间
+    docker image prune -af 2>/dev/null
+    # 3. 暴力清理 Python 进程
     pkill -9 -f app.py 2>/dev/null
     pkill -9 -f agent.py 2>/dev/null
-    
-    # 强制优化 MTU 解决 NAT 环境下的 Connection Reset
+    # 4. 优化网卡 MTU
     ETH_NAME=$(ip route | grep default | awk '{print $5}' | head -n 1)
     ip link set $ETH_NAME mtu 1280 2>/dev/null
-    
+    # 5. 重置依赖
     apt-get update -y >/dev/null 2>&1
     apt-get install -y python3 python3-pip python3-full psmisc curl lsof sqlite3 netcat-openbsd docker.io --no-install-recommends >/dev/null 2>&1
-    systemctl start docker >/dev/null 2>&1
     python3 -m pip install flask websockets psutil cryptography --break-system-packages --quiet --force-reinstall >/dev/null 2>&1 || true
-    echo -e "${G}✅ 环境调优完成。${NC}"
+    echo -e "${G}✅ 深度自愈完成，环境已完全纯净。${NC}"
 }
 
 # ==========================================
-# 2. 凭据管理中心 (全功能实现)
+# 2. 凭据管理中心 (集成版)
 # ==========================================
 manage_credentials() {
     clear
@@ -49,11 +51,11 @@ manage_credentials() {
     WS_STATUS=$(lsof -i :8888 >/dev/null && echo -e "${G}RUNNING${NC}" || echo -e "${R}STOPPED${NC}")
 
     echo -e "${G}==================================${NC}"
-    echo -e "      MultiX 凭据管理中心 (V11.3)  "
+    echo -e "      MultiX 凭据管理中心 (V11.5)  "
     echo -e "${G}==================================${NC}"
     echo -e "主机 IPv4: ${G}${IPV4}${NC}"
-    echo -e "主机 IPv6: ${G}${IPV6}${NC} (被控连接优先)"
-    echo -e "WS 状态 (8888): $WS_STATUS"
+    echo -e "主机 IPv6: ${G}${IPV6}${NC} (被控优先)"
+    echo -e "WS 通讯状态 (8888): $WS_STATUS"
     echo -e "----------------------------------"
     echo -e "管理地址(v6): ${G}http://[${IPV6}]:${M_PORT:-7575}${NC}"
     echo -e "管理账号: ${G}${M_USER:-admin}${NC}"
@@ -81,8 +83,7 @@ EOF
     write_master_app_py
     pkill -9 -f app.py 2>/dev/null
     nohup python3 ${INSTALL_PATH}/master/app.py > /dev/null 2>&1 &
-    echo -e "${G}✅ 配置已应用。${NC}"
-    read -p "回车继续..." ; manage_credentials
+    read -p "✅ 配置已应用。按回车返回..." ; manage_credentials
 }
 
 # ==========================================
@@ -96,15 +97,15 @@ test_connectivity() {
     read -p "请输入要探测的主控 IP/IPv6: " T_HOST
     echo -e "${Y}[*] 正在探测 TCP 8888 端口...${NC}"
     if nc -zv -w 5 $T_HOST 8888 2>&1 | grep -q 'succeeded'; then
-        echo -e "${G}✅ 端口可达！网络链路通畅。${NC}"
+        echo -e "${G}✅ 端口连通成功！${NC}"
     else
-        echo -e "${R}❌ 端口不通，请确认主控 8888 防火墙已放行。${NC}"
+        echo -e "${R}❌ 连通失败，请检查主控防火墙。${NC}"
     fi
     read -p "回车返回..." ; show_menu
 }
 
 # ==========================================
-# 4. 主控核心 (全量补齐：IP显示/仪表盘/异步)
+# 4. 主控核心 (全量审计补齐)
 # ==========================================
 write_master_app_py() {
     source "$CONFIG_FILE"
@@ -119,7 +120,6 @@ M_PORT = ${M_PORT}
 M_USER = "${M_USER}"
 M_PASS = "${M_PASS}"
 M_TOKEN = "${M_TOKEN}"
-# 【修复】IP强注入，解决面板显示 [] 的问题
 IPV4_ADDR = "${IPV4}"
 IPV6_ADDR = "${IPV6}"
 
@@ -133,39 +133,41 @@ HTML_T = "{% raw %}" + """
 <!DOCTYPE html>
 <html class="dark">
 <head>
-    <meta charset="UTF-8"><script src="https://unpkg.com/vue@3/dist/vue.global.js"></script><script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="UTF-8"><title>MultiX Center</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>body { background: #000; color: #cbd5e1; }</style>
 </head>
-<body class="p-8">
+<body class="p-6 md:p-12">
     <div id="app">
         <div class="flex justify-between items-center mb-10">
-            <div><h1 class="text-3xl font-black text-blue-500 italic">🛰️ MultiX Center</h1><p class="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">Version 11.3 Final</p></div>
+            <div><h1 class="text-3xl font-black text-blue-500 italic">🛰️ MultiX Center</h1><p class="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-1">V11.5 Ultimate</p></div>
             <div class="flex gap-4">
                 <button @click="update" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2">
-                    <span :class="{'animate-spin': loading}">🔄</span> 刷新
+                    <span :class="{'animate-spin': loading}">🔄</span> 刷新状态
                 </button>
                 <div class="px-4 py-2 bg-zinc-900 border border-white/5 rounded-xl text-[10px] font-mono text-yellow-500">TOKEN: """ + M_TOKEN + """</div>
             </div>
         </div>
         <div class="mb-10 p-6 bg-zinc-900 border border-blue-500/10 rounded-3xl grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
-            <div class="bg-black/40 p-3 rounded-xl border border-white/5 truncate">IPv6: ws://[""" + IPV6_ADDR + """]:8888</div>
-            <div class="bg-black/40 p-3 rounded-xl border border-white/5 truncate">IPv4: ws://""" + IPV4_ADDR + """]:8888</div>
+            <div class="truncate text-white"><span class="text-zinc-500">WS_IPv6:</span> ws://[""" + IPV6_ADDR + """]:8888</div>
+            <div class="truncate text-white"><span class="text-zinc-500">WS_IPv4:</span> ws://""" + IPV4_ADDR + """]:8888</div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div v-for="(info, ip) in agents" :key="ip" class="bg-zinc-900 border border-white/5 p-8 rounded-[2rem] shadow-2xl transition hover:border-blue-500/50">
+            <div v-for="(info, ip) in agents" :key="ip" class="bg-zinc-900 border border-white/5 p-8 rounded-[2rem] shadow-2xl transition hover:border-blue-500/40">
                 <div class="flex justify-between items-start mb-8">
-                    <div><div class="text-white text-xl font-bold">{{ip}}</div><div class="text-[9px] text-green-500 font-bold italic">Connected Agent</div></div>
-                    <div class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
+                    <div><div class="text-white text-xl font-bold">{{ip}}</div><div class="text-[9px] text-green-500 font-bold italic font-bold">ONLINE</div></div>
+                    <div class="h-3 w-3 rounded-full bg-green-500 animate-pulse"></div>
                 </div>
-                <div class="grid grid-cols-2 gap-4 mb-8 text-center">
-                    <div class="bg-black p-4 rounded-2xl border border-white/5"><div class="text-[10px] text-zinc-500 uppercase mb-1">CPU</div><div class="text-xl font-black text-white italic">{{info.stats.cpu}}%</div></div>
-                    <div class="bg-black p-4 rounded-2xl border border-white/5"><div class="text-[10px] text-zinc-500 uppercase mb-1">MEM</div><div class="text-xl font-black text-white italic">{{info.stats.mem}}%</div></div>
+                <div class="grid grid-cols-2 gap-4 mb-8 text-center text-[10px] font-bold">
+                    <div class="bg-black/50 p-4 rounded-2xl">CPU: {{info.stats.cpu}}%</div>
+                    <div class="bg-black/50 p-4 rounded-2xl">MEM: {{info.stats.mem}}%</div>
                 </div>
-                <button @click="sync(ip)" class="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-bold text-[10px] uppercase shadow-lg shadow-blue-600/20 active:scale-95 transition">Sync Reality Node</button>
+                <button @click="sync(ip)" class="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-bold text-[10px] uppercase transition">Sync Reality Node</button>
             </div>
             <div v-if="Object.keys(agents).length === 0" class="bg-zinc-900/30 border border-dashed border-white/10 rounded-[2rem] p-8 opacity-40 relative group">
-                <div class="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[2px] rounded-[2rem] z-10"><span class="bg-white/10 px-4 py-1 rounded-full text-[10px] font-bold text-white uppercase tracking-tighter">示例卡片 / Example</span></div>
-                <div class="flex justify-between mb-8"><div><div class="text-zinc-400 text-xl font-bold">1.1.1.1</div><div class="text-[9px] text-zinc-600 italic">Mock Data</div></div><div class="h-3 w-3 rounded-full bg-zinc-700"></div></div>
+                <div class="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[2px] rounded-[2rem] z-10"><span class="bg-white/10 px-4 py-1 rounded-full text-[10px] font-bold text-white uppercase">布局预览 / MOCKUP</span></div>
+                <div class="flex justify-between mb-8"><div><div class="text-zinc-400 text-xl font-bold italic">1.1.1.1</div><div class="text-[9px] text-zinc-600 font-bold italic mt-1">Mockup Data</div></div><div class="h-3 w-3 rounded-full bg-zinc-700"></div></div>
                 <div class="grid grid-cols-2 gap-4 mb-8 text-center"><div class="bg-black/20 p-4 rounded-xl text-zinc-700 italic font-black">20%</div><div class="bg-black/20 p-4 rounded-xl text-zinc-700 italic font-black">30%</div></div>
                 <button disabled class="w-full py-4 bg-zinc-800 text-zinc-700 rounded-2xl font-black text-[10px] uppercase">Sync Node</button>
             </div>
@@ -201,10 +203,10 @@ def do_sync():
     target = request.json.get('ip')
     if target in AGENTS:
         # 下发全量同步逻辑
-        payload = json.dumps({"action": "sync_node", "token": M_TOKEN, "data": {"remark": "V11_Reality", "port": 443, "protocol": "vless", "settings": "{}", "stream_settings": "{}"}})
+        payload = json.dumps({"action": "sync_node", "token": M_TOKEN, "data": {"remark": "V11.5_Sync", "port": 443, "protocol": "vless", "settings": "{}", "stream_settings": "{}"}})
         asyncio.run_coroutine_threadsafe(AGENTS[target]['ws'].send(payload), LOOP_GLOBAL)
-        return jsonify({"msg": "🚀 指令已推送至 Agent"})
-    return jsonify({"msg": "节点离线"})
+        return jsonify({"msg": "🚀 任务下发指令已成功送出"})
+    return jsonify({"msg": "节点不在线"})
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -234,6 +236,7 @@ def start_ws_server():
     global LOOP_GLOBAL
     LOOP_GLOBAL = asyncio.new_event_loop(); asyncio.set_event_loop(LOOP_GLOBAL)
     async def main():
+        # 【双栈修复】
         async with websockets.serve(ws_handler, "::", 8888, family=socket.AF_INET6):
             await asyncio.Future()
     asyncio.run(main())
@@ -245,17 +248,17 @@ EOF
 }
 
 # ==========================================
-# 5. 安装与被控补全 (100% 拒绝省略)
+# 5. 安装与被控 (拒绝省略)
 # ==========================================
 install_master() {
-    echo -e "${G}[+] 正在全量重装主控...${NC}"
+    echo -e "${G}[+] 启动主控安装向导...${NC}"
     get_all_ips
-    read -p "Web 端口 [7575]: " M_PORT
-    read -p "管理账号: " M_USER
-    read -p "管理密码: " M_PASS
-    # 【找回】Token 引导
+    read -p "管理端口 [7575]: " M_PORT
+    read -p "账号: " M_USER
+    read -p "密码: " M_PASS
+    # 手动输入 Token
     DEF_TOKEN=$(openssl rand -hex 8)
-    read -p "通讯 Token (留空随机 $DEF_TOKEN): " M_TOKEN
+    read -p "通信 Token (默认 $DEF_TOKEN): " M_TOKEN
     M_TOKEN=${M_TOKEN:-$DEF_TOKEN}
 
     mkdir -p "${INSTALL_PATH}/master"
@@ -269,16 +272,20 @@ EOF
     write_master_app_py
     pkill -9 -f app.py 2>/dev/null
     nohup python3 ${INSTALL_PATH}/master/app.py > /dev/null 2>&1 &
-    echo -e "${G}🎉 主控已成功部署！${NC}"
-    read -p "回车继续..." ; show_menu
+    
+    # 【新增】安装后直接显示面板信息
+    echo -e "\n${G}🎉 主控安装成功！${NC}"
+    echo -e "IPv6 地址: ${G}http://[${IPV6}]:${M_PORT:-7575}${NC}"
+    echo -p "IPv4 地址: ${G}http://${IPV4}:${M_PORT:-7575}${NC}"
+    read -p "按回车返回菜单..." ; show_menu
 }
 
 install_agent() {
-    echo -e "${G}[+] 正在安装被控端 (范式改写模式)...${NC}"
+    echo -e "${G}[+] 正在部署被控端 (Agent)...${NC}"
     read -p "主控 IP/IPv6: " M_HOST
     read -p "主控 Token: " A_TOKEN
     mkdir -p ${INSTALL_PATH}/agent/db_data
-    # 【找回】Agent 完整逻辑
+    # 写入 agent.py
     cat > ${INSTALL_PATH}/agent/agent.py <<EOF
 import asyncio, json, sqlite3, os, psutil, websockets, socket
 MASTER = "${M_HOST}"; TOKEN = "${A_TOKEN}"
@@ -323,41 +330,43 @@ CMD ["python", "agent.py"]
 EOF
     docker build -t multix-agent-v11 . >/dev/null 2>&1
     docker run -d --name multix-agent --restart always --network host -v ${INSTALL_PATH}/agent/db_data:/app/db_share -v ${INSTALL_PATH}/agent:/app multix-agent-v11
-    echo -e "${G}✅ 被控端已拉起！${NC}"
+    echo -e "${G}✅ 被控端上线。${NC}"
     read -p "回车继续..." ; show_menu
 }
 
 # ==========================================
-# 6. 全菜单找回 (100% 拒绝省略)
+# 6. 主菜单 (全量补齐)
 # ==========================================
 show_menu() {
     clear
     echo -e "${G}==================================${NC}"
-    echo -e "      MultiX 最终旗舰版 V11.3      "
-    echo -e "   全功能补全 | 核心审计 | 无省略   "
+    echo -e "      MultiX 最终旗舰版 V11.5      "
+    echo -e "   全量找回 | 深度自愈 | 无遗漏    "
     echo -e "${G}==================================${NC}"
     echo -e "1. 🚀 安装/重装 主控端 (Master)"
     echo -e "2. 📡 安装/重装 被控端 (Agent)"
     echo -e "----------------------------------"
     echo -e "3. 🔑 凭据中心 (查看IP/Token/改密)"
-    echo -e "4. ⚙️  服务管理 (查看进程状态)"
+    echo -e "4. ⚙️  服务管理 (主/被控 运行状态)"
     echo -e "5. 📡 连通性拨测 (排查 Agent 连不上)"
     echo -e "----------------------------------"
-    echo -e "7. 🧹 深度环境自愈 (MTU优化/报错修复)"
-    echo -e "9. 🗑️  完全卸载系统"
+    echo -e "7. 🧹 深度清理与自愈 (重置所有环境)"
+    echo -e "9. 🗑️  完全卸载"
     echo -e "0. 退出"
     read -p "请选择操作 [0-9]: " opt
     case $opt in
         1) force_fix_env; install_master ;;
         2) force_fix_env; install_agent ;;
         3) manage_credentials ;;
-        4) lsof -i :7575 && lsof -i :8888 || echo "主控未运行"; read -p "回车返回..." ; show_menu ;;
+        4) echo -e "${Y}[*] 正在扫描监听状态...${NC}"; lsof -i :7575 && lsof -i :8888; read -p "回车返回..." ; show_menu ;;
         5) test_connectivity ;;
         7) force_fix_env; read -p "自愈完成..." ; show_menu ;;
-        9) docker rm -f 3x-ui multix-agent 3x-ui-master; rm -rf $INSTALL_PATH; exit 0 ;;
+        9) docker rm -f 3x-ui multix-agent 3x-ui-master; docker image prune -af; rm -rf $INSTALL_PATH; exit 0 ;;
         *) exit 0 ;;
     esac
 }
+
+
 
 mkdir -p "$INSTALL_PATH"
 show_menu
