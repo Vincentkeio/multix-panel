@@ -1,13 +1,14 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V61.1 (Emergency Variable Fix)
-# Fix: Resolved NameError 'HTML_T is not defined' causing 503/500 crash.
+# MultiX Pro Script V62.0 (Safe-Write Architecture)
+# Fix: Used quoted 'EOF' for HTML templates to prevent Shell corruption of Vue JS.
+# Fix: Added explicit error handling in Flask routes.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V61.1"
+SH_VER="V62.0"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -44,7 +45,10 @@ install_dependencies() {
     check_sys
     if [[ "${RELEASE}" == "centos" ]]; then yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git
     else apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git; fi
-    pip3 install flask websockets psutil --break-system-packages >/dev/null 2>&1 || pip3 install flask websockets psutil >/dev/null 2>&1
+    
+    # [V62] 锁定 Flask 版本以防 Werkzeug 兼容性问题
+    pip3 install "flask<3.0.0" "werkzeug<3.0.0" websockets psutil --break-system-packages >/dev/null 2>&1 || pip3 install "flask<3.0.0" "werkzeug<3.0.0" websockets psutil >/dev/null 2>&1
+    
     if ! command -v docker &> /dev/null; then curl -fsSL https://get.docker.com | bash; systemctl start docker; fi
     fix_dual_stack
 }
@@ -105,7 +109,7 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V61.1 修复变量名) ] ---
+# --- [ 6. 主控安装 (V62 分段写入技术) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
@@ -119,9 +123,11 @@ install_master() {
     
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V61.1 变量修复版)...${PLAIN}"
+    echo -e "${YELLOW}🛰️ 部署主控 (V62 安全写入模式)...${PLAIN}"
+    
+    # 1. 写入 Python 头部 (需要 Bash 变量 $M_ROOT)
     cat > $M_ROOT/master/app.py <<EOF
-import json, asyncio, psutil, os, socket, subprocess, base64
+import json, asyncio, psutil, os, socket, subprocess, base64, traceback
 from flask import Flask, render_template_string, request, session, redirect, jsonify
 import websockets
 from threading import Thread
@@ -136,9 +142,13 @@ def load_conf():
     return c
 
 CONF = load_conf()
-M_PORT, M_TOKEN = int(CONF.get('M_PORT', 7575)), CONF.get('M_TOKEN', 'err')
-M_USER, M_PASS = CONF.get('M_USER', 'admin'), CONF.get('M_PASS', 'admin')
-app = Flask(__name__); app.secret_key = M_TOKEN
+M_PORT = int(CONF.get('M_PORT', 7575))
+M_TOKEN = CONF.get('M_TOKEN', 'error')
+M_USER = CONF.get('M_USER', 'admin')
+M_PASS = CONF.get('M_PASS', 'admin')
+
+app = Flask(__name__)
+app.secret_key = M_TOKEN
 AGENTS = {}; LOOP_GLOBAL = None
 
 def get_sys_info():
@@ -150,13 +160,22 @@ def gen_key():
     t = request.json.get('type')
     try:
         if t == 'reality':
+            # 尝试调用 xray，失败则返回空
             out = subprocess.check_output("xray x25519 || echo 'Private key: x Public key: x'", shell=True).decode()
-            return jsonify({"private": out.split("Private key:")[1].split()[0].strip(), "public": out.split("Public key:")[1].split()[0].strip()})
+            priv = out.split("Private key:")[1].split()[0].strip()
+            pub = out.split("Public key:")[1].split()[0].strip()
+            return jsonify({"private": priv, "public": pub})
         elif t == 'ss-128': return jsonify({"key": base64.b64encode(os.urandom(16)).decode()})
         elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
-    except: return jsonify({"key": "", "private": "", "public": ""})
+    except: return jsonify({"key": "", "private": "Please Install Xray", "public": ""})
 
-# [V61.0] 全新登录界面 (Dark Minimal)
+# HTML 变量占位符，下文填充
+LOGIN_T = ""
+HTML_T = ""
+EOF
+
+    # 2. 写入 HTML 模板 (使用 'EOF' 阻止 Shell 篡改 Vue 代码)
+    cat >> $M_ROOT/master/app.py <<'EOF'
 LOGIN_T = """
 <!DOCTYPE html>
 <html>
@@ -170,7 +189,6 @@ LOGIN_T = """
         input:focus { border-color: #3b82f6; box-shadow: 0 0 10px rgba(59,130,246,0.3); }
         button { width: 100%; padding: 12px; border-radius: 8px; border: none; background: linear-gradient(90deg, #3b82f6, #2563eb); color: #fff; font-weight: bold; cursor: pointer; transition: 0.3s; margin-top: 10px; }
         button:hover { filter: brightness(1.2); transform: scale(1.02); }
-        .footer { margin-top: 20px; font-size: 12px; color: #444; }
     </style>
 </head>
 <body>
@@ -181,13 +199,11 @@ LOGIN_T = """
             <input type="password" name="p" placeholder="Password" required>
             <button type="submit">ENTER SYSTEM</button>
         </form>
-        <div class="footer">SECURE ACCESS GATEWAY</div>
     </div>
 </body>
 </html>
 """
 
-# [V61.1 修复] 变量名统一为 HTML_T
 HTML_T = """
 <!DOCTYPE html>
 <html class="dark">
@@ -266,7 +282,7 @@ HTML_T = """
                         </div>
                         <div class="grid grid-cols-2 gap-4">
                             <el-form-item label="Protocol">
-                                <el-select v-model="form.protocol"><el-option value="vless" label="VLESS"></el-option><el-option value="vmess" label="VMess"></el-option><el-option value="shadowsocks" label="Shadowsocks"></el-option></el-select>
+                                <el-select v-model="form.protocol"><el-option value="vless">VLESS</el-option><el-option value="vmess">VMess</el-option><el-option value="shadowsocks">Shadowsocks</el-option></el-select>
                             </el-form-item>
                             <el-form-item label="UUID" v-if="['vless','vmess'].includes(form.protocol)">
                                 <el-input v-model="form.uuid"><template #append><el-button @click="genUUID">GEN</el-button></template></el-input>
@@ -402,45 +418,25 @@ HTML_T = """
         };
         const app = createApp(App); 
         app.use(ElementPlus);
-        // V61 Key Change: Change Delimiters to [[ ]]
+        // Vue Delimiters Change: [[ ]]
         app.config.compilerOptions.delimiters = ['[[', ']]'];
         app.mount('#app');
     </script>
 </body></html>
-"""
+EOF
 
-@app.route('/api/state')
-def get_state():
-    s = get_sys_info()
-    return jsonify({"agents": {ip: {"stats": info.get("stats",{}), "nodes": info.get("nodes",[])} for ip, info in AGENTS.items()}, "master": {"stats": {"CPU": s["cpu"], "MEM": s["mem"]}, "ipv4": s["ipv4"], "ipv6": s["ipv6"]}})
-
-@app.route('/api/sync', methods=['POST'])
-def do_sync():
-    d = request.json; target = d.get('ip'); c = d.get('config', {})
-    if target in AGENTS:
-        payload = json.dumps({"action": "sync_node", "token": M_TOKEN, "data": c})
-        asyncio.run_coroutine_threadsafe(AGENTS[target]['ws'].send(payload), LOOP_GLOBAL)
-        return jsonify({"status": "sent"})
-    return jsonify({"status": "offline"}), 404
-
-@app.route('/api/gen_key', methods=['POST'])
-def gen_key():
-    t = request.json.get('type')
-    try:
-        if t == 'reality':
-            out = subprocess.check_output("xray x25519 || echo 'Private key: x Public key: x'", shell=True).decode()
-            priv = out.split("Private key:")[1].split()[0].strip()
-            pub = out.split("Public key:")[1].split()[0].strip()
-            return jsonify({"private": priv, "public": pub})
-        elif t == 'ss-128': return jsonify({"key": base64.b64encode(os.urandom(16)).decode()})
-        elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
-    except: return jsonify({"key": "", "private": "", "public": ""})
+    # 3. 写入 Python 尾部 (继续使用普通 EOF)
+    cat >> $M_ROOT/master/app.py <<EOF
 
 @app.route('/')
 def index():
     if not session.get('logged'): return redirect('/login')
-    s = get_sys_info()
-    return render_template_string(HTML_T, token=M_TOKEN, ipv4=s['ipv4'], ipv6=s['ipv6'])
+    # 安全捕获渲染错误
+    try:
+        s = get_sys_info()
+        return render_template_string(HTML_T, token=M_TOKEN, ipv4=s['ipv4'], ipv6=s['ipv6'])
+    except Exception as e:
+        return f"<h3>Panel Render Error</h3><pre>{traceback.format_exc()}</pre>", 500
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -562,9 +558,9 @@ async def run():
         except: await asyncio.sleep(5)
 asyncio.run(run())
 EOF
-    cd $M_ROOT/agent; docker build -t multix-agent-v61 .
+    cd $M_ROOT/agent; docker build -t multix-agent-v62 .
     docker rm -f multix-agent 2>/dev/null
-    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v61
+    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v62
     echo -e "${GREEN}✅ 被控已启动${PLAIN}"; pause_back
 }
 
@@ -586,7 +582,7 @@ sys_tools() {
 }
 
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V61.1 紧急修复版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V62.0 安全写入版)${PLAIN}"
     echo " 1. 安装 主控端 | 2. 安装 被控端"
     echo " 3. 连通测试   | 4. 被控重启"
     echo " 5. 深度清理   | 6. 环境修复"
