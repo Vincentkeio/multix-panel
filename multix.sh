@@ -1,14 +1,13 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V64.0 (Bootstrap/jQuery Classic Edition)
-# Tech Stack: Flask + Bootstrap 5 + jQuery (No Vue, No Jinja Conflicts)
-# Features: Full 3X-UI Protocol Support | Secure Write | Legacy Install Flow
+# MultiX Pro Script V65.0 (Full Menu Restoration)
+# Base: V64 (Bootstrap/jQuery) | Feature: Restored All 10+ Menu Items
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V64.0"
+SH_VER="V65.0"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -32,7 +31,7 @@ get_public_ips() {
 resolve_ip() {
     python3 -c "import socket; try: print(socket.getaddrinfo('$1', None, socket.$2)[0][4][0]); except: pass"
 }
-pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s -r; main_menu; }
+pause_back() { echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
 # --- [ 2. 环境修复 ] ---
 fix_dual_stack() {
@@ -56,7 +55,7 @@ install_dependencies() {
 
 # --- [ 3. 深度清理 ] ---
 deep_cleanup() {
-    echo -e "${RED}⚠️  警告：清理所有组件！${PLAIN}"; read -p "确认? [y/N]: " confirm
+    echo -e "${RED}⚠️  警告：此操作将删除所有 MultiX 组件！${PLAIN}"; read -p "确认? [y/N]: " confirm
     [[ "$confirm" != "y" ]] && return
     systemctl stop multix-master 2>/dev/null; rm -f /etc/systemd/system/multix-master.service
     systemctl daemon-reload
@@ -66,13 +65,17 @@ deep_cleanup() {
     echo -e "${GREEN}[INFO]${PLAIN} 清理完成"; pause_back
 }
 
-# --- [ 4. 服务管理 ] ---
+# --- [ 4. 服务管理 (找回) ] ---
 service_manager() {
     while true; do
         clear; echo -e "${SKYBLUE}⚙️ 服务管理${PLAIN}"
-        echo " 1. 启动主控  2. 停止主控  3. 重启主控"
-        echo " 4. 查看主控状态 (DEBUG)"
-        echo " 5. 重启被控  6. 被控日志"
+        echo " 1. 启动 主控端"
+        echo " 2. 停止 主控端"
+        echo " 3. 重启 主控端"
+        echo " 4. 查看 主控状态/日志"
+        echo "----------------"
+        echo " 5. 重启 被控端 (Agent)"
+        echo " 6. 查看 被控日志"
         echo " 0. 返回"
         read -p "选择: " s
         case $s in
@@ -84,9 +87,9 @@ service_manager() {
     done; main_menu
 }
 
-# --- [ 5. 凭据中心 ] ---
+# --- [ 5. 凭据中心 (找回) ] ---
 credential_center() {
-    clear; echo -e "${SKYBLUE}🔐 凭据中心${PLAIN}"
+    clear; echo -e "${SKYBLUE}🔐 凭据管理中心${PLAIN}"
     if [ -f $M_ROOT/.env ]; then
         source $M_ROOT/.env
         get_public_ips
@@ -99,20 +102,26 @@ credential_center() {
         echo -e "${YELLOW}[被控]${PLAIN} 连至: $CUR_MASTER"
     fi
     echo "--------------------------------"
-    echo " 1. 修改配置  2. 修改连接  0. 返回"; read -p "选择: " c
+    echo " 1. 修改主控配置 (端口/密码/Token)"
+    echo " 2. 修改被控连接 (主控IP)"
+    echo " 0. 返回"
+    read -p "选择: " c
     if [[ "$c" == "1" ]]; then
-        read -p "端口: " np; M_PORT=${np:-$M_PORT}; read -p "Token: " nt; M_TOKEN=${nt:-$M_TOKEN}
+        read -p "新端口: " np; M_PORT=${np:-$M_PORT}
+        read -p "新用户: " nu; M_USER=${nu:-$M_USER}
+        read -p "新密码: " npa; M_PASS=${npa:-$M_PASS}
+        read -p "新Token: " nt; M_TOKEN=${nt:-$M_TOKEN}
         echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
-        fix_dual_stack; systemctl restart multix-master; echo "已重启"
+        fix_dual_stack; systemctl restart multix-master; echo "已重启生效"
     fi
     if [[ "$c" == "2" ]]; then
-        read -p "IP: " nip; sed -i "s/MASTER = \".*\"/MASTER = \"$nip\"/" $M_ROOT/agent/agent.py
+        read -p "新IP: " nip; sed -i "s/MASTER = \".*\"/MASTER = \"$nip\"/" $M_ROOT/agent/agent.py
         docker restart multix-agent; echo "已重连"
     fi
     main_menu
 }
 
-# --- [ 6. 主控安装 (V64 Bootstrap版) ] ---
+# --- [ 6. 主控安装 (Bootstrap版) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
@@ -126,7 +135,7 @@ install_master() {
     
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V64.0 Bootstrap/jQuery)...${PLAIN}"
+    echo -e "${YELLOW}🛰️ 部署主控 (V65.0 完整版)...${PLAIN}"
     
     # 核心：使用 'EOF' 锁定，禁止 Shell 解析内部内容，确保 Python/JS 源码纯净
     cat > $M_ROOT/master/app.py <<'EOF'
@@ -180,7 +189,7 @@ HTML_T = """
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
 <head>
-    <meta charset="UTF-8"><title>MultiX Pro V64</title>
+    <meta charset="UTF-8"><title>MultiX Pro V65</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -353,9 +362,8 @@ HTML_T = """
 <script>
     let AGENTS = {};
     let ACTIVE_IP = '';
-    const TOKEN = '{{ token }}'; // Flask Template Injection (Only here)
+    const TOKEN = '{{ token }}'; 
 
-    // Poll State
     function updateState() {
         $.getJSON('/api/state', function(data) {
             $('#cpu').text(data.master.stats.cpu);
@@ -375,7 +383,7 @@ HTML_T = """
         for (const [ip, agent] of Object.entries(AGENTS)) {
             const statusClass = agent.stats.cpu !== undefined ? 'status-online' : 'status-offline';
             const nodeCount = agent.nodes ? agent.nodes.length : 0;
-            const card = `
+            const card = \`
                 <div class="col-md-6 col-lg-4">
                     <div class="card h-100 p-4">
                         <div class="d-flex justify-content-between mb-3">
@@ -391,7 +399,7 @@ HTML_T = """
                             MANAGE NODES (\${nodeCount})
                         </button>
                     </div>
-                </div>`;
+                </div>\`;
             $('#node-list').append(card);
         }
     }
@@ -399,14 +407,7 @@ HTML_T = """
     function openManager(ip) {
         ACTIVE_IP = ip;
         const agent = AGENTS[ip];
-        // For simplicity, we just open the Add Modal or List. 
-        // Real implementation would list nodes first. Here we jump to 'Add' for demo or 'Edit' the first one.
-        // Let's make it an 'Add New' trigger for now to keep it simple as requested.
-        // Or if nodes exist, list them in a simple alerts? 
-        // Let's do a simple prompt: Clear form and show modal.
         if(agent.nodes && agent.nodes.length > 0) {
-            // Edit first node for demo, or logic to list. 
-            // Given "Simple", let's load the first node or clear if empty.
             loadForm(agent.nodes[0]); 
         } else {
             resetForm();
@@ -414,7 +415,6 @@ HTML_T = """
         $('#configModal').modal('show');
     }
 
-    // Logic for Dynamic Form
     function updateFormVisibility() {
         const p = $('#protocol').val();
         const n = $('#network').val();
@@ -425,7 +425,6 @@ HTML_T = """
             $('.group-ss').show();
         } else {
             $('.group-uuid').show(); $('.group-stream').show(); $('.group-ss').hide();
-            
             if (s === 'reality') $('.group-reality').show(); else $('.group-reality').hide();
             if (n === 'ws') $('.group-ws').show(); else $('.group-ws').hide();
         }
@@ -451,7 +450,6 @@ HTML_T = """
     }
 
     function loadForm(node) {
-        // Map 3X-UI JSON to Form
         try {
             const s = node.settings || {}; const ss = node.stream_settings || {}; 
             const c = s.clients ? s.clients[0] : {};
@@ -471,7 +469,6 @@ HTML_T = """
                 $('#dest').val(ss.realitySettings.dest);
                 $('#serverNames').val((ss.realitySettings.serverNames||[]).join(','));
                 $('#privKey').val(ss.realitySettings.privateKey);
-                // Public Key isn't stored usually, need regen or just hide
                 $('#shortIds').val((ss.realitySettings.shortIds||[]).join(','));
             }
             
@@ -563,7 +560,7 @@ button { width: 100%; padding: 10px; background: #0d6efd; color: #fff; border: n
 def index():
     if not session.get('logged'): return redirect('/login')
     # 渲染模板，注入 Flask 变量
-    return render_template_string(HTML_T, token=M_TOKEN, ipv4=get_sys_info()['ipv4'])
+    return render_template_string(HTML_T, token=M_TOKEN)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -631,7 +628,7 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功 (V64.0)${PLAIN}"
+    echo -e "${GREEN}✅ 主控端部署成功 (V65)${PLAIN}"
     echo -e "   IPv4入口: http://${IPV4}:${M_PORT}"
     [[ "$IPV6" != "N/A" ]] && echo -e "   IPv6入口: http://[${IPV6}]:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
@@ -698,23 +695,60 @@ async def run():
         except: await asyncio.sleep(5)
 asyncio.run(run())
 EOF
-    cd $M_ROOT/agent; docker build -t multix-agent-v64 .
+    cd $M_ROOT/agent; docker build -t multix-agent-v65 .
     docker rm -f multix-agent 2>/dev/null
-    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v64
+    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v65
     echo -e "${GREEN}✅ 被控已启动${PLAIN}"; pause_back
 }
 
-# --- [ 8. 主菜单 ] ---
+# --- [ 8. 运维工具箱 (找回) ] ---
+sys_tools() {
+    while true; do
+        clear; echo -e "${SKYBLUE}🧰 运维工具箱${PLAIN}"
+        echo " 1. BBR加速 (Chiakge)"
+        echo " 2. 安装/重置 3X-UI (MHSanaei)"
+        echo " 3. 申请 SSL 证书 (acme.sh)"
+        echo " 4. 重置 3X-UI 面板账号"
+        echo " 5. 清空 3X-UI 流量统计"
+        echo " 6. 开放防火墙端口"
+        echo " 0. 返回"
+        read -p "选择: " t
+        case $t in
+            1) bash <(curl -L -s https://github.com/chiakge/Linux-NetSpeed/raw/master/tcp.sh) ;;
+            2) bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) ;;
+            3) curl https://get.acme.sh | sh ;;
+            4) docker exec -it 3x-ui x-ui setting ;;
+            5) sqlite3 $M_ROOT/agent/db_data/x-ui.db "UPDATE client_traffics SET up=0, down=0;" && echo "已清空" ;;
+            6) read -p "端口: " p; ufw allow $p/tcp 2>/dev/null; firewall-cmd --zone=public --add-port=$p/tcp --permanent 2>/dev/null; echo "Done" ;;
+            0) break ;;
+        esac; read -n 1 -s -r -p "继续..."
+    done; main_menu
+}
+
+# --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V64.0 经典重构版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V65.0 终极完整版)${PLAIN}"
     echo " 1. 安装 主控端"
     echo " 2. 安装 被控端"
-    echo " 3. 清理/卸载"
+    echo " 3. 连通测试"
+    echo " 4. 被控重启"
+    echo " 5. 深度清理"
+    echo " 6. 环境修复"
+    echo " 7. 凭据管理"
+    echo " 8. 实时日志"
+    echo " 9. 运维工具"
+    echo " 10. 服务管理"
     echo " 0. 退出"
     read -p "选择: " c
     case $c in
-        1) install_master ;; 2) install_agent ;; 3) deep_cleanup ;;
-        0) exit 0 ;; *) main_menu ;;
+        1) install_master ;; 2) install_agent ;;
+        3) read -p "IP: " t; nc -zv -w 5 $t 8888; pause_back ;;
+        4) docker restart multix-agent; pause_back ;;
+        5) deep_cleanup ;;
+        6) install_dependencies; pause_back ;;
+        7) credential_center ;;
+        8) journalctl -u multix-master -f || docker logs -f multix-agent --tail 50; pause_back ;;
+        9) sys_tools ;; 10) service_manager ;; 0) exit 0 ;; *) main_menu ;;
     esac
 }
 main_menu
