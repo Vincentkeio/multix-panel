@@ -1,41 +1,39 @@
 #!/bin/bash
-# MultiX MVP 全能管理脚本 - 核心版本
-# 支持：主控/被控 独立安装与彻底卸载
+# MultiX MVP 终极版 - 支持双栈/自动同步/安装即运行
 
 INSTALL_PATH="/opt/multix_mvp"
 MASTER_DOMAIN="multix.spacelite.top" 
 
-# 检查权限
-if [ "$EUID" -ne 0 ]; then 
-  echo "请使用 root 权限运行此脚本"
-  exit 1
-fi
+# 核心配色
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
 
 show_menu() {
     clear
-    echo "=================================="
-    echo "      MultiX 集群管理系统         "
-    echo "=================================="
-    echo "1. 安装/更新 主控端 (Master)"
-    echo "2. 卸载 主控端 (Master)"
+    echo -e "${GREEN}==================================${NC}"
+    echo -e "      MultiX 集群管理系统 (V2.0)   "
+    echo -e "${GREEN}==================================${NC}"
+    echo "1. 🚀 安装/重装 主控端 (Master)"
+    echo "2. 🗑️  卸载 主控端 (Master)"
     echo "----------------------------------"
-    echo "3. 安装/更新 被控端 (Agent)"
-    echo "4. 卸载 被控端 (Agent)"
+    echo "3. 📡 安装/重装 被控端 (Agent)"
+    echo "4. 🗑️  卸载 被控端 (Agent)"
     echo "----------------------------------"
-    echo "5. 退出"
-    echo "=================================="
+    echo "5. 🚪 退出"
+    echo -e "${GREEN}==================================${NC}"
     read -p "请选择操作 [1-5]: " choice
 }
 
 # --- 主控逻辑 ---
 install_master() {
-    echo "正在部署主控端..."
+    echo -e "${GREEN}[+] 正在部署主控端环境...${NC}"
     mkdir -p ${INSTALL_PATH}/master
-    apt update && apt install -y python3 python3-pip
+    apt update && apt install -y python3 python3-pip net-tools
     pip3 install flask websockets psutil --break-system-packages --quiet
 
     cat > ${INSTALL_PATH}/master/app.py <<'EOF'
-import json, asyncio, time, psutil, secrets
+import json, asyncio, time, psutil, secrets, os
 from flask import Flask, render_template_string, request
 import websockets
 from threading import Thread
@@ -54,21 +52,23 @@ def generate_xui_sql(remark, port, protocol, uuid):
 HTML = """
 <!DOCTYPE html>
 <html>
-<head><meta charset="UTF-8"><title>MultiX Manager</title>
-<style>body{background:#1a1a1a;color:white;padding:20px} .card{background:#252525;padding:15px;border-radius:8px;margin-bottom:20px} input{background:#333;color:white;border:1px solid #555;padding:5px;margin:5px}</style></head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>MultiX Manager</title>
+<style>body{background:#1a1a1a;color:white;font-family:sans-serif;padding:20px} .card{background:#252525;padding:15px;border-radius:8px;margin-bottom:20px;border:1px solid #444} input,select{background:#333;color:white;border:1px solid #555;padding:8px;margin:5px;border-radius:4px} .btn{background:#177ddc;color:white;border:none;padding:10px 20px;border-radius:4px;cursor:pointer;font-weight:bold} .btn:hover{background:#40a9ff}</style></head>
 <body>
-    <h2>MultiX 控制台 (IPv6 增强版)</h2>
+    <h2>🛰️ MultiX 集群控制台</h2>
     <div class="card">
-        <h3>在线小鸡: {{ agents_count }}</h3>
+        <h3>在线节点: <span style="color:#52c41a">{{ agents_count }}</span></h3>
         {% for ip, info in agents.items() %}
-        <div>🌐 IP: {{ ip }} | CPU: {{ info.stats.cpu }}% | MEM: {{ info.stats.mem }}%</div>
+        <div style="padding:10px;border-bottom:1px solid #333">🌐 IP: {{ ip }} | 🚀 CPU: {{ info.stats.cpu }}% | 💾 MEM: {{ info.stats.mem }}%</div>
         {% endfor %}
     </div>
     <div class="card">
         <form action="/send" method="post">
-            备注: <input name="remark" value="TestNode"> 端口: <input name="port" value="12345"> 协议: <input name="protocol" value="vless" readonly><br>
-            UUID: <input name="uuid" value="{{ default_uuid }}" style="width:350px"><br>
-            <button type="submit" style="margin-top:10px;padding:10px;background:#177ddc;color:white;border:none;cursor:pointer">立即全集群下发</button>
+            备注: <input name="remark" value="V6_Node"> 
+            端口: <input name="port" value="12345" type="number"> 
+            协议: <select name="protocol"><option value="vless">VLESS</option></select><br>
+            UUID: <input name="uuid" value="{{ default_uuid }}" style="width:320px"><br><br>
+            <button type="submit" class="btn">🚀 全集群暴力同步同步</button>
         </form>
     </div>
 </body></html>
@@ -86,8 +86,8 @@ def send_cmd():
         if LOOP:
             for ip in list(AGENTS.keys()):
                 LOOP.call_soon_threadsafe(asyncio.create_task, AGENTS[ip]['ws'].send(payload))
-            return "指令已下发！<a href='/' style='color:white'>点此返回</a>"
-    except Exception as e: return f"失败：{str(e)}"
+            return "<h1>✅ 指令已送达全集群 WebSocket！</h1><a href='/' style='color:#177ddc'>点此返回</a>"
+    except Exception as e: return f"下发失败：{str(e)}"
 
 async def ws_server(websocket):
     ip = websocket.remote_address[0]
@@ -102,39 +102,45 @@ async def ws_server(websocket):
 async def start_ws():
     global LOOP
     LOOP = asyncio.get_running_loop()
-    async with websockets.serve(ws_server, "::", 8888):
+    async with websockets.serve(ws_server, "::", 8888): # 强制双栈监听
         await asyncio.Future()
 
 if __name__ == '__main__':
     Thread(target=lambda: asyncio.run(start_ws()), daemon=True).start()
     app.run(host='0.0.0.0', port=7575)
 EOF
-    pkill -9 -f app.py
+
+    echo -e "${GREEN}[+] 正在启动服务...${NC}"
+    pkill -9 -f app.py 2>/dev/null
     nohup python3 ${INSTALL_PATH}/master/app.py > ${INSTALL_PATH}/master/master.log 2>&1 &
-    echo "✅ 主控安装完成！"
-    echo "Web面板: http://主控IP:7575"
+    
+    sleep 2 # 等待启动
+    if netstat -tunlp | grep -q 7575; then
+        echo -e "${GREEN}✅ 主控端已成功启动并常驻后台！${NC}"
+        echo -e "Web 面板: http://主控IP:7575"
+    else
+        echo -e "${RED}❌ 启动失败，请检查 /opt/multix_mvp/master/master.log${NC}"
+    fi
     read -p "按回车键返回菜单"
 }
 
 uninstall_master() {
-    echo "正在卸载主控端..."
     pkill -9 -f app.py
     rm -rf ${INSTALL_PATH}/master
-    echo "✅ 主控端已彻底卸载。"
+    echo -e "${GREEN}✅ 主控端已彻底卸载。${NC}"
     read -p "按回车键返回菜单"
 }
 
 # --- 被控逻辑 ---
 install_agent() {
-    echo "正在部署被控端..."
+    echo -e "${GREEN}[+] 正在部署被控端...${NC}"
     mkdir -p ${INSTALL_PATH}/agent/db_data
     
-    # 引导用户检查数据库
+    # 检测数据库
     if [ ! -f ${INSTALL_PATH}/agent/db_data/x-ui.db ]; then
-        echo "⚠️  未发现数据库文件！"
-        echo "请将小鸡的 x-ui.db 放到: ${INSTALL_PATH}/agent/db_data/x-ui.db"
-        echo "提示: cp /etc/x-ui/x-ui.db ${INSTALL_PATH}/agent/db_data/"
-        read -p "已放好请按回车继续，或按 Ctrl+C 退出安装"
+        echo -e "${RED}⚠️  未发现 x-ui.db 数据库文件！${NC}"
+        echo "请执行: cp /etc/x-ui/x-ui.db ${INSTALL_PATH}/agent/db_data/"
+        read -p "放好后按回车继续，或 Ctrl+C 退出"
     fi
 
     cat > ${INSTALL_PATH}/agent/agent.py <<EOF
@@ -147,7 +153,7 @@ async def handle_task(data):
         client = docker.from_env()
         xui = client.containers.get("3x-ui")
         xui.stop()
-        time.sleep(1)
+        time.sleep(1.5) # 增加延迟确保文件锁释放
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         sql = "INSERT OR REPLACE INTO inbounds (remark, port, protocol, settings, stream_settings, enable, sniffing, listen) VALUES (?, ?, ?, ?, ?, 1, '{\\"enabled\\": true}', '')"
@@ -155,21 +161,24 @@ async def handle_task(data):
         conn.commit()
         conn.close()
         xui.start()
-        print(f"同步成功: {data['remark']}")
-    except Exception as e: print(f"执行失败: {e}")
+        print(f"[*] 暴力同步成功: {data['remark']}")
+    except Exception as e: print(f"[!] 执行失败: {e}")
 
 async def run_agent():
-    print(f"正在连接: {MASTER_WS}")
+    print(f"[*] 正在尝试连接主控: {MASTER_WS}")
     while True:
         try:
-            async with websockets.connect(MASTER_WS, ping_interval=20) as ws:
+            async with websockets.connect(MASTER_WS, ping_interval=20, ping_timeout=10) as ws:
+                print("[+] 已建立 WebSocket 链路 (IPv6 优先)")
                 while True:
                     stats = {"cpu": int(psutil.cpu_percent()), "mem": int(psutil.virtual_memory().percent)}
                     await ws.send(json.dumps({"type": "heartbeat", "data": stats}))
-                    msg = await asyncio.wait_for(ws.recv(), timeout=15)
+                    msg = await asyncio.wait_for(ws.recv(), timeout=20)
                     task = json.loads(msg)
                     if task.get('action') == 'sync_node': await handle_task(task['data'])
-        except: await asyncio.sleep(5)
+        except Exception as e:
+            print(f"[-] 连接异常: {e}, 5秒后重试...")
+            await asyncio.sleep(5)
 
 if __name__ == '__main__': asyncio.run(run_agent())
 EOF
@@ -181,19 +190,17 @@ EOF
       -v ${INSTALL_PATH}/agent/db_data:/app/db_share \
       python:3.11-slim sh -c "pip install websockets psutil docker && python /app/agent.py"
     
-    echo "✅ 被控端已启动！请检查主控面板状态。"
+    echo -e "${GREEN}✅ 被控端已通过 Docker 启动！${NC}"
+    echo "你可以通过 docker logs -f multix-agent 查看连接状态。"
     read -p "按回车键返回菜单"
 }
 
 uninstall_agent() {
-    echo "正在卸载被控端..."
     docker rm -f multix-agent
-    rm -rf ${INSTALL_PATH}/agent/agent.py
-    echo "✅ 被控端容器已清理。注意：为安全起见，db_data 目录已保留。"
+    echo -e "${GREEN}✅ 被控端容器已清理。${NC}"
     read -p "按回车键返回菜单"
 }
 
-# 循环显示菜单
 while true; do
     show_menu
     case $choice in
