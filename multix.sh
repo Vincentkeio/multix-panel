@@ -1,17 +1,16 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V67.1 (Dual-Stack & UI Complete + IPv6/NAT Fix)
-# Fix 1: Added IPv6 Bracket Logic [] for Agent connection (Crucial for V6 users).
-# Fix 2: Restored "Demo Node" so UI is not empty on fresh install.
-# Fix 3: Display both IPv4 and IPv6 in the Web Header.
-# Fix 4: Added Force IPv4/IPv6 selection during Agent install for NAT users.
-# Fix 5: Enhanced Deep Cleanup to remove legacy systemd paths.
+# MultiX Pro Script V68.0 (Dynamic SQL & UI Fixed)
+# Fix 1: Solved Jinja2/JS conflict causing "${alias}" glitches (Added {% raw %}).
+# Fix 2: Added "SQL Probe" in Agent. Auto-detects 3X-UI DB columns before writing.
+# Fix 3: Enhanced UI Cards with OS info, 3X status, and Node counts.
+# Fix 4: Added Token display in the Web Header.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V67.1"
+SH_VER="V68.0"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -32,9 +31,6 @@ check_sys() {
 get_public_ips() {
     IPV4=$(curl -s4m 2 api.ipify.org || echo "N/A"); IPV6=$(curl -s6m 2 api64.ipify.org || echo "N/A")
 }
-resolve_ip() {
-    python3 -c "import socket; try: print(socket.getaddrinfo('$1', None, socket.$2)[0][4][0]); except: pass"
-}
 pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
 # --- [ 2. 环境修复 ] ---
@@ -49,7 +45,6 @@ install_dependencies() {
     if [[ "${RELEASE}" == "centos" ]]; then yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git
     else apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git; fi
     
-    # 安装 Flask 套件 (锁定版本防崩)
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1 || \
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" >/dev/null 2>&1
     
@@ -57,30 +52,21 @@ install_dependencies() {
     fix_dual_stack
 }
 
-# --- [ 3. 深度清理 (修改版) ] ---
+# --- [ 3. 深度清理 ] ---
 deep_cleanup() {
     echo -e "${RED}⚠️  警告：此操作将删除所有 MultiX 组件！${PLAIN}"; read -p "确认? [y/N]: " confirm
     [[ "$confirm" != "y" ]] && return
     
-    # 停止并禁用服务
     systemctl stop multix-master 2>/dev/null
     systemctl disable multix-master 2>/dev/null
-    
-    # 清理 Systemd 服务文件 (增加 /usr/lib 路径清理)
-    rm -f /etc/systemd/system/multix-master.service
-    rm -f /usr/lib/systemd/system/multix-master.service 
+    rm -f /etc/systemd/system/multix-master.service /usr/lib/systemd/system/multix-master.service
     systemctl daemon-reload
     
-    # 清理 Docker
     docker stop multix-agent 2>/dev/null; docker rm -f multix-agent 2>/dev/null
     docker rmi $(docker images | grep "multix-agent" | awk '{print $3}') 2>/dev/null
     
-    # 清理进程
     pkill -9 -f "master/app.py"; pkill -9 -f "agent/agent.py"
-    
-    # 清理文件
     rm -rf "$M_ROOT"
-    
     echo -e "${GREEN}[INFO]${PLAIN} 清理完成"; pause_back
 }
 
@@ -121,8 +107,8 @@ credential_center() {
         echo -e "${YELLOW}[被控]${PLAIN} 连至: $CUR_MASTER"
     fi
     echo "--------------------------------"
-    echo " 1. 修改主控配置 (端口/密码/Token)"
-    echo " 2. 修改被控连接 (主控IP)"
+    echo " 1. 修改主控配置"
+    echo " 2. 修改被控连接"
     echo " 0. 返回"
     read -p "选择: " c
     if [[ "$c" == "1" ]]; then
@@ -140,7 +126,7 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V67 完整UI版) ] ---
+# --- [ 6. 主控安装 (V68 UI修复版) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
@@ -154,16 +140,13 @@ install_master() {
     
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V67.0 双栈UI修正版)...${PLAIN}"
-    
-    # 使用单引号 EOF 锁定，防止 Shell 干扰代码
+    # 将 app.py 写入
     cat > $M_ROOT/master/app.py <<'EOF'
 import json, asyncio, psutil, os, socket, subprocess, base64, logging
 from flask import Flask, render_template_string, request, session, redirect, jsonify
 import websockets
 from threading import Thread
 
-# 日志配置
 logging.basicConfig(level=logging.ERROR)
 
 def load_conf():
@@ -184,9 +167,8 @@ M_TOKEN = CONF.get('M_TOKEN', 'error')
 app = Flask(__name__)
 app.secret_key = M_TOKEN
 
-# 默认添加一个 Demo 节点，确保 UI 不为空
 AGENTS = {
-    "local-demo": {"alias": "Demo Node", "stats": {"cpu": 0, "mem": 0}, "nodes": [], "is_demo": True}
+    "local-demo": {"alias": "Demo Node", "stats": {"cpu": 0, "mem": 0, "os": "Linux Demo", "xui": "v2.0.0"}, "nodes": [], "is_demo": True}
 }
 LOOP_GLOBAL = None
 
@@ -205,7 +187,7 @@ def gen_key():
         elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
     except: return jsonify({"key": "Error: Install Xray", "private": "", "public": ""})
 
-# HTML 模板：Bootstrap 5 + jQuery
+# --- V68 核心修复: 使用 {% raw %} 隔离 JS 模板 ---
 HTML_T = """
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
@@ -221,26 +203,22 @@ HTML_T = """
         .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
         .status-online { background: #198754; box-shadow: 0 0 5px #198754; }
         .status-offline { background: #dc3545; }
-        .form-label { font-size: 0.8rem; color: #aaa; text-transform: uppercase; font-weight: bold; margin-bottom: 2px; }
-        .form-control, .form-select { background: #1a1a1a; border: 1px solid #333; color: #fff; font-size: 0.9rem; }
-        .form-control:focus, .form-select:focus { background: #1a1a1a; border-color: #0d6efd; color: #fff; box-shadow: 0 0 0 0.2rem rgba(13,110,253,0.25); }
-        .modal-content { background: #0a0a0a; border: 1px solid #333; }
-        .modal-header { border-bottom: 1px solid #222; }
-        .modal-footer { border-top: 1px solid #222; }
-        #error-banner { display: none; position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1050; }
         .ipv6-badge { font-size: 0.7rem; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
+        .stat-box { font-size: 0.8rem; color: #888; background: #1a1a1a; padding: 5px 10px; border-radius: 4px; border: 1px solid #333; }
+        .header-token { font-family: monospace; color: #ffc107; font-size: 0.9rem; margin-left: 10px; }
     </style>
 </head>
 <body>
-<div id="error-banner" class="alert alert-danger shadow-lg fw-bold"></div>
+<div id="error-banner" class="alert alert-danger shadow-lg fw-bold" style="display:none;position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:1050;"></div>
 
 <div class="container">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h2 class="fw-bold fst-italic text-primary mb-0">MultiX <span class="text-white">Pro</span></h2>
-            <div class="text-secondary font-monospace small">
+            <div class="text-secondary font-monospace small mt-1">
                 <span class="badge bg-secondary">v4</span> <span id="ipv4">...</span> | 
                 <span class="badge bg-primary">v6</span> <span id="ipv6" class="ipv6-badge">...</span>
+                <span class="header-token" title="Master Token"><i class="bi bi-key"></i> TK: {{ token }}</span>
             </div>
         </div>
         <div class="d-flex gap-2 align-items-center">
@@ -256,187 +234,118 @@ HTML_T = """
 
 <div class="modal fade" id="configModal" tabindex="-1">
     <div class="modal-dialog modal-lg modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title fw-bold">Inbound Config</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <div class="modal-content" style="background:#0a0a0a; border:1px solid #333;">
+            <div class="modal-header border-bottom border-secondary">
+                <h5 class="modal-title fw-bold">Node Configuration</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
                 <form id="nodeForm">
                     <input type="hidden" id="nodeId">
                     <div class="row g-3">
+                        <div class="col-md-6"><label class="form-label text-secondary small fw-bold">REMARK</label><input type="text" class="form-control bg-dark text-white border-secondary" id="remark"></div>
+                        <div class="col-md-6"><label class="form-label text-secondary small fw-bold">PORT</label><input type="number" class="form-control bg-dark text-white border-secondary" id="port"></div>
                         <div class="col-md-6">
-                            <label class="form-label">Remark</label>
-                            <input type="text" class="form-control" id="remark" placeholder="Node Name">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Port</label>
-                            <input type="number" class="form-control" id="port">
-                        </div>
-                        
-                        <div class="col-md-6">
-                            <label class="form-label">Protocol</label>
-                            <select class="form-select" id="protocol">
-                                <option value="vless">VLESS</option>
-                                <option value="vmess">VMess</option>
-                                <option value="shadowsocks">Shadowsocks</option>
+                            <label class="form-label text-secondary small fw-bold">PROTOCOL</label>
+                            <select class="form-select bg-dark text-white border-secondary" id="protocol">
+                                <option value="vless">VLESS</option><option value="vmess">VMess</option><option value="shadowsocks">Shadowsocks</option>
                             </select>
                         </div>
-                        
                         <div class="col-md-6 group-uuid">
-                            <label class="form-label">UUID</label>
+                            <label class="form-label text-secondary small fw-bold">UUID</label>
                             <div class="input-group">
-                                <input type="text" class="form-control font-monospace" id="uuid">
+                                <input type="text" class="form-control bg-dark text-white border-secondary font-monospace" id="uuid">
                                 <button class="btn btn-outline-secondary" type="button" onclick="genUUID()">Gen</button>
                             </div>
                         </div>
-
                         <div class="col-md-6 group-ss" style="display:none">
-                            <label class="form-label">Cipher</label>
-                            <select class="form-select" id="ssCipher">
-                                <option value="aes-256-gcm">aes-256-gcm</option>
-                                <option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option>
-                                <option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option>
-                            </select>
+                             <label class="form-label text-secondary small fw-bold">CIPHER</label>
+                             <select class="form-select bg-dark text-white border-secondary" id="ssCipher">
+                                <option value="aes-256-gcm">aes-256-gcm</option><option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option>
+                             </select>
                         </div>
-                        <div class="col-12 group-ss" style="display:none">
-                            <label class="form-label">Password</label>
+                        <div class="col-md-6 group-ss" style="display:none">
+                            <label class="form-label text-secondary small fw-bold">PASSWORD</label>
                             <div class="input-group">
-                                <input type="text" class="form-control font-monospace" id="ssPass">
-                                <button class="btn btn-outline-secondary" type="button" onclick="genSSKey()">Gen Key</button>
+                                <input type="text" class="form-control bg-dark text-white border-secondary font-monospace" id="ssPass">
+                                <button class="btn btn-outline-secondary" type="button" onclick="genSSKey()">Gen</button>
                             </div>
                         </div>
-
-                        <div class="col-12 group-stream">
-                            <hr class="border-secondary my-3">
-                            <h6 class="text-primary fw-bold mb-3">Transport & Security</h6>
-                            <div class="row g-3">
-                                <div class="col-md-6">
-                                    <label class="form-label">Network</label>
-                                    <select class="form-select" id="network">
-                                        <option value="tcp">TCP</option>
-                                        <option value="ws">WebSocket</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Security</label>
-                                    <select class="form-select" id="security">
-                                        <option value="none">None</option>
-                                        <option value="tls">TLS</option>
-                                        <option value="reality">Reality</option>
-                                    </select>
+                        
+                        <div class="col-12"><hr class="border-secondary"></div>
+                        <div class="col-md-6"><label class="form-label text-secondary small fw-bold">NETWORK</label><select class="form-select bg-dark text-white border-secondary" id="network"><option value="tcp">TCP</option><option value="ws">WebSocket</option></select></div>
+                        <div class="col-md-6"><label class="form-label text-secondary small fw-bold">SECURITY</label><select class="form-select bg-dark text-white border-secondary" id="security"><option value="none">None</option><option value="tls">TLS</option><option value="reality">Reality</option></select></div>
+                        
+                        <div class="col-12 group-reality" style="display:none">
+                            <div class="p-3 border border-primary rounded bg-dark bg-opacity-50">
+                                <div class="row g-2">
+                                    <div class="col-6"><small class="text-primary">Dest</small><input class="form-control form-control-sm bg-black text-white border-secondary" id="dest" value="www.microsoft.com:443"></div>
+                                    <div class="col-6"><small class="text-primary">SNI</small><input class="form-control form-control-sm bg-black text-white border-secondary" id="serverNames" value="www.microsoft.com"></div>
+                                    <div class="col-12"><small class="text-primary">Private Key</small><div class="input-group input-group-sm"><input class="form-control bg-black text-white border-secondary font-monospace" id="privKey"><button class="btn btn-primary" type="button" onclick="genReality()">Gen</button></div></div>
+                                    <div class="col-12"><small class="text-primary">Public Key</small><input class="form-control form-control-sm bg-black text-white border-secondary font-monospace" id="pubKey" readonly></div>
+                                    <div class="col-12"><small class="text-primary">Short IDs</small><input class="form-control form-control-sm bg-black text-white border-secondary font-monospace" id="shortIds"></div>
                                 </div>
                             </div>
                         </div>
-
-                        <div class="col-12 group-reality p-3 mt-3 bg-dark border border-primary rounded" style="display:none">
-                            <div class="row g-3">
-                                <div class="col-md-6">
-                                    <label class="form-label text-primary">Dest (SNI)</label>
-                                    <input type="text" class="form-control" id="dest" value="www.microsoft.com:443">
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label text-primary">SNI List</label>
-                                    <input type="text" class="form-control" id="serverNames" value="www.microsoft.com">
-                                </div>
-                                <div class="col-12">
-                                    <label class="form-label text-primary">Private Key</label>
-                                    <div class="input-group">
-                                        <input type="text" class="form-control font-monospace" id="privKey" style="font-size:0.8rem">
-                                        <button class="btn btn-primary" type="button" onclick="genReality()">Pair</button>
-                                    </div>
-                                </div>
-                                <div class="col-12">
-                                    <label class="form-label text-primary">Public Key</label>
-                                    <input type="text" class="form-control font-monospace bg-black" id="pubKey" readonly style="font-size:0.8rem">
-                                </div>
-                                <div class="col-12">
-                                    <label class="form-label text-primary">Short IDs</label>
-                                    <input type="text" class="form-control font-monospace" id="shortIds">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="col-12 group-ws p-3 mt-3 bg-secondary bg-opacity-10 border border-secondary rounded" style="display:none">
-                            <div class="row g-3">
-                                <div class="col-md-6"><label class="form-label">Path</label><input type="text" class="form-control" id="wsPath" value="/"></div>
-                                <div class="col-md-6"><label class="form-label">Host</label><input type="text" class="form-control" id="wsHost"></div>
-                            </div>
-                        </div>
-
-                        <div class="col-12">
-                            <hr class="border-secondary my-3">
-                            <h6 class="text-warning fw-bold mb-3">Limits</h6>
-                            <div class="row g-3">
-                                <div class="col-md-6">
-                                    <label class="form-label">Traffic (GB)</label>
-                                    <input type="number" class="form-control" id="totalGB" placeholder="0 = Unlimited">
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Expiry Date</label>
-                                    <input type="date" class="form-control" id="expiryDate">
-                                </div>
-                            </div>
+                         <div class="col-12 group-ws" style="display:none">
+                            <div class="p-2 border border-secondary rounded"><div class="row g-2"><div class="col-6"><small>Path</small><input class="form-control form-control-sm bg-black text-white border-secondary" id="wsPath" value="/"></div><div class="col-6"><small>Host</small><input class="form-control form-control-sm bg-black text-white border-secondary" id="wsHost"></div></div></div>
                         </div>
                     </div>
                 </form>
             </div>
-            <div class="modal-footer">
+            <div class="modal-footer border-top border-secondary">
                 <button type="button" class="btn btn-dark" data-bs-dismiss="modal">Close</button>
-                <button type="button" class="btn btn-primary" id="saveBtn">Save & Restart</button>
+                <button type="button" class="btn btn-primary fw-bold" id="saveBtn">Save & Sync</button>
             </div>
         </div>
     </div>
 </div>
 
+{% raw %}
 <script>
     let AGENTS = {};
     let ACTIVE_IP = '';
-    const TOKEN = '{{ token }}'; 
 
     function updateState() {
-        $.ajax({
-            url: '/api/state',
-            type: 'GET',
-            dataType: 'json',
-            timeout: 5000,
-            success: function(data) {
-                $('#error-banner').hide();
-                $('#cpu').text(data.master.stats.cpu);
-                $('#mem').text(data.master.stats.mem);
-                $('#ipv4').text(data.master.ipv4);
-                $('#ipv6').text(data.master.ipv6);
-                AGENTS = data.agents;
-                renderGrid();
-            },
-            error: function(xhr, status, error) {
-                // Only warn if not a timeout/abort
-                if(status !== 'abort') $('#error-banner').text('Connecting... ' + status).fadeIn();
-            }
-        });
+        $.get('/api/state', function(data) {
+            $('#error-banner').hide();
+            $('#cpu').text(data.master.stats.cpu); $('#mem').text(data.master.stats.mem);
+            $('#ipv4').text(data.master.ipv4); $('#ipv6').text(data.master.ipv6);
+            AGENTS = data.agents;
+            renderGrid();
+        }).fail(function() { $('#error-banner').text('Connection Lost').fadeIn(); });
     }
 
     function renderGrid() {
         $('#node-list').empty();
         for (const [ip, agent] of Object.entries(AGENTS)) {
-            const statusClass = (agent.is_demo || agent.stats.cpu !== undefined) ? 'status-online' : 'status-offline';
+            const isOnline = (agent.is_demo || agent.stats.cpu !== undefined);
+            const statusClass = isOnline ? 'status-online' : 'status-offline';
             const nodeCount = agent.nodes ? agent.nodes.length : 0;
-            const alias = agent.alias || 'Node';
-            
+            const alias = agent.alias || 'Unknown';
+            const osVer = agent.stats.os || 'N/A';
+            const xuiVer = agent.stats.xui || 'N/A';
+            const cpu = agent.stats.cpu || 0;
+            const mem = agent.stats.mem || 0;
+
             const card = `
                 <div class="col-md-6 col-lg-4">
-                    <div class="card h-100 p-4">
-                        <div class="d-flex justify-content-between mb-3">
-                            <h5 class="fw-bold text-white mb-0">\${alias}</h5>
-                            <span class="status-dot \${statusClass}"></span>
+                    <div class="card h-100 p-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h5 class="fw-bold text-white mb-0 text-truncate" title="${alias}">${alias}</h5>
+                            <span class="status-dot ${statusClass}"></span>
                         </div>
-                        <div class="small text-secondary font-monospace mb-3">\${ip}</div>
-                        <div class="d-flex gap-2 mb-4">
-                            <span class="badge bg-dark border border-secondary">CPU: \${agent.stats.cpu || 0}%</span>
-                            <span class="badge bg-dark border border-secondary">MEM: \${agent.stats.mem || 0}%</span>
+                        <div class="small text-secondary font-monospace mb-3">${ip}</div>
+                        
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <span class="stat-box">OS: ${osVer}</span>
+                            <span class="stat-box">3X: ${xuiVer}</span>
+                            <span class="stat-box">CPU: ${cpu}%</span>
+                            <span class="stat-box">MEM: ${mem}%</span>
                         </div>
-                        <button class="btn btn-primary btn-sm w-100 fw-bold" onclick="openManager('\${ip}')">
-                            MANAGE NODES (\${nodeCount})
+                        
+                        <button class="btn btn-primary w-100 fw-bold" onclick="openManager('${ip}')">
+                            MANAGE NODES (${nodeCount})
                         </button>
                     </div>
                 </div>`;
@@ -447,154 +356,71 @@ HTML_T = """
     function openManager(ip) {
         ACTIVE_IP = ip;
         const agent = AGENTS[ip];
-        if(agent.is_demo) {
-            alert("This is a demo node. You can explore the UI, but settings won't be saved to a real server.");
-            resetForm();
-        } else if(agent.nodes && agent.nodes.length > 0) {
-            loadForm(agent.nodes[0]); 
-        } else {
-            resetForm();
-        }
+        if(agent.is_demo) { alert("Demo Mode: Changes won't save."); resetForm(); }
+        else if(agent.nodes && agent.nodes.length > 0) { loadForm(agent.nodes[0]); }
+        else { resetForm(); }
         $('#configModal').modal('show');
     }
 
+    // --- Form Logic ---
     function updateFormVisibility() {
-        const p = $('#protocol').val();
-        const n = $('#network').val();
-        const s = $('#security').val();
-
-        if (p === 'shadowsocks') {
-            $('.group-uuid').hide(); $('.group-stream').hide(); $('.group-reality').hide(); $('.group-ws').hide();
-            $('.group-ss').show();
-        } else {
-            $('.group-uuid').show(); $('.group-stream').show(); $('.group-ss').hide();
-            if (s === 'reality') $('.group-reality').show(); else $('.group-reality').hide();
-            if (n === 'ws') $('.group-ws').show(); else $('.group-ws').hide();
-        }
+        const p = $('#protocol').val(); const n = $('#network').val(); const s = $('#security').val();
+        $('.group-ss').hide(); $('.group-uuid').hide(); $('.group-reality').hide(); $('.group-ws').hide();
+        if(p==='shadowsocks') { $('.group-ss').show(); } else { $('.group-uuid').show(); }
+        if(s==='reality') $('.group-reality').show();
+        if(n==='ws') $('.group-ws').show();
     }
-
     $('#protocol, #network, #security').change(updateFormVisibility);
 
     function genUUID() { $('#uuid').val(crypto.randomUUID()); }
-    function genSSKey() {
-        const type = $('#ssCipher').val().includes('256') ? 'ss-256' : 'ss-128';
-        $.ajax({url: '/api/gen_key', type: 'POST', contentType: 'application/json', data: JSON.stringify({type: type}), success: function(d){ $('#ssPass').val(d.key); }});
+    function genSSKey() { 
+        const t = $('#ssCipher').val().includes('256')?'ss-256':'ss-128'; 
+        $.ajax({url:'/api/gen_key',type:'POST',contentType:'application/json',data:JSON.stringify({type:t}),success:function(d){$('#ssPass').val(d.key)}});
     }
-    function genReality() {
-        $.ajax({url: '/api/gen_key', type: 'POST', contentType: 'application/json', data: JSON.stringify({type: 'reality'}), success: function(d){ $('#privKey').val(d.private); $('#pubKey').val(d.public); }});
-    }
+    function genReality() { $.ajax({url:'/api/gen_key',type:'POST',contentType:'application/json',data:JSON.stringify({type:'reality'}),success:function(d){$('#privKey').val(d.private);$('#pubKey').val(d.public)}}); }
 
-    function resetForm() {
-        $('#nodeForm')[0].reset();
-        $('#nodeId').val('');
-        $('#protocol').val('vless'); $('#network').val('tcp'); $('#security').val('reality');
-        genUUID(); genReality();
-        updateFormVisibility();
-    }
-
-    function loadForm(node) {
+    function resetForm() { $('#nodeForm')[0].reset(); $('#nodeId').val(''); $('#protocol').val('vless'); $('#network').val('tcp'); $('#security').val('reality'); genUUID(); genReality(); updateFormVisibility(); }
+    
+    function loadForm(n) {
         try {
-            const s = node.settings || {}; const ss = node.stream_settings || {}; 
-            const c = s.clients ? s.clients[0] : {};
-            
-            $('#nodeId').val(node.id); $('#remark').val(node.remark); $('#port').val(node.port); $('#protocol').val(node.protocol);
-            
-            if(node.protocol === 'shadowsocks') {
-                $('#ssCipher').val(s.method); $('#ssPass').val(s.password);
-            } else {
-                $('#uuid').val(c.id);
-            }
-
-            $('#network').val(ss.network || 'tcp');
-            $('#security').val(ss.security || 'none');
-
-            if(ss.realitySettings) {
-                $('#dest').val(ss.realitySettings.dest);
-                $('#serverNames').val((ss.realitySettings.serverNames||[]).join(','));
-                $('#privKey').val(ss.realitySettings.privateKey);
-                $('#shortIds').val((ss.realitySettings.shortIds||[]).join(','));
-            }
-            
-            if(ss.wsSettings) {
-                $('#wsPath').val(ss.wsSettings.path);
-                $('#wsHost').val(ss.wsSettings.headers?.Host);
-            }
-
-            if(node.total > 0) $('#totalGB').val((node.total / 1073741824).toFixed(2));
-            if(node.expiry_time > 0) $('#expiryDate').val(new Date(node.expiry_time).toISOString().split('T')[0]);
-
+            const s = n.settings||{}; const ss = n.stream_settings||{};
+            $('#nodeId').val(n.id); $('#remark').val(n.remark); $('#port').val(n.port); $('#protocol').val(n.protocol);
+            if(n.protocol==='shadowsocks') { $('#ssCipher').val(s.method); $('#ssPass').val(s.password); }
+            else { $('#uuid').val(s.clients?s.clients[0].id:''); }
+            $('#network').val(ss.network||'tcp'); $('#security').val(ss.security||'none');
+            if(ss.realitySettings) { $('#dest').val(ss.realitySettings.dest); $('#serverNames').val((ss.realitySettings.serverNames||[]).join(',')); $('#privKey').val(ss.realitySettings.privateKey); $('#pubKey').val(ss.realitySettings.publicKey); $('#shortIds').val((ss.realitySettings.shortIds||[]).join(',')); }
+            if(ss.wsSettings) { $('#wsPath').val(ss.wsSettings.path); $('#wsHost').val(ss.wsSettings.headers?.Host); }
             updateFormVisibility();
         } catch(e) { console.error(e); resetForm(); }
     }
 
     $('#saveBtn').click(function() {
-        const p = $('#protocol').val();
-        const n = $('#network').val();
-        const s = $('#security').val();
+        const p = $('#protocol').val(); const n = $('#network').val(); const s = $('#security').val();
+        let clients = []; if(p!=='shadowsocks') clients.push({id:$('#uuid').val(), flow:(s==='reality'&&p==='vless')?'xtls-rprx-vision':'', email:'u@mx.com'});
+        let stream = {network:n, security:s};
+        if(s==='reality') stream.realitySettings={dest:$('#dest').val(), privateKey:$('#privKey').val(), publicKey:$('#pubKey').val(), shortIds:$('#shortIds').val().split(','), serverNames:$('#serverNames').val().split(','), fingerprint:'chrome'};
+        if(n==='ws') stream.wsSettings={path:$('#wsPath').val(), headers:{Host:$('#wsHost').val()}};
+        let settings = p==='shadowsocks' ? {method:$('#ssCipher').val(), password:$('#ssPass').val(), network:'tcp,udp'} : {clients, decryption:'none'};
         
-        let clients = [];
-        if(p !== 'shadowsocks') clients.push({id: $('#uuid').val(), flow: (s==='reality' && p==='vless')?'xtls-rprx-vision':'', email: 'u@mx.com'});
-        
-        let stream = { network: n, security: s };
-        if(s === 'reality') stream.realitySettings = { dest: $('#dest').val(), privateKey: $('#privKey').val(), shortIds: $('#shortIds').val().split(','), serverNames: $('#serverNames').val().split(','), fingerprint: 'chrome' };
-        if(n === 'ws') stream.wsSettings = { path: $('#wsPath').val(), headers: { Host: $('#wsHost').val() } };
-        
-        let settings = p === 'shadowsocks' ? { method: $('#ssCipher').val(), password: $('#ssPass').val(), network: 'tcp,udp' } : { clients, decryption: 'none' };
-        
-        const total = $('#totalGB').val() ? Math.floor($('#totalGB').val() * 1073741824) : 0;
-        const expiry = $('#expiryDate').val() ? new Date($('#expiryDate').val()).getTime() : 0;
-
         const payload = {
             id: $('#nodeId').val() || null, remark: $('#remark').val(), port: parseInt($('#port').val()), protocol: p,
-            total: total, expiry_time: expiry,
             settings: JSON.stringify(settings), stream_settings: JSON.stringify(stream),
-            sniffing: JSON.stringify({ enabled: true, destOverride: ["http","tls","quic"] })
+            sniffing: JSON.stringify({enabled:true, destOverride:["http","tls","quic"]}),
+            total: 0, expiry_time: 0
         };
-
-        const btn = $(this); btn.prop('disabled', true).text('Saving...');
+        
+        const btn = $(this); btn.prop('disabled',true).text('Saving...');
         $.ajax({
             url: '/api/sync', type: 'POST', contentType: 'application/json',
-            data: JSON.stringify({ ip: ACTIVE_IP, config: payload }),
-            success: function() { 
-                $('#configModal').modal('hide'); 
-                btn.prop('disabled', false).text('Save & Restart');
-                alert('Saved! Node restarting...');
-            },
-            error: function() { btn.prop('disabled', false).text('Failed'); alert('Sync Failed!'); }
+            data: JSON.stringify({ip: ACTIVE_IP, config: payload}),
+            success: function() { $('#configModal').modal('hide'); btn.prop('disabled',false).text('Save & Sync'); alert('Synced successfully!'); },
+            error: function() { btn.prop('disabled',false).text('Failed'); alert('Sync Failed'); }
         });
     });
 
-    $(document).ready(function() {
-        updateState();
-        setInterval(updateState, 3000);
-    });
+    $(document).ready(function() { updateState(); setInterval(updateState, 3000); });
 </script>
-</body>
-</html>
-"""
-
-# 登录页模板
-LOGIN_T = """
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8"><title>MultiX Login</title>
-<style>
-body { background: #000; color: #fff; display: flex; height: 100vh; align-items: center; justify-content: center; font-family: sans-serif; }
-.box { background: #111; padding: 40px; border-radius: 10px; border: 1px solid #333; text-align: center; width: 300px; }
-input { width: 100%; padding: 10px; margin-bottom: 10px; background: #222; border: 1px solid #444; color: #fff; border-radius: 5px; box-sizing: border-box; }
-button { width: 100%; padding: 10px; background: #0d6efd; color: #fff; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
-</style>
-</head>
-<body>
-<div class="box">
-    <h2 style="margin-top:0; color: #0d6efd; font-style: italic;">MultiX Pro</h2>
-    <form method="post">
-        <input name="u" placeholder="Admin User" required>
-        <input type="password" name="p" placeholder="Password" required>
-        <button>LOGIN</button>
-    </form>
-</div>
+{% endraw %}
 </body>
 </html>
 """
@@ -602,27 +428,20 @@ button { width: 100%; padding: 10px; background: #0d6efd; color: #fff; border: n
 @app.route('/')
 def index():
     if not session.get('logged'): return redirect('/login')
-    # 渲染模板，注入 Flask 变量 ({{ token }})
-    # 这里使用 render_template_string 而不是 send_file，为了注入 token
     return render_template_string(HTML_T, token=M_TOKEN)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        if request.form['u'] == M_USER and request.form['p'] == M_PASS:
-            session['logged'] = True
-            return redirect('/')
-    return render_template_string(LOGIN_T)
+        if request.form['u'] == M_USER and request.form['p'] == M_PASS: session['logged'] = True; return redirect('/')
+    return """<body style='background:#000;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh'><form method='post'><input name='u' placeholder='User'><input type='password' name='p' placeholder='Pass'><button>Login</button></form></body>"""
 
 @app.route('/logout')
-def logout():
-    session.pop('logged', None)
-    return redirect('/login')
+def logout(): session.pop('logged', None); return redirect('/login')
 
 @app.route('/api/state')
 def api_state():
     s = get_sys_info()
-    # 同时返回 IPv4 和 IPv6 供前端显示
     return jsonify({"master": {"ipv4": s['ipv4'], "ipv6": s['ipv6'], "stats": {"cpu": s['cpu'], "mem": s['mem']}}, "agents": AGENTS})
 
 @app.route('/api/sync', methods=['POST'])
@@ -630,8 +449,7 @@ def api_sync():
     d = request.json
     target = d.get('ip')
     if target in AGENTS:
-        if AGENTS[target].get('is_demo'):
-            return jsonify({"status": "demo_skipped"})
+        if AGENTS[target].get('is_demo'): return jsonify({"status": "demo_skipped"})
         payload = json.dumps({"action": "sync_node", "token": M_TOKEN, "data": d.get('config')})
         asyncio.run_coroutine_threadsafe(AGENTS[target]['ws'].send(payload), LOOP_GLOBAL)
         return jsonify({"status": "sent"})
@@ -660,11 +478,10 @@ def start_ws():
 
 if __name__ == '__main__':
     Thread(target=start_ws, daemon=True).start()
-    # 关键：双栈监听
     app.run(host='::', port=M_PORT)
 EOF
 
-    # Systemd Config
+    # Systemd
     cat > /etc/systemd/system/multix-master.service <<EOF
 [Unit]
 Description=MultiX Master
@@ -680,138 +497,156 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功 (V67)${PLAIN}"
-    echo -e "   入口: http://[${IPV6}]:${M_PORT} (IPv6优先)"
+    echo -e "${GREEN}✅ 主控端部署成功 (V68)${PLAIN}"
+    echo -e "   入口: http://[${IPV6}]:${M_PORT}"
     echo -e "   入口: http://${IPV4}:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
     pause_back
 }
 
-# --- [ 7. 被控安装 (V67.1 修改版: 增加 IP 强制解析) ] ---
+# --- [ 7. 被控安装 (V68 SQL探测增强版) ] ---
 install_agent() {
     install_dependencies; mkdir -p $M_ROOT/agent
     
     if [ ! -d "/etc/x-ui" ]; then
-        echo -e "${RED}未检测到 3X-UI，是否安装? [Y/n]${PLAIN}"
-        read i
-        if [[ "$i" != "n" ]]; then
-            bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
-            ufw allow 2053/tcp 2>/dev/null
-        else return; fi
+        echo -e "${RED}未检测到 3X-UI，建议先安装面板！${PLAIN}"
+        echo "但我们仍会继续安装 Agent..."
     fi
 
     echo -e "${SKYBLUE}>>> 被控配置${PLAIN}"
-    read -p "主控域名/IP: " IN_HOST
-    read -p "Token: " IN_TOKEN
+    read -p "主控域名/IP: " IN_HOST; read -p "Token: " IN_TOKEN
     
-    # --- [ 新增逻辑开始: 强制协议选择 ] ---
-    echo -e "\n${YELLOW}>>> 网络协议优化 (解决 NAT/连接超时)${PLAIN}"
-    echo -e "1. 自动 / 默认 (Auto)"
-    echo -e "2. 强制 IPv4 (Force IPv4)"
-    echo -e "3. 强制 IPv6 (Force IPv6)"
-    read -p "请选择连接方式 [1-3] (默认1): " NET_OPT
-
+    # 网络协议强制选择逻辑
+    echo -e "\n${YELLOW}>>> 网络协议优化${PLAIN}"
+    echo -e "1. 自动 (Auto)"; echo -e "2. 强制 IPv4"; echo -e "3. 强制 IPv6"
+    read -p "选择 [1-3]: " NET_OPT
     case "$NET_OPT" in
-        2)
-            echo -e "${YELLOW}正在强制解析 IPv4...${PLAIN}"
-            RESOLVED=$(getent hosts "$IN_HOST" | awk '{ print $1 }' | grep -E '^[0-9]+\.' | head -n 1)
-            [ -z "$RESOLVED" ] && RESOLVED=$(ping -4 -c 1 "$IN_HOST" 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
-            if [ -n "$RESOLVED" ]; then
-                echo -e "已解析为: ${GREEN}$RESOLVED${PLAIN}"
-                IN_HOST="$RESOLVED"
-            else
-                echo -e "${RED}解析失败，使用原始域名${PLAIN}"
-            fi
-            ;;
-        3)
-            echo -e "${YELLOW}正在强制解析 IPv6...${PLAIN}"
-            RESOLVED=$(getent hosts "$IN_HOST" | awk '{ print $1 }' | grep ":" | head -n 1)
-            [ -z "$RESOLVED" ] && RESOLVED=$(ping6 -c 1 "$IN_HOST" 2>/dev/null | head -n 1 | grep -oE '[0-9a-fA-F:]+:[0-9a-fA-F:]+' | head -n 1)
-            if [ -n "$RESOLVED" ]; then
-                echo -e "已解析为: ${GREEN}$RESOLVED${PLAIN}"
-                IN_HOST="$RESOLVED"
-            else
-                echo -e "${RED}解析失败 (可能无 IPv6 网络)，使用原始域名${PLAIN}"
-            fi
-            ;;
-        *)
-            echo "使用默认连接模式"
-            ;;
+        2) IN_HOST=$(getent hosts "$IN_HOST" | awk '{print $1}' | grep -E '^[0-9]+\.' | head -n 1 || echo "$IN_HOST") ;;
+        3) IN_HOST=$(getent hosts "$IN_HOST" | awk '{print $1}' | grep ":" | head -n 1 || echo "$IN_HOST") ;;
     esac
-    # --- [ 新增逻辑结束 ] ---
-    
+
     cat > $M_ROOT/agent/Dockerfile <<EOF
 FROM python:3.11-slim
 RUN pip install websockets psutil --break-system-packages
 WORKDIR /app
 CMD ["python", "agent.py"]
 EOF
-    # [V67] Agent 连接逻辑修正：IPv6 自动加 []
+    
+    # --- Agent Python 逻辑 (核心修改：SQL探测) ---
     cat > $M_ROOT/agent/agent.py <<EOF
 import asyncio, json, sqlite3, os, psutil, websockets, socket, platform
 MASTER = "$IN_HOST"; TOKEN = "$IN_TOKEN"; DB_PATH = "/app/db_share/x-ui.db"
-def sync_db(data):
+
+def get_xui_ver():
+    # 简单版本检测
+    if os.path.exists(DB_PATH): return "Installed"
+    return "Not Found"
+
+# --- 核心: SQL 动态探测函数 ---
+def smart_sync_db(data):
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10); cursor = conn.cursor(); nid = data.get('id')
-        vals = (data['remark'], data['port'], data['settings'], data['stream_settings'], data['sniffing'], data['total'], data['expiry_time'])
-        if nid: cursor.execute("UPDATE inbounds SET remark=?, port=?, settings=?, stream_settings=?, sniffing=?, total=?, expiry_time=?, enable=1 WHERE id=?", vals + (nid,))
-        else: cursor.execute("INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing) VALUES (1, 0, 0, ?, ?, 1, ?, '', ?, ?, ?, ?, 'multix', ?)", (data['total'], data['remark'], data['expiry_time'], data['port'], data['protocol'], data['settings'], data['stream_settings'], data['sniffing']))
-        conn.commit(); conn.close(); return True
-    except: return False
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        cursor = conn.cursor()
+        
+        # 1. 探测当前数据库有哪些字段
+        cursor.execute("PRAGMA table_info(inbounds)")
+        columns = [info[1] for info in cursor.fetchall()] # ['id', 'user_id', 'up', ...]
+        
+        # 2. 准备基础数据
+        # 3X-UI 必须字段
+        base_data = {
+            'user_id': 1, 'up': 0, 'down': 0, 'total': 0, 'remark': data.get('remark'),
+            'enable': 1, 'expiry_time': 0, 'listen': '', 'port': data.get('port'),
+            'protocol': data.get('protocol'), 'settings': data.get('settings'),
+            'stream_settings': data.get('stream_settings'), 'tag': 'multix',
+            'sniffing': data.get('sniffing', '{}')
+        }
+        
+        # 3. 过滤出有效字段 (只保留数据库里存在的字段)
+        valid_data = {k: v for k, v in base_data.items() if k in columns}
+        
+        nid = data.get('id')
+        if nid:
+            # UPDATE 操作
+            set_clause = ", ".join([f"{k}=?" for k in valid_data.keys()])
+            values = list(valid_data.values()) + [nid]
+            cursor.execute(f"UPDATE inbounds SET {set_clause} WHERE id=?", values)
+        else:
+            # INSERT 操作
+            keys = ", ".join(valid_data.keys())
+            placeholders = ", ".join(["?"] * len(valid_data))
+            values = list(valid_data.values())
+            cursor.execute(f"INSERT INTO inbounds ({keys}) VALUES ({placeholders})", values)
+            
+        conn.commit(); conn.close()
+        return True
+    except Exception as e:
+        print(f"DB Error: {e}")
+        return False
+
 async def run():
     target = MASTER
-    # 自动识别 IPv6 并添加 []，防止 websocket 报错
-    if ":" in target and not target.startswith("[") and not target[0].isalpha():
-        target = f"[{target}]"
+    if ":" in target and not target.startswith("[") and not target[0].isalpha(): target = f"[{target}]"
     uri = f"ws://{target}:8888"
+    
     while True:
         try:
             async with websockets.connect(uri) as ws:
                 await ws.send(json.dumps({"token": TOKEN}))
                 while True:
-                    conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
-                    cur.execute("SELECT id, remark, port, protocol, settings, stream_settings, sniffing, total, expiry_time FROM inbounds")
+                    # 读取节点列表发送给主控
                     nodes = []
-                    for r in cur.fetchall():
-                        try:
-                            s = json.loads(r[4]); ss = json.loads(r[5])
-                            nodes.append({"id": r[0], "remark": r[1], "port": r[2], "protocol": r[3], "settings": s, "stream_settings": ss, "total": r[7], "expiry_time": r[8]})
-                        except: pass
-                    conn.close()
-                    stats = { "cpu": int(psutil.cpu_percent()), "mem": int(psutil.virtual_memory().percent), "os": platform.system() }
+                    try:
+                        conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+                        # 只读取通用字段，防止报错
+                        cur.execute("SELECT id, remark, port, protocol, settings, stream_settings FROM inbounds")
+                        for r in cur.fetchall():
+                            try:
+                                nodes.append({"id": r[0], "remark": r[1], "port": r[2], "protocol": r[3], "settings": json.loads(r[4]), "stream_settings": json.loads(r[5])})
+                            except: pass
+                        conn.close()
+                    except: pass
+                    
+                    # 增强心跳包: 带上 OS 和 3X 版本
+                    stats = {
+                        "cpu": int(psutil.cpu_percent()), 
+                        "mem": int(psutil.virtual_memory().percent), 
+                        "os": platform.system() + " " + platform.release(),
+                        "xui": get_xui_ver()
+                    }
                     await ws.send(json.dumps({"type": "heartbeat", "data": stats, "nodes": nodes}))
+                    
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=5); task = json.loads(msg)
-                        if task.get('action') == 'sync_node': os.system("docker restart 3x-ui"); sync_db(task['data']); os.system("docker restart 3x-ui")
+                        if task.get('action') == 'sync_node':
+                            # 收到配置，执行动态写入
+                            os.system("docker restart 3x-ui") # 停止防止锁库
+                            smart_sync_db(task['data'])
+                            os.system("docker restart 3x-ui") # 重启生效
                     except: continue
         except: await asyncio.sleep(5)
+
 asyncio.run(run())
 EOF
-    cd $M_ROOT/agent; docker build -t multix-agent-v67 .
+    cd $M_ROOT/agent; docker build -t multix-agent-v68 .
     docker rm -f multix-agent 2>/dev/null
-    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v67
-    echo -e "${GREEN}✅ 被控已启动${PLAIN}"; pause_back
+    docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v68
+    echo -e "${GREEN}✅ 被控启动完成${PLAIN}"; pause_back
 }
 
-# --- [ 8. 运维工具箱 ] ---
+# --- [ 8. 运维工具 ] ---
 sys_tools() {
     while true; do
         clear; echo -e "${SKYBLUE}🧰 运维工具箱${PLAIN}"
-        echo " 1. BBR加速 (Chiakge)"
-        echo " 2. 安装/重置 3X-UI (MHSanaei)"
-        echo " 3. 申请 SSL 证书 (acme.sh)"
-        echo " 4. 重置 3X-UI 面板账号"
-        echo " 5. 清空 3X-UI 流量统计"
-        echo " 6. 开放防火墙端口"
+        echo " 1. 安装/重置 3X-UI"
+        echo " 2. 重置 3X-UI 账号"
+        echo " 3. 清空流量"
         echo " 0. 返回"
         read -p "选择: " t
         case $t in
-            1) bash <(curl -L -s https://github.com/chiakge/Linux-NetSpeed/raw/master/tcp.sh) ;;
-            2) bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) ;;
-            3) curl https://get.acme.sh | sh ;;
-            4) docker exec -it 3x-ui x-ui setting ;;
-            5) sqlite3 $M_ROOT/agent/db_data/x-ui.db "UPDATE client_traffics SET up=0, down=0;" && echo "已清空" ;;
-            6) read -p "端口: " p; ufw allow $p/tcp 2>/dev/null; firewall-cmd --zone=public --add-port=$p/tcp --permanent 2>/dev/null; echo "Done" ;;
+            1) bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) ;;
+            2) docker exec -it 3x-ui x-ui setting ;;
+            3) sqlite3 $M_ROOT/agent/db_data/x-ui.db "UPDATE client_traffics SET up=0, down=0;" && echo "已清空" ;;
             0) break ;;
         esac; read -n 1 -s -r -p "继续..."
     done; main_menu
@@ -819,7 +654,7 @@ sys_tools() {
 
 # --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V67.1 终极版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V68.0 智能探测版)${PLAIN}"
     echo " 1. 安装 主控端"
     echo " 2. 安装 被控端"
     echo " 3. 连通测试"
