@@ -1,20 +1,20 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V54.0 (GitHub Source Enhanced)
-# Base: Vincentkeio/multix-panel
-# Fixes: 3X-UI Auto-Install | Real DB Mount | Dual-Stack | Config Persist
+# MultiX Pro Script V54.1 (Function Fixed Edition)
+# Fix: 'check_docker: command not found' error
+# Base: V54.0 Full Feature Set
 # ==============================================================================
 
 # --- [ 全局变量 ] ---
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V54.0"
+SH_VER="V54.1"
 
 # --- [ 颜色配置 ] ---
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
-# --- [ 0. 快捷命令 (防死链) ] ---
+# --- [ 0. 快捷命令 ] ---
 install_shortcut() {
     if [ -L "/usr/bin/multix" ] || [ -f "/usr/bin/multix" ]; then rm -f /usr/bin/multix; fi
     cp "$0" /usr/bin/multix && chmod +x /usr/bin/multix
@@ -22,7 +22,7 @@ install_shortcut() {
 }
 install_shortcut
 
-# --- [ 1. 基础检查函数 (原版保留) ] ---
+# --- [ 1. 基础函数 ] ---
 check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[ERROR]${PLAIN} 请使用 root 用户运行！" && exit 1; }
 
 check_sys() {
@@ -45,15 +45,29 @@ except: pass"
 
 pause_back() { echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
-# --- [ 2. 环境修复与依赖 (原版增强) ] ---
+# --- [ 2. 环境修复与依赖 ] ---
 fix_dual_stack() {
-    # 强制开启内核转发，确保 :: 监听能同时处理 v4/v6
     if grep -q "net.ipv6.bindv6only" /etc/sysctl.conf; then
         sed -i 's/net.ipv6.bindv6only.*/net.ipv6.bindv6only = 0/' /etc/sysctl.conf
     else
         echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf
     fi
     sysctl -p >/dev/null 2>&1
+}
+
+# [V54.1 修复] 独立定义 Python 检查
+check_python_dep() {
+    echo -e "${YELLOW}[INFO]${PLAIN} 检查 Python 环境..."
+    pip3 install flask websockets psutil --break-system-packages >/dev/null 2>&1 || pip3 install flask websockets psutil >/dev/null 2>&1
+}
+
+# [V54.1 修复] 独立定义 Docker 检查 (修复 command not found)
+check_docker() {
+    if ! command -v docker &> /dev/null; then
+        echo -e "${YELLOW}[INFO]${PLAIN} 安装 Docker..."
+        curl -fsSL https://get.docker.com | bash
+        systemctl enable docker && systemctl start docker
+    fi
 }
 
 install_base() {
@@ -64,18 +78,13 @@ install_base() {
     else
         apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git
     fi
-    echo -e "${YELLOW}[INFO]${PLAIN} 检查 Python 环境..."
-    pip3 install flask websockets psutil --break-system-packages >/dev/null 2>&1 || pip3 install flask websockets psutil >/dev/null 2>&1
-    
-    if ! command -v docker &> /dev/null; then
-        echo -e "${YELLOW}[INFO]${PLAIN} 安装 Docker..."
-        curl -fsSL https://get.docker.com | bash
-        systemctl enable docker && systemctl start docker
-    fi
+    # 调用独立函数
+    check_python_dep
+    check_docker
     fix_dual_stack
 }
 
-# --- [ 3. 深度清理 (原版逻辑) ] ---
+# --- [ 3. 深度清理 ] ---
 deep_cleanup() {
     echo -e "${RED}⚠️  警告：此操作将删除所有 MultiX 组件！${PLAIN}"
     read -p "确认执行? [y/N]: " confirm
@@ -96,7 +105,7 @@ deep_cleanup() {
     pause_back
 }
 
-# --- [ 4. 服务管理 (补回功能) ] ---
+# --- [ 4. 服务管理 ] ---
 service_manager() {
     while true; do
         clear
@@ -124,7 +133,7 @@ service_manager() {
     main_menu
 }
 
-# --- [ 5. 凭据中心 (动态修复) ] ---
+# --- [ 5. 凭据中心 ] ---
 credential_center() {
     clear
     echo -e "${SKYBLUE}🔐 凭据管理中心${PLAIN}"
@@ -163,7 +172,7 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V54 动态内核) ] ---
+# --- [ 6. 主控安装 ] ---
 install_master() {
     install_base; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
@@ -177,7 +186,7 @@ install_master() {
     
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     
-    echo -e "${YELLOW}🛰️ 部署主控 (V54.0)...${PLAIN}"
+    echo -e "${YELLOW}🛰️ 部署主控 (V54.1)...${PLAIN}"
     cat > $M_ROOT/master/app.py <<EOF
 import json, asyncio, psutil, os, socket, logging
 from flask import Flask, render_template_string, request, session, redirect, jsonify
@@ -422,7 +431,6 @@ async def ws_handler(ws):
 def start_ws():
     global LOOP_GLOBAL; LOOP_GLOBAL = asyncio.new_event_loop(); asyncio.set_event_loop(LOOP_GLOBAL)
     async def m():
-        # [关键] 强制双栈监听
         async with websockets.serve(ws_handler, "::", 8888, family=socket.AF_INET6): await asyncio.Future()
     LOOP_GLOBAL.run_until_complete(m())
 
@@ -446,34 +454,33 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功${PLAIN}"
+    echo -e "${GREEN}✅ 主控端部署成功！${PLAIN}"
     echo -e "   IPv4: http://${IPV4}:${M_PORT}"
     [[ "$IPV6" != "未检测到" ]] && echo -e "   IPv6: http://[${IPV6}]:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
     pause_back
 }
 
-# --- [ 7. 被控安装 (3X-UI 自动检测) ] ---
+# --- [ 7. 被控安装 (3X-UI 修正版) ] ---
 install_agent() {
     install_base; check_docker; mkdir -p $M_ROOT/agent
     
-    # 核心：自动检测/安装 3X-UI (MHSanaei)
+    # 核心修复：检测并自动安装 3X-UI (MHSanaei)
     if [ ! -d "/etc/x-ui" ] || [ ! -f "/etc/x-ui/x-ui.db" ]; then
-        echo -e "${RED}❌ 未检测到 3X-UI 面板数据！${PLAIN}"
-        echo -e "${YELLOW}Agent 需要读取面板数据库才能工作。${PLAIN}"
-        read -p "是否立即自动安装 3X-UI? [Y/n]: " inst_xui
+        echo -e "${RED}❌ 未检测到 3X-UI 面板！${PLAIN}"
+        echo -e "${YELLOW}Agent 必须读取 3X-UI 数据库才能工作。${PLAIN}"
+        read -p "是否立即自动安装 3X-UI (MHSanaei)? [Y/n]: " inst_xui
         if [[ "$inst_xui" != "n" ]]; then
             bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
-            # 放行默认端口
             ufw allow 2053/tcp 2>/dev/null; firewall-cmd --zone=public --add-port=2053/tcp --permanent 2>/dev/null
         else
-            echo "已取消安装"; return
+            echo "已取消安装，脚本退出。"; exit 1
         fi
     fi
 
     echo -e "${SKYBLUE}>>> 被控配置${PLAIN}"
     read -p "主控域名/IP: " IN_HOST; read -p "Token: " IN_TOKEN
-    echo -e "${YELLOW}协议:${PLAIN} 1.自动  2.IPv4  3.IPv6 (推荐)"; read -p "选择: " NET_OPT
+    echo -e "${YELLOW}协议:${PLAIN} 1.自动  2.IPv4  3.IPv6"; read -p "选择: " NET_OPT
     TARGET_HOST="$IN_HOST"
     if [[ "$NET_OPT" == "3" ]]; then
         V6=$(resolve_ip "$IN_HOST" "AF_INET6")
@@ -526,7 +533,7 @@ asyncio.run(run())
 EOF
     cd $M_ROOT/agent; docker build -t multix-agent-v54 .
     docker rm -f multix-agent 2>/dev/null
-    # V54 修正：挂载真实路径
+    # V54.1 核心：挂载真实路径
     docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v54
     echo -e "${GREEN}✅ 被控已启动 (连接: $TARGET_HOST)${PLAIN}"; pause_back
 }
@@ -549,7 +556,7 @@ sys_tools() {
 }
 
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V54.0 完整增强版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V54.1 完整增强版)${PLAIN}"
     echo "--------------------------------"
     echo " 1. 安装 主控端"; echo " 2. 安装 被控端"
     echo "--------------------------------"
