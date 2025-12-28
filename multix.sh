@@ -1,17 +1,17 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Cluster Manager - v10.1 (Ultimate Design)
-# Designed for High-End VPS Management
+# MultiX Cluster - v12.0 (Precision Edition)
+# Focused on Connectivity, Security, and Proxy Management.
 # ==============================================================================
 
-# --- Global Config ---
+# --- 全局配置 ---
 APP_DIR="/opt/multix_docker"
 DEFAULT_MASTER_PORT=7575
 DEFAULT_XUI_PORT=2053
 DEFAULT_TOKEN="multix_secret_888"
 
-# --- Design Colors ---
+# --- 颜色定义 ---
 RED='\033[38;5;196m'
 GREEN='\033[38;5;46m'
 YELLOW='\033[38;5;226m'
@@ -23,10 +23,10 @@ WHITE='\033[38;5;255m'
 BOLD='\033[1m'
 PLAIN='\033[0m'
 
-# --- Helpers ---
+# --- 基础检测与信息获取 ---
 check_docker() {
     if ! command -v docker &> /dev/null; then
-        echo -e "${BLUE}⚡ Installing Docker Engine...${PLAIN}"
+        echo -e "${BLUE}⚡ 正在安装 Docker 引擎...${PLAIN}"
         curl -fsSL https://get.docker.com | bash >/dev/null 2>&1
         systemctl start docker; systemctl enable docker
     fi
@@ -35,51 +35,67 @@ check_docker() {
     fi
 }
 
-get_status() {
-    # Master Status
-    if docker ps --format '{{.Names}}' | grep -q "^multix-master$"; then
-        M_STATE="${GREEN}● Running${PLAIN}"
-        M_MEM=$(docker stats --no-stream --format "{{.MemUsage}}" multix-master | awk -F'/' '{print $1}')
+get_sys_info() {
+    # 获取静态硬件信息
+    CPU_MODEL=$(awk -F': ' '/model name/{print $2; exit}' /proc/cpuinfo)
+    [[ -z "$CPU_MODEL" ]] && CPU_MODEL="Unknown CPU"
+    
+    MEM_TOTAL=$(awk '/MemTotal/ {printf "%.1f GB", $2/1024/1024}' /proc/meminfo)
+    
+    OS_INFO=$(grep PRETTY_NAME /etc/os-release | cut -d'"' -f2)
+    KERNEL=$(uname -r)
+    
+    # 检测 BBR
+    TCP_ALG=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}')
+    if [[ "$TCP_ALG" == "bbr" ]]; then
+        BBR_STATUS="${GREEN}BBR (开启)${PLAIN}"
     else
-        M_STATE="${GRAY}○ Stopped${PLAIN}"
-        M_MEM="0B"
+        BBR_STATUS="${YELLOW}Cubic (未开启)${PLAIN}"
     fi
 
-    # Agent Status
-    if docker ps --format '{{.Names}}' | grep -q "^multix-agent$"; then
-        A_STATE="${GREEN}● Running${PLAIN}"
-        A_MEM=$(docker stats --no-stream --format "{{.MemUsage}}" multix-agent | awk -F'/' '{print $1}')
+    # 获取容器状态
+    if docker ps --format '{{.Names}}' | grep -q "^multix-master$"; then
+        M_STATE="${GREEN}● 运行中${PLAIN}"
+        M_PORT=$(docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' multix-master | grep MASTER_PORT | cut -d= -f2)
     else
-        A_STATE="${GRAY}○ Stopped${PLAIN}"
-        A_MEM="0B"
+        M_STATE="${GRAY}○ 已停止${PLAIN}"
+        M_PORT="--"
+    fi
+
+    if docker ps --format '{{.Names}}' | grep -q "^multix-agent$"; then
+        A_STATE="${GREEN}● 运行中${PLAIN}"
+        X_PORT=$(docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' multix-agent | grep XUI_PORT | cut -d= -f2)
+    else
+        A_STATE="${GRAY}○ 已停止${PLAIN}"
+        X_PORT="--"
     fi
 }
 
 # ==================================================
-# 1. Install Master
+# 1. 安装 Master (Web Dashboard)
 # ==================================================
 install_master() {
     check_docker
     clear
     echo -e "${MAGENTA}====================================================${PLAIN}"
-    echo -e "${BOLD}   Deploy Master Server (Dashboard Edition)${PLAIN}"
+    echo -e "${BOLD}   部署 Master 主控端 (Precision UI)${PLAIN}"
     echo -e "${MAGENTA}====================================================${PLAIN}"
     
-    # Clean up old container forcefully
+    # 强制清理旧容器
     if docker ps -a | grep -q multix-master; then
-        echo -e "${YELLOW}♻️  Cleaning up old Master container...${PLAIN}"
+        echo -e "${YELLOW}♻️  清理旧版 Master 容器...${PLAIN}"
         docker rm -f multix-master >/dev/null 2>&1
     fi
 
-    echo -e "\n${BOLD}🔐 Security Setup${PLAIN}"
-    echo -e "${GRAY}Set a Cluster Token to prevent unauthorized Agent connections.${PLAIN}"
-    read -p "Token [Default: ${DEFAULT_TOKEN}]: " TOKEN
+    echo -e "\n${BOLD}🔐 鉴权配置${PLAIN}"
+    echo -e "${GRAY}设置集群通信密钥 (Token)，Agent 必须凭此接入。${PLAIN}"
+    read -p "Token [默认: ${DEFAULT_TOKEN}]: " TOKEN
     [[ -z "$TOKEN" ]] && TOKEN="${DEFAULT_TOKEN}"
 
     mkdir -p ${APP_DIR}/master
     cd ${APP_DIR}/master
 
-    # Server Code (With Dashboard & API)
+    # Server Python Code
     cat > server.py <<EOF
 import json, os, socket, psutil
 from flask import Flask, render_template_string, request, jsonify
@@ -93,8 +109,20 @@ TOKEN = os.getenv('CLUSTER_TOKEN', 'default')
 clients = {}
 client_info = {}
 
+# 获取 Master 自身宿主机信息 (通过挂载 /proc)
 def get_master_stats():
-    return {'cpu': psutil.cpu_percent(interval=None),'mem': psutil.virtual_memory().percent}
+    # 尝试读取宿主机 BBR
+    bbr = 'unknown'
+    try:
+        with open('/host/proc/sys/net/ipv4/tcp_congestion_control', 'r') as f:
+            bbr = f.read().strip()
+    except: pass
+    
+    return {
+        'cpu': psutil.cpu_percent(interval=None),
+        'mem': psutil.virtual_memory().percent,
+        'bbr': bbr
+    }
 
 @sock.route('/ws')
 def websocket(ws):
@@ -117,6 +145,7 @@ def websocket(ws):
             msg = ws.receive()
             try:
                 stats = json.loads(msg)
+                # 更新心跳数据
                 if 'cpu' in stats: client_info[agent_id].update(stats)
             except: pass
     except: pass
@@ -171,19 +200,27 @@ HTML_TEMPLATE = """
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
 :root{--bg-body:#0f172a;--bg-card:#1e293b;--text-main:#f8fafc;--primary:#3b82f6}
-body{background-color:var(--bg-body);color:var(--text-main);font-family:'Inter',sans-serif}
+body{background-color:var(--bg-body);color:var(--text-main);font-family:'Inter',system-ui,sans-serif}
 .navbar{background:rgba(30,41,59,0.9);backdrop-filter:blur(10px);border-bottom:1px solid rgba(255,255,255,0.05)}
 .card{background:var(--bg-card);border:1px solid rgba(255,255,255,0.05);border-radius:12px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.1)}
 .status-indicator{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px}
 .online{background-color:#22c55e;box-shadow:0 0 8px rgba(34,197,94,0.4)}
 .btn-glass{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#fff}
 .btn-glass:hover{background:rgba(255,255,255,0.1)}
+.bbr-on{color:#22c55e;font-size:0.8rem;font-weight:bold;border:1px solid #22c55e;padding:2px 6px;border-radius:4px}
+.bbr-off{color:#eab308;font-size:0.8rem;font-weight:bold;border:1px solid #eab308;padding:2px 6px;border-radius:4px}
 </style>
 </head><body>
 <nav class="navbar navbar-expand-lg navbar-dark sticky-top px-4 py-3">
   <div class="d-flex w-100 justify-content-between align-items-center">
-    <div class="d-flex align-items-center gap-3"><span class="fs-5 fw-bold"><i class="bi bi-grid-fill text-primary"></i> MultiX</span><span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25">v10.1 Pro</span></div>
-    <div class="d-flex align-items-center gap-3"><div class="text-end d-none d-md-block" style="line-height:1.2"><small class="d-block text-muted" style="font-size:0.75rem">MASTER LOAD</small><span class="fw-bold text-success" id="m_cpu">CPU 0%</span></div><button class="btn btn-sm btn-glass" onclick="toggleLang()" id="langBtn">🇺🇸 EN / 🇨🇳 CN</button></div>
+    <div class="d-flex align-items-center gap-3"><span class="fs-5 fw-bold"><i class="bi bi-grid-fill text-primary"></i> MultiX</span><span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25">v12.0</span></div>
+    <div class="d-flex align-items-center gap-3">
+        <div class="text-end d-none d-md-block" style="line-height:1.2">
+            <small class="d-block text-muted" style="font-size:0.7rem">MASTER</small>
+            <span class="fw-bold text-light" id="m_stat">Loading...</span>
+        </div>
+        <button class="btn btn-sm btn-glass" onclick="toggleLang()" id="langBtn">🇺🇸 EN / 🇨🇳 CN</button>
+    </div>
   </div>
 </nav>
 <div class="container py-4">
@@ -196,15 +233,55 @@ body{background-color:var(--bg-body);color:var(--text-main);font-family:'Inter',
     <div class="d-flex justify-content-between align-items-center mb-3"><h5 class="fw-bold mb-0"><i class="bi bi-hdd-stack"></i> <span data-t="list">Managed Servers</span></h5><button class="btn btn-sm btn-glass" onclick="ref()"><i class="bi bi-arrow-clockwise"></i></button></div>
     <div class="row g-4" id="list"></div>
 </div>
-<div class="modal fade" id="addModal"><div class="modal-dialog modal-dialog-centered"><div class="modal-content" style="background:var(--bg-card)"><div class="modal-header border-0"><h5 class="modal-title fw-bold" data-t="add">Add Node</h5><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body"><form id="f"><input type="hidden" id="tuuid"><div class="form-floating mb-2"><input class="form-control bg-dark text-white border-secondary" name="remark" value="Node-1"><label>Remark</label></div><div class="row g-2 mb-2"><div class="col"><div class="form-floating"><select class="form-select bg-dark text-white border-secondary" name="protocol"><option value="vless">VLESS</option><option value="vmess">VMess</option></select><label>Protocol</label></div></div><div class="col"><div class="form-floating"><input type="number" class="form-control bg-dark text-white border-secondary" name="port" placeholder="Port"><label>Port</label></div></div></div><div class="form-floating mb-2"><input class="form-control bg-dark text-white border-secondary" name="uuid" id="uid"><label>UUID</label><button type="button" class="btn btn-sm btn-link position-absolute end-0 top-50 translate-middle-y text-decoration-none" onclick="genUUID()"><i class="bi bi-magic"></i></button></div><div class="form-floating mb-2"><select class="form-select bg-dark text-white border-secondary" name="listen"><option value="">🌐 Dual Stack (v4+v6)</option><option value="0.0.0.0">4️⃣ IPv4 Only</option><option value="::">6️⃣ IPv6 Only</option></select><label data-t="listen">Listen Interface</label></div><div class="row g-2 mb-2"><div class="col"><div class="form-floating"><select class="form-select bg-dark text-white border-secondary" name="network" id="net" onchange="up()"><option value="tcp">TCP</option><option value="ws">WS</option></select><label>Network</label></div></div><div class="col"><div class="form-floating"><select class="form-select bg-dark text-white border-secondary" name="security" id="sec" onchange="up()"><option value="none">None</option><option value="reality">REALITY</option><option value="tls">TLS</option></select><label>Security</label></div></div></div><div id="ws" class="d-none mb-2"><input class="form-control bg-dark text-white border-secondary" name="ws_path" placeholder="WS Path"></div><div id="rea" class="d-none mb-2 p-3 border border-secondary border-opacity-25 rounded bg-black bg-opacity-25"><div class="d-flex justify-content-between mb-2"><span class="text-warning small">REALITY</span> <button class="btn btn-sm btn-outline-warning py-0" type="button" onclick="getRealKeys()">Auto Gen Keys</button></div><input class="form-control form-control-sm bg-dark text-white mb-1" name="reality_dest" value="www.microsoft.com:443"><input class="form-control form-control-sm bg-dark text-white mb-1" name="reality_sni" value="www.microsoft.com"><input class="form-control form-control-sm bg-dark text-white mb-1" name="reality_pk" id="r_pk" placeholder="PK" readonly><input class="form-control form-control-sm bg-dark text-white" name="reality_sk" id="r_sk" placeholder="SK" readonly></div></form></div><div class="modal-footer border-0"><button class="btn btn-primary w-100 py-2 fw-bold" onclick="sub()" data-t="save">Deploy & Get Link</button></div></div></div></div>
+
+<div class="modal fade" id="addModal"><div class="modal-dialog modal-dialog-centered"><div class="modal-content" style="background:var(--bg-card)"><div class="modal-header border-0"><h5 class="modal-title fw-bold" data-t="add">Add Node</h5><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body"><form id="f"><input type="hidden" id="tuuid"><div class="form-floating mb-2"><input class="form-control bg-dark text-white border-secondary" name="remark" value="Node-1"><label>Remark</label></div><div class="row g-2 mb-2"><div class="col"><div class="form-floating"><select class="form-select bg-dark text-white border-secondary" name="protocol"><option value="vless">VLESS</option><option value="vmess">VMess</option></select><label>Protocol</label></div></div><div class="col"><div class="form-floating"><input type="number" class="form-control bg-dark text-white border-secondary" name="port" placeholder="Port"><label>Port</label></div></div></div><div class="form-floating mb-2"><input class="form-control bg-dark text-white border-secondary" name="uuid" id="uid"><label>UUID</label><button type="button" class="btn btn-sm btn-link position-absolute end-0 top-50 translate-middle-y text-decoration-none" onclick="genUUID()"><i class="bi bi-magic"></i></button></div><div class="form-floating mb-2"><select class="form-select bg-dark text-white border-secondary" name="listen"><option value="">🌐 Dual Stack (Default)</option><option value="0.0.0.0">4️⃣ IPv4 Only</option><option value="::">6️⃣ IPv6 Only</option></select><label data-t="listen">Listen Interface</label></div><div class="row g-2 mb-2"><div class="col"><div class="form-floating"><select class="form-select bg-dark text-white border-secondary" name="network" id="net" onchange="up()"><option value="tcp">TCP</option><option value="ws">WS</option></select><label>Network</label></div></div><div class="col"><div class="form-floating"><select class="form-select bg-dark text-white border-secondary" name="security" id="sec" onchange="up()"><option value="none">None</option><option value="reality">REALITY</option><option value="tls">TLS</option></select><label>Security</label></div></div></div><div id="ws" class="d-none mb-2"><input class="form-control bg-dark text-white border-secondary" name="ws_path" placeholder="WS Path"></div><div id="rea" class="d-none mb-2 p-3 border border-secondary border-opacity-25 rounded bg-black bg-opacity-25"><div class="d-flex justify-content-between mb-2"><span class="text-warning small">REALITY</span> <button class="btn btn-sm btn-outline-warning py-0" type="button" onclick="getRealKeys()">Auto Gen Keys</button></div><input class="form-control form-control-sm bg-dark text-white mb-1" name="reality_dest" value="www.microsoft.com:443"><input class="form-control form-control-sm bg-dark text-white mb-1" name="reality_sni" value="www.microsoft.com"><input class="form-control form-control-sm bg-dark text-white mb-1" name="reality_pk" id="r_pk" placeholder="PK" readonly><input class="form-control form-control-sm bg-dark text-white" name="reality_sk" id="r_sk" placeholder="SK" readonly></div></form></div><div class="modal-footer border-0"><button class="btn btn-primary w-100 py-2 fw-bold" onclick="sub()" data-t="save">Deploy & Get Link</button></div></div></div></div>
 <div class="modal fade" id="resModal"><div class="modal-dialog modal-dialog-centered"><div class="modal-content" style="background:var(--bg-card)"><div class="modal-header border-0"><h5 class="modal-title">Result</h5><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body text-center"><div class="bg-white p-3 d-inline-block rounded mb-3"><div id="qrcode"></div></div><div class="input-group"><input class="form-control bg-dark text-white border-secondary" id="link_txt" readonly><button class="btn btn-success" onclick="copyLink()"><i class="bi bi-clipboard"></i></button></div></div></div></div>
+
 <script>
 const m=new bootstrap.Modal('#addModal'), rm=new bootstrap.Modal('#resModal');
 let currId='', lang='en';
 const T={en:{add:'Add Node',save:'Deploy & Get Link',listen:'Listen IP',list:'Managed Servers',total:'Total',online:'Online'},cn:{add:'添加节点',save:'部署并获取链接',listen:'监听接口',list:'被控服务器列表',total:'节点总数',online:'在线数量'}};
 function toggleLang(){lang=lang==='en'?'cn':'en';document.querySelectorAll('[data-t]').forEach(e=>e.innerText=T[lang][e.dataset.t])}
 const toast=Swal.mixin({toast:true,position:'top-end',showConfirmButton:false,timer:3000,timerProgressBar:true,background:'#1e293b',color:'#fff'});
-function ref(){fetch('/api/stats').then(r=>r.json()).then(d=>{document.getElementById('m_cpu').innerText=\`CPU \${d.master.cpu}%\`;const l=document.getElementById('list'), r=d.agents;l.innerHTML=''; let c=0,v4=0,v6=0;for(let u in r){c++;let tags='';if(r[u].ipv4&&r[u].ipv6)tags+='<span class="badge bg-success bg-opacity-25 text-success border border-success border-opacity-25 me-1">Dual</span>';else if(r[u].ipv6){tags+='<span class="badge bg-warning bg-opacity-25 text-warning border border-warning border-opacity-25 me-1">v6</span>';v6++}else{tags+='<span class="badge bg-info bg-opacity-25 text-info border border-info border-opacity-25 me-1">v4</span>';v4++}let conn=r[u].conn_ip.includes(':')?'via IPv6':'via IPv4';let cpu=r[u].cpu||0,mem=r[u].mem||0;l.innerHTML+=\`<div class="col-md-6 col-lg-4"><div class="card h-100"><div class="card-body"><div class="d-flex justify-content-between align-items-start mb-3"><div><h5 class="fw-bold mb-1" style="cursor:pointer" onclick="ren('\${u}')">\${r[u].name} <i class="bi bi-pencil-fill text-muted fs-6 opacity-50"></i></h5><div class="d-flex align-items-center"><span class="status-indicator online"></span><span class="small text-muted">\${r[u].ip}</span></div></div><span class="badge bg-secondary bg-opacity-25 text-secondary">\${conn}</span></div><div class="mb-3">\${tags}</div><div class="mb-2"><div class="d-flex justify-content-between small mb-1"><span>CPU</span><span>\${cpu}%</span></div><div class="progress"><div class="progress-bar bg-primary" style="width:\${cpu}%"></div></div></div><div><div class="d-flex justify-content-between small mb-1"><span>RAM</span><span>\${mem}%</span></div><div class="progress"><div class="progress-bar bg-info" style="width:\${mem}%"></div></div></div></div><div class="card-footer bg-transparent border-top border-secondary border-opacity-10 p-3 d-flex gap-2"><button class="btn btn-sm btn-primary flex-grow-1 fw-bold" onclick="pop('\${u}')"><i class="bi bi-plus-lg"></i> Node</button><button class="btn btn-sm btn-outline-light" onclick="cert('\${u}')" title="SSL"><i class="bi bi-shield-check"></i></button><a href="http://\${r[u].ip}:\${r[u].xp||2053}" target="_blank" class="btn btn-sm btn-glass"><i class="bi bi-box-arrow-up-right"></i> Panel</a></div></div></div>\`;}document.getElementById('stat_total').innerText=c;document.getElementById('stat_online').innerText=c;document.getElementById('stat_v4').innerText=v4;document.getElementById('stat_v6').innerText=v6;if(c===0)l.innerHTML='<div class="col-12 text-center text-muted py-5">Waiting for agents...</div>'})}
+function ref(){
+    fetch('/api/stats').then(r=>r.json()).then(d=>{
+        // Master Stat
+        let mbbr = d.master.bbr==='bbr'?'<span class="text-success small">BBR ON</span>':'<span class="text-warning small">NO BBR</span>';
+        document.getElementById('m_stat').innerHTML = \`CPU \${d.master.cpu}% | \${mbbr}\`;
+        // List
+        const l=document.getElementById('list'), r=d.agents;
+        l.innerHTML=''; let c=0,v4=0,v6=0;
+        for(let u in r){
+            c++;
+            let tags='';
+            if(r[u].ipv4&&r[u].ipv6)tags+='<span class="badge bg-success bg-opacity-25 text-success border border-success border-opacity-25 me-1">Dual</span>';
+            else if(r[u].ipv6){tags+='<span class="badge bg-warning bg-opacity-25 text-warning border border-warning border-opacity-25 me-1">v6</span>';v6++}
+            else{tags+='<span class="badge bg-info bg-opacity-25 text-info border border-info border-opacity-25 me-1">v4</span>';v4++}
+            let conn=r[u].conn_ip.includes(':')?'IPv6':'IPv4';
+            let cpu=r[u].cpu||0,mem=r[u].mem||0;
+            // BBR Status
+            let bbr_badge = r[u].bbr==='bbr' ? '<span class="bbr-on">🚀 BBR</span>' : '<span class="bbr-off">⚠️ No BBR</span>';
+            
+            l.innerHTML+=\`
+            <div class="col-md-6 col-lg-4"><div class="card h-100"><div class="card-body">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <div><h5 class="fw-bold mb-1" style="cursor:pointer" onclick="ren('\${u}')">\${r[u].name} <i class="bi bi-pencil-fill text-muted fs-6 opacity-50"></i></h5>
+                    <div class="d-flex align-items-center"><span class="status-indicator online"></span><span class="small text-muted">\${r[u].ip}</span></div></div>
+                    <div class="text-end"><span class="badge bg-secondary bg-opacity-25 text-secondary d-block mb-1">via \${conn}</span>\${bbr_badge}</div>
+                </div>
+                <div class="mb-3">\${tags}</div>
+                <div class="mb-2"><div class="d-flex justify-content-between small mb-1"><span>CPU</span><span>\${cpu}%</span></div><div class="progress"><div class="progress-bar bg-primary" style="width:\${cpu}%"></div></div></div>
+                <div><div class="d-flex justify-content-between small mb-1"><span>RAM</span><span>\${mem}%</span></div><div class="progress"><div class="progress-bar bg-info" style="width:\${mem}%"></div></div></div>
+            </div>
+            <div class="card-footer bg-transparent border-top border-secondary border-opacity-10 p-3 d-flex gap-2">
+                <button class="btn btn-sm btn-primary flex-grow-1 fw-bold" onclick="pop('\${u}')"><i class="bi bi-plus-lg"></i> Node</button>
+                <button class="btn btn-sm btn-outline-light" onclick="cert('\${u}')" title="SSL"><i class="bi bi-shield-check"></i></button>
+                <a href="http://\${r[u].ip}:\${r[u].xp||2053}" target="_blank" class="btn btn-sm btn-glass"><i class="bi bi-box-arrow-up-right"></i> Panel</a>
+            </div></div></div>\`;
+        }
+        document.getElementById('stat_total').innerText=c;document.getElementById('stat_online').innerText=c;document.getElementById('stat_v4').innerText=v4;document.getElementById('stat_v6').innerText=v6;if(c===0)l.innerHTML='<div class="col-12 text-center text-muted py-5">Waiting for agents...</div>'
+    })
+}
 function pop(u){currId=u;document.getElementById('tuuid').value=u;document.getElementById('uid').value=crypto.randomUUID();up();m.show()}
 function ren(u){Swal.fire({title:'Rename',input:'text',background:'#1e293b',color:'#fff',showCancelButton:true}).then((r)=>{if(r.value)fetch('/api/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uuid:u,name:r.value})}).then(()=>{toast.fire({icon:'success'});ref()})})}
 function cert(u){Swal.fire({title:'Domain',input:'text',background:'#1e293b',color:'#fff',showCancelButton:true}).then((r)=>{if(r.value){Swal.fire({title:'Applying...',timer:60000,didOpen:()=>{Swal.showLoading()},background:'#1e293b',color:'#fff'});fetch('/api/cert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target_uuid:u,domain:r.value})}).then(res=>res.json()).then(res=>{if(res.success)Swal.fire({icon:'success',background:'#1e293b',color:'#fff'});else Swal.fire({icon:'error',text:res.msg,background:'#1e293b',color:'#fff'})})}})}
@@ -227,69 +304,65 @@ EOF
     echo "COPY server.py ." >> Dockerfile
     echo "CMD [\"python\", \"server.py\"]" >> Dockerfile
 
-    # Clean build
+    # Build Master
     docker build -t multix-master . >/dev/null 2>&1
     docker rm -f multix-master >/dev/null 2>&1
     
-    # Run
+    # Run with pid:host to read host proc
     docker run -d --name multix-master --network host --restart always \
         --pid host \
+        --volume /proc:/host/proc:ro \
         -e MASTER_PORT=${DEFAULT_MASTER_PORT} -e CLUSTER_TOKEN=${TOKEN} multix-master >/dev/null
 
-    echo -e "\n${GREEN}✔ Master Successfully Deployed!${PLAIN}"
+    echo -e "\n${GREEN}✔ Master Deployed!${PLAIN}"
     echo -e "   🌐 Dashboard: http://$(curl -s -4 ifconfig.me):${DEFAULT_MASTER_PORT}"
     echo -e "   🔑 Token    : ${YELLOW}${TOKEN}${PLAIN}"
-    echo -e "\nPress Enter to return..."
+    echo -e "\nPress Enter..."
     read
 }
 
 # ==================================================
-# 2. Install Agent (Clean Install + Pre-check)
+# 2. Install Agent (Client)
 # ==================================================
 install_agent() {
     check_docker
     clear
     echo -e "${CYAN}====================================================${PLAIN}"
-    echo -e "${BOLD}   Deploy Agent Node (w/ 3x-ui + Monitor)${PLAIN}"
+    echo -e "${BOLD}   Deploy Agent Node${PLAIN}"
     echo -e "${CYAN}====================================================${PLAIN}"
 
-    # Clean up old container forcefully
     if docker ps -a | grep -q multix-agent; then
-        echo -e "${YELLOW}♻️  Cleaning up old Agent...${PLAIN}"
+        echo -e "${YELLOW}♻️  Removing old Agent...${PLAIN}"
         cd ${APP_DIR}/agent && docker compose down >/dev/null 2>&1
         docker rm -f multix-agent >/dev/null 2>&1
     fi
 
-    # Network Selection
-    echo -e "\n${BOLD}📡 Connection Protocol${PLAIN}"
+    # Protocol Select
+    echo -e "\n${BOLD}📡 Connect Protocol${PLAIN}"
     echo -e "   [1] IPv4 (Default)"
-    echo -e "   [2] IPv6 (Recommended for NAT/Edu)"
+    echo -e "   [2] IPv6 (Use this for NAT/IPv6-Only)"
     read -p "Select [1/2]: " P_OPT
     
     echo -e "\n${BOLD}🌍 Master Address${PLAIN}"
-    read -p "Enter IP or Domain: " MASTER_ADDR
+    read -p "IP/Domain: " MASTER_ADDR
 
-    echo -e "\n⏳ Running Pre-flight Check..."
+    echo -e "\n⏳ Checking Connectivity..."
     if [[ "$P_OPT" == "2" ]]; then
         ping6 -c 2 -W 2 $MASTER_ADDR >/dev/null 2>&1
         if [ $? -ne 0 ]; then
-            echo -e "${RED}❌ Error: Cannot reach ${MASTER_ADDR} via IPv6${PLAIN}"
-            read -p "Press Enter to try again..."
-            return
+            echo -e "${RED}❌ Connection Failed (IPv6). Check IP or Firewall.${PLAIN}"; read; return
         fi
         echo -e "${GREEN}✔ IPv6 Reachable${PLAIN}"
     else
         ping -c 2 -W 2 $MASTER_ADDR >/dev/null 2>&1
         if [ $? -ne 0 ]; then
-            echo -e "${RED}❌ Error: Cannot reach ${MASTER_ADDR} via IPv4${PLAIN}"
-            read -p "Press Enter to try again..."
-            return
+            echo -e "${RED}❌ Connection Failed (IPv4). Check IP or Firewall.${PLAIN}"; read; return
         fi
         echo -e "${GREEN}✔ IPv4 Reachable${PLAIN}"
     fi
 
     echo -e "\n${BOLD}🔑 Auth Token${PLAIN}"
-    read -p "Enter Cluster Token: " TOKEN
+    read -p "Token: " TOKEN
     [[ -z "$TOKEN" ]] && TOKEN="${DEFAULT_TOKEN}"
 
     mkdir -p ${APP_DIR}/agent
@@ -300,6 +373,7 @@ install_agent() {
     # Agent Code
     cat > agent.py <<EOF
 import time, json, socket, os, websocket, requests, threading, psutil
+psutil.PROCFS_PATH = '/host/proc'
 
 M_ADDR = "${MASTER_ADDR}"
 M_PORT = int(os.getenv('MASTER_PORT', 7575))
@@ -308,7 +382,6 @@ AGENT_UUID = "${MY_UUID}"
 X_PORT = int(os.getenv('XUI_PORT', 2053))
 X_USER = os.getenv('XUI_USER', 'admin')
 X_PASS = os.getenv('XUI_PASS', 'admin123')
-psutil.PROCFS_PATH = '/host/proc'
 
 WS_URL = f"ws://{M_ADDR}:{M_PORT}/ws"
 if ':' in M_ADDR and not M_ADDR.startswith('['): WS_URL = f"ws://[{M_ADDR}]:{M_PORT}/ws"
@@ -321,9 +394,14 @@ def xui_api(path, payload={}):
     except: return {}
 
 def get_sys_status():
+    bbr = 'unknown'
+    try:
+        with open('/host/proc/sys/net/ipv4/tcp_congestion_control', 'r') as f:
+            bbr = f.read().strip()
+    except: pass
     try:
         disk = psutil.disk_usage('/hostfs').percent if os.path.exists('/hostfs') else 0
-        return {'cpu': int(psutil.cpu_percent(interval=None)),'mem': int(psutil.virtual_memory().percent),'disk': int(disk)}
+        return {'cpu': int(psutil.cpu_percent(interval=None)),'mem': int(psutil.virtual_memory().percent),'disk': int(disk), 'bbr': bbr}
     except: return {}
 
 def on_message(ws, message):
@@ -416,89 +494,88 @@ EOF
     docker compose pull >/dev/null 2>&1
     docker compose up -d --build >/dev/null 2>&1
     echo -e "\n${GREEN}✔ Agent Deployed!${PLAIN}"
-    echo -e "\nPress Enter to return..."
+    echo -e "\nPress Enter..."
     read
 }
 
 # ==================================================
-# 3. Ops & Info
+# 3. Operations
 # ==================================================
+enable_bbr() {
+    echo -e "${GREEN}>>> Enabling BBR on Host...${PLAIN}"
+    if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
+        echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+        echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+        sysctl -p
+        echo -e "${GREEN}✔ BBR Enabled (Restart not required for newer kernels).${PLAIN}"
+    else
+        echo -e "${YELLOW}BBR already configured.${PLAIN}"
+    fi
+    read -p "Press Enter..."
+}
+
 view_config() {
     clear
     echo -e "${CYAN}================================================================${PLAIN}"
-    echo -e "${BOLD}   🔍 MultiX Configuration Inspector${PLAIN}"
+    echo -e "${BOLD}   🔍 Config Inspector${PLAIN}"
     echo -e "${CYAN}================================================================${PLAIN}"
 
-    echo -e "\n [ 🌍 Local Network ]"
-    echo -e " ---------------------------------------------------------------"
+    echo -e "\n [ 🌍 Local IP ]"
     IPV4=$(ip -4 a | grep global | awk '{print $2}' | cut -d/ -f1 | head -n 1)
     IPV6=$(ip -6 a | grep global | awk '{print $2}' | cut -d/ -f1 | head -n 1)
-    [[ -z "$IPV4" ]] && IPV4="None"
-    [[ -z "$IPV6" ]] && IPV6="None"
-    echo -e " 🟢 IPv4:  ${WHITE}${IPV4}${PLAIN}"
-    echo -e " 🔵 IPv6:  ${WHITE}${IPV6}${PLAIN}"
-    echo -e " ---------------------------------------------------------------"
+    echo -e " 🟢 IPv4:  ${WHITE}${IPV4:-None}${PLAIN}"
+    echo -e " 🔵 IPv6:  ${WHITE}${IPV6:-None}${PLAIN}"
 
-    echo -e "\n [ 🔐 Cluster Credentials ]"
-    echo -e " ---------------------------------------------------------------"
-    # Try getting token from running containers
+    echo -e "\n [ 🔐 Cluster ]"
     TOKEN=""
     if docker ps | grep -q multix-master; then
         TOKEN=$(docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' multix-master | grep CLUSTER_TOKEN | cut -d= -f2)
     elif docker ps | grep -q multix-agent; then
         TOKEN=$(docker exec multix-agent cat agent.py 2>/dev/null | grep 'TOKEN =' | cut -d'"' -f2)
     fi
-    [[ -z "$TOKEN" ]] && TOKEN="${RED}Not Found (Service Stopped)${PLAIN}"
-    echo -e " 🔑 Token: ${YELLOW}${TOKEN}${PLAIN}"
-    echo -e " ---------------------------------------------------------------"
+    echo -e " 🔑 Token: ${YELLOW}${TOKEN:-Stopped}${PLAIN}"
 
-    echo -e "\n [ 🔴 Agent / 3x-ui Info ]"
-    echo -e " ---------------------------------------------------------------"
+    echo -e "\n [ 🚀 3x-ui Creds ]"
     if docker ps | grep -q 3x-ui; then
         X_USER=$(docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' 3x-ui | grep USERNAME | cut -d= -f2)
         X_PASS=$(docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' 3x-ui | grep PASSWORD | cut -d= -f2)
-        X_PORT=$(docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' 3x-ui | grep XUI_PORT | cut -d= -f2)
-        echo -e " 3x-ui:  ${GREEN}http://127.0.0.1:${X_PORT}${PLAIN}"
-        echo -e " User :  ${WHITE}${X_USER}${PLAIN}"
-        echo -e " Pass :  ${WHITE}${X_PASS}${PLAIN}"
+        echo -e " User : ${WHITE}${X_USER}${PLAIN} / Pass : ${WHITE}${X_PASS}${PLAIN}"
     else
-        echo -e " ${GRAY}Agent not running.${PLAIN}"
+        echo -e " ${GRAY}Not Running${PLAIN}"
     fi
     echo -e " ================================================================"
-    read -p " Press Enter to return..."
+    read -p " Press Enter..."
 }
 
-show_logs() {
+change_config() {
+    echo -e "\n${BOLD}⚠️  This will restart containers.${PLAIN}"
+    echo "1. Change Master Port"
+    echo "2. Change 3x-ui Port"
+    echo "3. Change Cluster Token"
+    read -p "Select: " OPT
+    
+    if [[ "$OPT" == "1" ]]; then
+        read -p "New Master Port: " P
+        sed -i "s/DEFAULT_MASTER_PORT=.*/DEFAULT_MASTER_PORT=$P/" $0
+        echo -e "${GREEN}Config updated. Please Re-install Master to apply.${PLAIN}"
+    elif [[ "$OPT" == "2" ]]; then
+        read -p "New 3x-ui Port: " P
+        sed -i "s/DEFAULT_XUI_PORT=.*/DEFAULT_XUI_PORT=$P/" $0
+        echo -e "${GREEN}Config updated. Please Re-install Agent to apply.${PLAIN}"
+    fi
+    read -p "Press Enter..."
+}
+
+view_logs() {
     clear
-    echo -e "${YELLOW}Select Container:${PLAIN}"
-    echo "1. Master"
-    echo "2. Agent"
-    echo "3. 3x-ui"
+    echo "1. Master Log  2. Agent Log"
     read -p "Opt: " OPT
-    case $OPT in
-        1) NAME="multix-master" ;;
-        2) NAME="multix-agent" ;;
-        3) NAME="3x-ui" ;;
-    esac
-    if [[ -n "$NAME" ]]; then
-        echo -e "${CYAN}Streaming logs for $NAME (Ctrl+C to exit)...${PLAIN}"
-        docker logs -f $NAME
-    fi
-}
-
-manage_docker() {
-    if [[ "$1" == "restart" ]]; then
-        docker restart multix-master multix-agent 3x-ui 2>/dev/null
-        echo -e "${GREEN}✔ Restarted${PLAIN}"
-    elif [[ "$1" == "stop" ]]; then
-        docker stop multix-master multix-agent 3x-ui 2>/dev/null
-        echo -e "${GREEN}✔ Stopped${PLAIN}"
-    fi
-    sleep 1
+    if [[ "$OPT" == "1" ]]; then docker logs -f multix-master; fi
+    if [[ "$OPT" == "2" ]]; then docker logs -f multix-agent; fi
 }
 
 uninstall() {
-    echo -e "${RED}1. Remove Containers (Keep Data)  2. Full Wipe (Delete Data)${PLAIN}"
+    echo -e "${RED}1. Remove Containers (Keep Data)  2. Full Wipe${PLAIN}"
     read -p "Opt: " OPT
     if [[ "$OPT" == "1" ]] || [[ "$OPT" == "2" ]]; then
         docker rm -f multix-master 2>/dev/null
@@ -513,45 +590,43 @@ uninstall() {
 # ==================================================
 show_menu() {
     while true; do
-        get_status
+        get_sys_info
         clear
-        echo -e "${CYAN}################################################################${PLAIN}"
-        echo -e "${CYAN}#   ${BOLD}MultiX Cluster Manager${PLAIN}${CYAN} [v10.1 Ultimate]                    #${PLAIN}"
-        echo -e "${CYAN}#   * Dockerized Environment / High Performance                #${PLAIN}"
-        echo -e "${CYAN}################################################################${PLAIN}"
-        echo ""
-        echo -e " [ 📦 Container Status ]"
-        echo -e " ---------------------------------------------------------------"
-        printf " %-30s %-20s %-15s\n" "🟢 Master Node" "$M_STATE" "[$M_MEM]"
-        printf " %-30s %-20s %-15s\n" "🔴 Agent Node" "$A_STATE" "[$A_MEM]"
-        echo -e " ---------------------------------------------------------------"
+        echo -e " ┌── [ 🖥️ System Info ] ────────────────────────────────────────┐"
+        echo -e " │  Model    :  ${WHITE}${CPU_MODEL:0:30}...${PLAIN}"
+        echo -e " │  Kernel   :  ${WHITE}${KERNEL}${PLAIN}          [ TCP: ${BBR_STATUS} ]"
+        echo -e " │  Memory   :  ${WHITE}${MEM_TOTAL}${PLAIN}"
+        echo -e " └──────────────────────────────────────────────────────────────┘"
+        echo -e " ┌── [ 📦 Docker Status ] ──────────────────────────────────────┐"
+        printf " │  Master : %-20s  Agent : %-20s │\n" "${M_STATE} : ${M_PORT}" "${A_STATE} : ${X_PORT}"
+        echo -e " └──────────────────────────────────────────────────────────────┘"
         echo ""
         echo -e " [ 🚀 1. Deploy ]"
-        echo -e "  ${BOLD}1.${PLAIN} Install/Update Master (Dashboard)"
-        echo -e "  ${BOLD}2.${PLAIN} Install/Update Agent  (Client)"
+        echo -e "  1. Install Master (Dashboard)"
+        echo -e "  2. Install Agent  (Client)"
         echo ""
-        echo -e " [ 🛠️ 2. Ops ]"
-        echo -e "  ${BOLD}3.${PLAIN} View Logs"
-        echo -e "  ${BOLD}4.${PLAIN} Restart Services"
-        echo -e "  ${BOLD}5.${PLAIN} Stop Services"
+        echo -e " [ ⚙️ 2. Network & Config ]"
+        echo -e "  3. Enable BBR (Host)"
+        echo -e "  4. Change Ports / Token"
+        echo -e "  5. View Logs (Debug)"
         echo ""
-        echo -e " [ ℹ️ 3. Info & Debug ]"
-        echo -e "  ${BOLD}6.${PLAIN} View Config (Token / IPs / 3x-ui Creds)"
+        echo -e " [ ℹ️ 3. Info ]"
+        echo -e "  6. View Config (Tokens/IPs/Creds)"
         echo ""
         echo -e " [ 🗑️ 4. Uninstall ]"
-        echo -e "  ${BOLD}9.${PLAIN} Uninstall Options"
+        echo -e "  9. Uninstall Options"
         echo ""
         echo -e " ---------------------------------------------------------------"
-        echo -e "  ${BOLD}0.${PLAIN} Exit"
+        echo -e "  0. Exit"
         echo -e " ---------------------------------------------------------------"
         read -p " Select [0-9]: " OPT
 
         case $OPT in
             1) install_master ;;
             2) install_agent ;;
-            3) show_logs ;;
-            4) manage_docker restart ;;
-            5) manage_docker stop ;;
+            3) enable_bbr ;;
+            4) change_config ;;
+            5) view_logs ;;
             6) view_config ;;
             9) uninstall ;;
             0) exit 0 ;;
