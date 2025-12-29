@@ -227,16 +227,132 @@
     </div>
 
     <script>
-        function multix() {
-            return {
-                agents: {}, master: {}, config: {}, 
-                drawer: false, showAdminModal: false, isRefreshing: false,
-                curSid: '', curNode: {}, editNodes: [],
-                
-                async init() {
+<script>
+    function multix() {
+        return {
+            // 基础数据状态
+            agents: {}, master: {}, config: {}, 
+            drawer: false, adminModal: false, isRefreshing: false,
+            curSid: '', curNode: {}, editNodes: [],
+            
+            // --- [ 新增：编辑模式状态控制变量 ] ---
+            // 这些变量专门用于存放你正在输入的内容，不会被每3秒一次的 fetchState 覆盖
+            isEditingUser: false,
+            isEditingPass: false,
+            editingSid: null, // 当前正在编辑哪台小鸡的名字
+            tempUser: '',
+            tempPass: '',
+            tempAlias: '',
+
+            // 初始化：每3秒刷新一次全局状态
+            async init() {
+                await this.fetchState();
+                setInterval(() => this.fetchState(), 3000);
+            },
+            
+            // 核心刷新函数：从后端获取最新数据
+            async fetchState() {
+                try {
+                    const r = await fetch('/api/state');
+                    const d = await r.json();
+                    this.agents = d.agents || {};
+                    this.master = d.master || {};
+                    this.config = d.config || {};
+                    // 如果抽屉开着，同步当前选中的节点数据
+                    if(this.drawer && this.curSid) this.curNode = this.agents[this.curSid];
+                } finally {
+                    this.isRefreshing = false;
+                }
+            },
+
+            // --- [ 账户管理：保存修改 ] ---
+            async confirmUpdateAdmin() {
+                const res = await fetch('/api/update_admin', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        user: this.tempUser, // 使用临时变量提交
+                        pass: this.tempPass || null
+                    })
+                });
+                if(res.ok) {
+                    this.isEditingUser = false;
+                    this.isEditingPass = false;
                     await this.fetchState();
-                    setInterval(() => this.fetchState(), 3000);
-                },
+                    alert("管理员账户已安全更新");
+                }
+            },
+
+            // --- [ 节点管理：增加、改名、删除、排序 ] ---
+            async addVirtualNode() {
+                await fetch('/api/add_demo', { method: 'POST' });
+                await this.fetchState();
+            },
+
+            async saveAlias(sid) {
+                // 调用统一管理接口进行重命名
+                await this.manageAgent(sid, 'rename', this.tempAlias);
+                this.editingSid = null; // 退出编辑模式
+                await this.fetchState();
+            },
+
+            async manageAgent(sid, action, value) {
+                await fetch('/api/manage_agent', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sid: sid,
+                        action: action,
+                        name: action === 'rename' ? value : null,
+                        order: action === 'reorder' ? parseInt(value) : null
+                    })
+                });
+                if (action === 'delete') await this.fetchState();
+            },
+
+            // 计算属性：根据 order 字段实时排序
+            get sortedAgents() {
+                return Object.fromEntries(
+                    Object.entries(this.agents).sort(([,a], [,b]) => (a.order || 0) - (b.order || 0))
+                );
+            },
+
+            // 登出：清理并重启页面
+            logout() {
+                if(confirm("确定要退出管理面板吗？")) {
+                    window.location.reload(); 
+                }
+            },
+
+            // --- [ 原有逻辑：配置节点抽屉 ] ---
+            openDrawer(sid) {
+                this.curSid = sid;
+                this.curNode = this.agents[sid];
+                this.editNodes = JSON.parse(JSON.stringify(this.curNode.draft_nodes || this.curNode.physical_nodes || []));
+                this.drawer = true;
+            },
+            addEmptyNode() {
+                this.editNodes.push({ tag: 'Node_'+Math.random().toString(36).slice(-4), type: 'vless', listen_port: 443, uuid: crypto.randomUUID() });
+            },
+            async saveDraft() {
+                const r = await fetch('/api/save_draft', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({sid: this.curSid, nodes: this.editNodes})
+                });
+                if(r.ok) { this.drawer = false; this.fetchState(); }
+            },
+            async syncPush() {
+                if(!confirm("确认即时同步？这将重启节点服务。")) return;
+                await this.saveDraft();
+                const r = await fetch('/api/sync_push', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({sid: this.curSid})
+                });
+                if(r.ok) { alert("下发成功！"); this.drawer = false; }
+            }
+        }
+    }
+</script>
                 
                 async fetchState() {
                     try {
