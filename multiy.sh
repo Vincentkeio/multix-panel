@@ -103,7 +103,7 @@ EOF
     systemctl restart "${name}"
 }
 
-# --- [ 2. 主控安装 (找回全部功能) ] ---
+# --- [ 2. 主控安装：旗舰异步合一版 ] ---
 install_master() {
     apt-get install -y python3-pip
     clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (全异步合一架构)${PLAIN}"
@@ -114,14 +114,12 @@ install_master() {
     read -p "1. 面板 Web 端口 [默认 7575]: " M_PORT; M_PORT=${M_PORT:-7575}
     read -p "2. 管理员账号 [默认 admin]: " M_USER; M_USER=${M_USER:-admin}
     read -p "3. 管理员密码 [默认 admin]: " M_PASS; M_PASS=${M_PASS:-admin}
-    read -p "4. 主控公网地址 (Agent连接用): " M_HOST; M_HOST=${M_HOST:-$(curl -s4 api.ipify.org)}
+    read -p "4. 主控公网地址: " M_HOST; M_HOST=${M_HOST:-$(curl -s4 api.ipify.org)}
     
     TK_RAND=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
     read -p "5. 通信令牌 Token [回车使用: $TK_RAND]: " IN_TK; M_TOKEN=${IN_TK:-$TK_RAND}
 
-# --- [ 从这里开始覆盖 ] ---
-
-    # 1. 写入环境变量 (对接交互获取的变量)
+    # 1. 写入环境变量
     cat > "$M_ROOT/.env" << EOF
 M_TOKEN='$M_TOKEN'
 M_PORT='$M_PORT'
@@ -130,38 +128,30 @@ M_PASS='$M_PASS'
 M_HOST='$M_HOST'
 EOF
 
-    # 2. 从 GitHub 拉取云端极客 UI (实现逻辑分离)
-    # 使用你刚才提供的 GitHub 路径
-    local RAW_URL="https://raw.githubusercontent.com/Vincentkeio/multix-panel/main/ui"
-    
-    echo -e "${YELLOW}>>> 正在同步云端 UI 资源 (GitHub)...${PLAIN}"
-    mkdir -p "$M_ROOT/master/static"
-
-    # 拉取 HTML 和 本地化 JS 依赖
-    curl -sL -o "$M_ROOT/master/index.html" "$RAW_URL/index.html"
-    curl -sL -o "$M_ROOT/master/static/tailwind.js" "$RAW_URL/static/tailwind.js"
-    curl -sL -o "$M_ROOT/master/static/alpine.js" "$RAW_URL/static/alpine.js"
-
-    # 检查 UI 是否拉取成功
-    if [ ! -f "$M_ROOT/master/index.html" ]; then
-        echo -e "${RED}❌ 致命错误: 无法从 GitHub 获取 UI 文件，请检查网络或 URL。${PLAIN}"
-        # 这里为了防止卡死，如果是离线模式，可能需要回退到内嵌 UI，但暂且保持退出逻辑
-    fi
-
-    # 3. 生成后端核心 (app.py)
-    _generate_master_py
-    
     # 2. 生成后端核心 (app.py)
     _generate_master_py
-    # 3. 生成前端页面 (index.html) - 实现 UI 逻辑分离
-    _generate_master_ui
+
+    # 3. 从 GitHub 同步云端 UI 资源
+    local RAW_URL="https://raw.githubusercontent.com/Vincentkeio/multix-panel/main/ui"
+    echo -e "${YELLOW}>>> 正在同步云端极客 UI 资源...${PLAIN}"
+    mkdir -p "$M_ROOT/master/static"
     
+    # 使用随机参数 v 强制刷新 CDN 缓存
+    curl -sL -o "$M_ROOT/master/index.html" "$RAW_URL/index.html?v=$(date +%s)"
+    curl -sL -o "$M_ROOT/master/static/tailwind.js" "$RAW_URL/static/tailwind.js?v=$(date +%s)"
+    curl -sL -o "$M_ROOT/master/static/alpine.js" "$RAW_URL/static/alpine.js?v=$(date +%s)"
+
+    if [ ! -s "$M_ROOT/master/index.html" ]; then
+        echo -e "${RED}❌ 致命错误: 无法获取 UI 文件，请检查网络。${PLAIN}"
+        exit 1
+    fi
+
     # 4. 部署并启动服务
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
 
-# --- [ 后端核心逻辑：处理草稿、同步与指令 ] ---
+# --- [ 后端核心逻辑：支持本地热分离 UI ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess
@@ -182,8 +172,6 @@ env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
 app.secret_key = TOKEN
 
-# 核心内存数据库
-# AGENTS[sid] = { "hostname":..., "metrics":..., "physical_nodes":..., "draft_nodes":..., "is_dirty":... }
 AGENTS = {}
 WS_CLIENTS = {}
 
@@ -195,29 +183,16 @@ async def ws_handler(ws):
         async for msg in ws:
             data = json.loads(msg)
             if data.get('token') != TOKEN: continue
-
             if data.get('type') in ['heartbeat', 'report_full']:
                 if sid not in AGENTS:
-                    AGENTS[sid] = {
-                        "ip": addr, "is_dirty": False, "status": "online",
-                        "physical_nodes": [], "draft_nodes": [], "metrics": {}
-                    }
-                
+                    AGENTS[sid] = {"ip": addr, "is_dirty": False, "status": "online", "physical_nodes": [], "draft_nodes": [], "metrics": {}}
                 AGENTS[sid].update({
-                    "hostname": data.get('hostname'),
-                    "metrics": data.get('metrics'),
-                    "remote_hash": data.get('config_hash'),
-                    "last_seen": time.time()
+                    "hostname": data.get('hostname'), "metrics": data.get('metrics'),
+                    "remote_hash": data.get('config_hash'), "last_seen": time.time()
                 })
-
                 if data.get('type') == 'report_full':
                     AGENTS[sid]["physical_nodes"] = data.get('inbounds', [])
-                    if not AGENTS[sid]["is_dirty"]:
-                        AGENTS[sid]["draft_nodes"] = data.get('inbounds', [])
-
-            elif data.get('type') == 'cmd_res':
-                print(f"[CMD] {sid} Res: {data.get('res')}")
-
+                    if not AGENTS[sid]["is_dirty"]: AGENTS[sid]["draft_nodes"] = data.get('inbounds', [])
     except: pass
     finally:
         if sid in AGENTS: AGENTS[sid]["status"] = "offline"
@@ -226,25 +201,14 @@ async def ws_handler(ws):
 @app.route('/')
 def index():
     if not session.get('logged'): return redirect('/login')
-    # 热分离：每次访问实时读取本地 HTML 文件
     try:
         with open("/opt/multiy_mvp/master/index.html", "r", encoding="utf-8") as f:
             return render_template_string(f.read())
-    except: return "UI Template Error."
+    except: return "UI Error: index.html Not Found."
 
 @app.route('/api/state')
 def api_state():
     return jsonify({"agents": AGENTS, "master": {"token": TOKEN, "host": env.get('M_HOST')}})
-
-@app.route('/api/save_draft', methods=['POST'])
-def save_draft():
-    d = request.json
-    sid = d.get('sid')
-    if sid in AGENTS:
-        AGENTS[sid]['draft_nodes'] = d.get('nodes')
-        AGENTS[sid]['is_dirty'] = True
-        return jsonify({"res": "ok"})
-    return jsonify({"res": "err"}), 404
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -261,7 +225,6 @@ if __name__ == "__main__":
     asyncio.run(main())
 EOF
 }
-
 
 # --- [修复：将原来的裸露 Python 代码包裹在备用生成函数中，防止语法错误] ---
 _generate_master_py_standalone() {
