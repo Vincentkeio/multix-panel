@@ -24,29 +24,22 @@ env_cleaner() {
 # --- [ 1. 凭据与配置详情看板 ] ---
 credential_center() {
     clear
-    [ ! -f "$M_ROOT/.env" ] && echo -e "${RED}尚未安装主控！${PLAIN}" && pause_back && return
+    [ ! -f "$M_ROOT/.env" ] && echo -e "${RED}[错误]${PLAIN} 尚未安装主控！" && pause_back && return
     source "$M_ROOT/.env"
-    V4=$(curl -s4m 3 api.ipify.org || echo "未分配")
-    V6=$(curl -s6m 3 api64.ipify.org || echo "未分配")
+    V4=$(curl -s4m 2 api.ipify.org || echo "N/A")
+    V6=$(curl -s6m 2 api64.ipify.org || echo "N/A")
     
     echo -e "${SKYBLUE}==================================================${PLAIN}"
     echo -e "          🛰️  MULTIY PRO 旗舰凭据看板"
     echo -e "${SKYBLUE}==================================================${PLAIN}"
-    echo -e "${GREEN}[ 1. 面板访问信息 ]${PLAIN}"
-    echo -e " 🔹 IPv4 入口: ${SKYBLUE}http://$V4:$M_PORT${PLAIN}"
-    echo -e " 🔹 IPv6 入口: ${SKYBLUE}http://[$V6]:$M_PORT${PLAIN}"
-    echo -e " 🔹 管理账号: ${YELLOW}$M_USER${PLAIN}"
-    echo -e " 🔹 管理密码: ${YELLOW}$M_PASS${PLAIN}"
-    
-    echo -e "\n${GREEN}[ 2. Agent 接入配置 ]${PLAIN}"
-    echo -e " 🔹 接入地址: ${SKYBLUE}$M_HOST${PLAIN}"
-    echo -e " 🔹 接入端口: ${SKYBLUE}9339${PLAIN}"
-    echo -e " 🔹 通信 Token: ${YELLOW}$M_TOKEN${PLAIN}"
-    
-    echo -e "\n${GREEN}[ 3. 系统底层监听 ]${PLAIN}"
-    check_v4v6() { ss -tuln | grep -q ":$1 " && echo -e "${GREEN}● OK${PLAIN}" || echo -e "${RED}○ OFF${PLAIN}"; }
-    echo -e " 🔹 Web Server ($M_PORT): $(check_v4v6 $M_PORT)"
-    echo -e " 🔹 WebSocket (9339): $(check_v4v6 9339)"
+    echo -e "${GREEN}[ 1. 管理面板入口 ]${PLAIN}"
+    echo -e " 🔹 IPv4: http://$V4:$M_PORT"
+    echo -e " 🔹 IPv6: http://[$V6]:$M_PORT"
+    echo -e " 🔹 账号: ${YELLOW}$M_USER${PLAIN} / 密码: ${YELLOW}$M_PASS${PLAIN}"
+    echo -e "\n${GREEN}[ 2. Agent 接入配置 (原生 WS) ]${PLAIN}"
+    echo -e " 🔹 接入 IP/域名: ${SKYBLUE}$M_HOST${PLAIN}"
+    echo -e " 🔹 通信端口: ${SKYBLUE}9339${PLAIN}"
+    echo -e " 🔹 通信令牌: ${YELLOW}$M_TOKEN${PLAIN}"
     echo -e "${SKYBLUE}==================================================${PLAIN}"
     pause_back
 }
@@ -85,7 +78,6 @@ import asyncio, websockets, json, os, time, subprocess
 from flask import Flask, render_template_string, session, redirect, request, jsonify
 from werkzeug.serving import make_server
 
-# [模块：环境配置]
 def load_env():
     c = {}
     path = '/opt/multiy_mvp/.env'
@@ -101,14 +93,13 @@ env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
 app.secret_key = TOKEN
 
-# [模块：WebSocket 通信核心]
+# [WebSocket 核心逻辑]
 async def ws_handler(ws):
     addr = ws.remote_address[0]
     sid = str(id(ws))
     try:
         async for msg in ws:
             data = json.loads(msg)
-            # 精准校验 Token
             if data.get('type') == 'auth' and data.get('token') == TOKEN:
                 AGENTS[sid] = {
                     "alias": data.get('hostname', 'Node'), "stats": {"cpu":0,"mem":0},
@@ -121,49 +112,83 @@ async def ws_handler(ws):
     finally:
         if sid in AGENTS: del AGENTS[sid]
 
-# [模块：API 路由]
+# [API 接口]
 @app.route('/api/state')
 def api_state():
-    return jsonify({"agents": AGENTS})
+    return jsonify({
+        "agents": AGENTS,
+        "config": {
+            "token": TOKEN,
+            "ws_port": 9339,
+            "m_host": env.get('M_HOST'),
+            "ip4": subprocess.getoutput("curl -s4m 1 api.ipify.org || echo 'N/A'"),
+            "ip6": subprocess.getoutput("curl -s6m 1 api64.ipify.org || echo 'N/A'")
+        }
+    })
 
-# [模块：UI 渲染] (支持 Lucide 图标与高级样式)
+# [旗舰 UI 模板]
 INDEX_HTML = """
 <!DOCTYPE html><html><head><meta charset="UTF-8">
 <script src="https://cdn.tailwindcss.com"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
 <style>
-    body { background: #020617; color: #fff; }
-    .glass { background: rgba(255,255,255,0.01); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); border-radius: 2rem; }
-    .card-active { border-color: rgba(59,130,246,0.5); box-shadow: 0 0 20px rgba(59,130,246,0.1); }
+    body { background: #020617; color: #f8fafc; font-family: ui-sans-serif, system-ui; }
+    .glass { background: rgba(30, 41, 59, 0.4); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.05); border-radius: 1.5rem; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 10px #22c55e; animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
 </style></head>
-<body class="p-8 md:p-12" x-data="panel()" x-init="init()">
+<body class="p-6 md:p-12" x-data="panel()" x-init="init()">
     <div class="max-w-7xl mx-auto">
-        <header class="flex justify-between items-center mb-16">
-            <h1 class="text-5xl font-black italic text-blue-600">MULTIY <span class="text-white text-3xl font-light">PRO</span></h1>
-            <div class="glass px-6 py-2 flex items-center gap-3">
-                <span class="text-[10px] font-bold text-blue-400">NODE CLUSTER</span>
-                <span class="text-lg font-black" x-text="Object.keys(agents).length"></span>
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
+            <div>
+                <h1 class="text-5xl font-black italic text-blue-600 tracking-tighter">MULTIY <span class="text-white not-italic">PRO</span></h1>
+                <div class="flex flex-wrap gap-4 mt-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                    <span class="glass px-3 py-1 border-blue-500/30 text-blue-400">V4: <span class="text-white" x-text="conf.ip4"></span></span>
+                    <span class="glass px-3 py-1 border-blue-500/30 text-blue-400">V6: <span class="text-white" x-text="conf.ip6"></span></span>
+                    <span class="glass px-3 py-1 border-purple-500/30 text-purple-400">WS: <span class="text-white">9339</span></span>
+                    <span class="glass px-3 py-1 border-yellow-500/30 text-yellow-400">Token: <span class="text-white" x-text="conf.token"></span></span>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <button class="glass px-6 py-3 text-xs font-bold hover:bg-white/5"><i class="ri-settings-line mr-2"></i>系统设置</button>
             </div>
         </header>
+
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <template x-if="Object.keys(agents).length === 0">
+                <div class="glass p-10 border-dashed border-slate-700 opacity-50 flex flex-col items-center justify-center text-center">
+                    <i class="ri-radar-line text-4xl text-slate-600 mb-4 animate-spin-slow"></i>
+                    <h3 class="font-bold text-slate-400 uppercase tracking-widest text-xs">等待 Agent 接入...</h3>
+                </div>
+            </template>
+
             <template x-for="(n, sid) in agents" :key="sid">
-                <div class="glass p-10 card-active transition-all">
+                <div class="glass p-10 border-white/5 hover:border-blue-500/50 transition-all group">
                     <div class="flex justify-between items-start mb-8">
                         <div>
-                            <h2 class="text-2xl font-bold" x-text="n.alias"></h2>
-                            <code class="text-blue-500 text-[10px]" x-text="n.ip"></code>
+                            <h2 class="text-2xl font-black group-hover:text-blue-400" x-text="n.alias"></h2>
+                            <code class="text-[10px] text-slate-500" x-text="n.ip"></code>
                         </div>
-                        <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_#22c55e]"></div>
+                        <div class="status-dot"></div>
                     </div>
                     <div class="space-y-6">
                         <div>
-                            <div class="flex justify-between text-[10px] font-bold mb-2 text-slate-400"><span>CPU</span><span x-text="n.stats.cpu+'%'"></span></div>
-                            <div class="h-1 w-full bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-blue-500 transition-all duration-1000" :style="'width:'+n.stats.cpu+'%'"></div></div>
+                            <div class="flex justify-between text-[10px] font-black uppercase mb-2 text-slate-400"><span>CPU Load</span><span x-text="n.stats.cpu+'%'"></span></div>
+                            <div class="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden"><div class="h-full bg-blue-500 transition-all duration-700" :style="'width:'+n.stats.cpu+'%'"></div></div>
                         </div>
                         <div>
-                            <div class="flex justify-between text-[10px] font-bold mb-2 text-slate-400"><span>MEM</span><span x-text="n.stats.mem+'%'"></span></div>
-                            <div class="h-1 w-full bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500 transition-all duration-1000" :style="'width:'+n.stats.mem+'%'"></div></div>
+                            <div class="flex justify-between text-[10px] font-black uppercase mb-2 text-slate-400"><span>Memory</span><span x-text="n.stats.mem+'%'"></span></div>
+                            <div class="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden"><div class="h-full bg-purple-500 transition-all duration-700" :style="'width:'+n.stats.mem+'%'"></div></div>
                         </div>
+                    </div>
+                    <div class="mt-10 pt-6 border-t border-white/5 grid grid-cols-2 gap-4">
+                        <button class="bg-blue-600/10 hover:bg-blue-600 text-blue-400 hover:text-white py-3 rounded-xl text-[10px] font-black uppercase transition-all">
+                            <i class="ri-edit-line mr-1"></i>配置节点
+                        </button>
+                        <button class="bg-red-600/10 hover:bg-red-600 text-red-400 hover:text-white py-3 rounded-xl text-[10px] font-black uppercase transition-all">
+                            <i class="ri-delete-bin-line mr-1"></i>移除
+                        </button>
                     </div>
                 </div>
             </template>
@@ -171,15 +196,18 @@ INDEX_HTML = """
     </div>
     <script>
         function panel(){ return { 
-            agents:{}, 
+            agents: {}, conf: {},
             init(){ 
-                console.log("Panel Initialized");
-                setInterval(async ()=>{
-                    try {
-                        const r=await fetch('/api/state');
-                        this.agents=(await r.json()).agents;
-                    } catch(e) { console.error("API Error:", e); }
-                }, 2000) 
+                this.fetch();
+                setInterval(() => this.fetch(), 2000); 
+            }, 
+            async fetch(){ 
+                try {
+                    const r = await fetch('/api/state');
+                    const d = await r.json();
+                    this.agents = d.agents;
+                    this.conf = d.config;
+                } catch(e) {}
             } 
         }}
     </script>
@@ -197,99 +225,10 @@ def login():
         session['logged'] = True; return redirect('/')
     return render_template_string('''<body style="background:#020617;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;"><form method="post" style="background:rgba(255,255,255,0.02);padding:50px;border-radius:30px;border:1px solid rgba(255,255,255,0.1);width:320px;text-align:center"><h2 style="color:#3b82f6;font-size:2rem;font-weight:900;margin-bottom:30px">MULTIY PRO</h2><input name="u" placeholder="Admin" style="width:100%;padding:15px;margin:10px 0;background:#000;border:1px solid #333;color:#fff;border-radius:12px"><input name="p" type="password" placeholder="Pass" style="width:100%;padding:15px;margin:10px 0;background:#000;border:1px solid #333;color:#fff;border-radius:12px"><button style="width:100%;padding:15px;background:#3b82f6;color:#fff;border:none;border-radius:12px;margin-top:20px;font-weight:900;cursor:pointer">LOGIN</button></form></body>''')
 
-# [模块：异步运行器]
 async def main():
     ws_server = await websockets.serve(ws_handler, "::", 9339)
     srv = make_server('::', int(env.get('M_PORT', 7575)), app)
-    print(f">>> Multiy Flagship Running...")
-    await asyncio.gather(asyncio.to_thread(srv.serve_forever), asyncio.Future())
-
-if __name__ == "__main__":
-    asyncio.run(main())
-EOF
-}
-# --- [ UI 找回：玻璃拟态旗舰仪表盘 ] ---
-INDEX_HTML = """
-<!DOCTYPE html><html><head><meta charset="UTF-8">
-<script src="https://cdn.tailwindcss.com"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-<style>
-    body { background: radial-gradient(circle at top right, #0f172a, #020617); color: #fff; min-height: 100vh; }
-    .glass { background: rgba(255,255,255,0.02); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); border-radius: 2rem; }
-    .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 15px #22c55e; animation: pulse 2s infinite; }
-    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.8); } }
-</style></head>
-<body class="p-8 md:p-12" x-data="panel()" x-init="init()">
-    <div class="max-w-7xl mx-auto">
-        <header class="flex justify-between items-center mb-16">
-            <div>
-                <h1 class="text-6xl font-black italic tracking-tighter text-blue-600">MULTIY <span class="text-white text-4xl">PRO</span></h1>
-                <p class="text-slate-500 font-bold mt-2 uppercase text-xs tracking-widest">Global Node Monitor System</p>
-            </div>
-            <div class="glass px-8 py-3 flex items-center gap-4">
-                <span class="text-xs font-black text-blue-400">WS PORT: 9339</span>
-                <div class="h-4 w-px bg-white/10"></div>
-                <div class="status-dot"></div>
-            </div>
-        </header>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            <template x-for="(node, sid) in agents" :key="sid">
-                <div class="glass p-10 hover:border-blue-500/50 transition-all group">
-                    <div class="flex justify-between items-start mb-8">
-                        <div>
-                            <h2 class="text-2xl font-black group-hover:text-blue-400 transition-colors" x-text="node.alias"></h2>
-                            <code class="text-slate-500 text-[10px]" x-text="node.ip"></code>
-                        </div>
-                        <div class="text-right"><span class="text-[10px] font-black text-slate-600 uppercase">Connected At</span><div class="text-xs font-bold" x-text="node.connected_at"></div></div>
-                    </div>
-                    <div class="space-y-6">
-                        <div>
-                            <div class="flex justify-between text-[10px] font-black uppercase mb-2"><span class="text-slate-400">CPU Load</span><span class="text-blue-400" x-text="node.stats.cpu+'%'"></span></div>
-                            <div class="h-1.5 w-full bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-blue-500 transition-all duration-700" :style="'width:'+node.stats.cpu+'%'"></div></div>
-                        </div>
-                        <div>
-                            <div class="flex justify-between text-[10px] font-black uppercase mb-2"><span class="text-slate-400">Memory Usage</span><span class="text-purple-400" x-text="node.stats.mem+'%'"></span></div>
-                            <div class="h-1.5 w-full bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500 transition-all duration-700" :style="'width:'+node.stats.mem+'%'"></div></div>
-                        </div>
-                    </div>
-                </div>
-            </template>
-        </div>
-    </div>
-    <script>
-        function panel(){ return { agents:{}, init(){ setInterval(async ()=>{const r=await fetch('/api/state');this.agents=(await r.json()).agents}, 2000) } }}
-    </script>
-</body></html>
-"""
-
-HTML_LOGIN = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><script src="https://cdn.tailwindcss.com"></script></head>
-<body style="background:#020617;display:flex;justify-content:center;align-items:center;height:100vh;color:#fff;font-family:sans-serif">
-<form method="post" style="background:rgba(255,255,255,0.02);padding:60px;border-radius:40px;border:1px solid rgba(255,255,255,0.1);width:360px;text-align:center">
-    <h2 style="color:#3b82f6;font-size:2.5rem;font-weight:900;margin-bottom:40px;text-transform:uppercase">Multiy <span style="color:#fff">Pro</span></h2>
-    <input name="u" placeholder="Admin Account" style="width:100%;padding:18px;margin:10px 0;background:#000;border:1px solid #333;color:#fff;border-radius:15px;outline:none">
-    <input name="p" type="password" placeholder="Terminal Password" style="width:100%;padding:18px;margin:10px 0;background:#000;border:1px solid #333;color:#fff;border-radius:15px;outline:none">
-    <button style="width:100%;padding:18px;background:#3b82f6;color:#fff;border:none;border-radius:15px;margin-top:25px;font-weight:900;cursor:pointer;text-transform:uppercase">Access Terminal</button>
-</form></body></html>
-"""
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST' and request.form.get('u') == env.get('M_USER') and request.form.get('p') == env.get('M_PASS'):
-        session['logged'] = True; return redirect('/')
-    return render_template_string(HTML_LOGIN)
-
-@app.route('/')
-def index():
-    if not session.get('logged'): return redirect('/login')
-    return render_template_string(INDEX_HTML)
-
-async def main():
-    # 异步合一监听
-    ws_server = await websockets.serve(ws_handler, "::", 9339)
-    srv = make_server('::', int(env.get('M_PORT', 7575)), app)
-    print(f">>> 旗舰主控已就绪 | Web: {env.get('M_PORT')} | WS: 9339")
+    print(">>> [SUCCESS] All Services Synchronized.")
     await asyncio.gather(asyncio.to_thread(srv.serve_forever), asyncio.Future())
 
 if __name__ == "__main__":
