@@ -92,6 +92,7 @@ install_master() {
 # --- [ 从这里开始覆盖 ] ---
 
     # 1. 写入环境变量 (对接交互获取的变量)
+  # 1. 写入环境变量 (对接交互获取的变量)
     cat > "$M_ROOT/.env" << EOF
 M_TOKEN='$M_TOKEN'
 M_PORT='$M_PORT'
@@ -99,6 +100,27 @@ M_USER='$M_USER'
 M_PASS='$M_PASS'
 M_HOST='$M_HOST'
 EOF
+
+    # 2. 从 GitHub 拉取云端极客 UI (实现逻辑分离)
+    # 使用你刚才提供的 GitHub 路径
+    local RAW_URL="https://raw.githubusercontent.com/Vincentkeio/multix-panel/main/ui"
+    
+    echo -e "${YELLOW}>>> 正在同步云端 UI 资源 (GitHub)...${PLAIN}"
+    mkdir -p "$M_ROOT/master/static"
+
+    # 拉取 HTML 和 本地化 JS 依赖
+    curl -sL -o "$M_ROOT/master/index.html" "$RAW_URL/index.html"
+    curl -sL -o "$M_ROOT/master/static/tailwind.js" "$RAW_URL/static/tailwind.js"
+    curl -sL -o "$M_ROOT/master/static/alpine.js" "$RAW_URL/static/alpine.js"
+
+    # 检查 UI 是否拉取成功
+    if [ ! -f "$M_ROOT/master/index.html" ]; then
+        echo -e "${RED}❌ 致命错误: 无法从 GitHub 获取 UI 文件，请检查网络或 URL。${PLAIN}"
+        exit 1
+    fi
+
+    # 3. 生成后端核心 (app.py)
+    _generate_master_py
     
     # 2. 生成后端核心 (app.py)
     _generate_master_py
