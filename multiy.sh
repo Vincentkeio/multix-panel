@@ -256,6 +256,22 @@ def serve_index():
 def serve_static(filename):
     return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
 
+# 新增：登录验证接口
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    data = request.json
+    curr = load_env() # 实时从 .env 读取最新凭据
+    
+    # 验证账号和密码
+    if data.get('user') == curr.get('M_USER') and \
+       data.get('pass') == curr.get('M_PASS'):
+        return jsonify({
+            "status": "success", 
+            "token": curr.get('M_TOKEN'),
+            "user": curr.get('M_USER')
+        })
+    return jsonify({"status": "fail", "msg": "凭据验证失败"}), 401
+
 @app.route('/api/state')
 def api_state():
     db = load_db()
@@ -270,6 +286,8 @@ def api_state():
             status = live.get('status', 'offline')
         combined[sid] = {**config, "metrics": metrics, "status": status}
     
+    # 实时加载环境配置确保数据对齐
+    curr_env = load_env()
     return jsonify({
         "agents": combined, 
         "master": {
@@ -279,17 +297,24 @@ def api_state():
             "sys_ver": f"{platform.system()} {platform.release()}",
             "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"
         }, 
-        "config": {"user": env.get('M_USER', 'admin'), "token": TOKEN}
+        "config": {"user": curr_env.get('M_USER', 'admin'), "token": curr_env.get('M_TOKEN')}
     })
 
+# 优化：支持动态更新并同步到内存
 @app.route('/api/update_admin', methods=['POST'])
 def update_admin():
     data = request.json
     curr = load_env()
     if data.get('user'): curr['M_USER'] = data.get('user')
     if data.get('pass'): curr['M_PASS'] = data.get('pass')
+    # 写入 .env 文件持久化
     with open(ENV_PATH, 'w') as f:
         for k, v in curr.items(): f.write(f"{k}='{v}'\n")
+    
+    # 全局变量同步更新，避免重启服务
+    global TOKEN
+    TOKEN = curr.get('M_TOKEN', TOKEN)
+    
     return jsonify({"res": "ok"})
 
 # --- [ 4. 通信逻辑 ] ---
