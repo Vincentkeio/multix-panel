@@ -282,7 +282,7 @@ install_agent() {
     fi
 
     # 注入“全能仆人”逻辑
-    cat > "$M_ROOT/agent/agent.py" << 'EOF'
+cat > "$M_ROOT/agent/agent.py" << 'EOF'
 import asyncio, websockets, json, os, subprocess, psutil, platform, time, hashlib, socket
 
 # --- [ 仆人配置 ] ---
@@ -310,29 +310,32 @@ class ServantCore:
         except:
             return {"hash": "error", "inbounds": []}
 
+    def get_metrics(self):
+        """采集硬盘、流量、版本等核心指标"""
+        try:
+            n1 = psutil.net_io_counters()
+            time.sleep(0.5)
+            n2 = psutil.net_io_counters()
+            return {
+                "cpu": int(psutil.cpu_percent()),
+                "mem": int(psutil.virtual_memory().percent),
+                "disk": int(psutil.disk_usage('/').percent),
+                "net_up": round((n2.bytes_sent - n1.bytes_sent) / 1024 / 1024, 2),
+                "net_down": round((n2.bytes_recv - n1.bytes_recv) / 1024 / 1024, 2),
+                "total_up": round(n2.bytes_sent / (1024**3), 2),
+                "total_down": round(n2.bytes_recv / (1024**3), 2),
+                "sys_ver": f"{platform.system()} {platform.release()}",
+                "sb_ver": subprocess.getoutput(f"{SB_PATH} version | head -n 1 | awk '{{print $3}}'") or "N/A"
+            }
+        except:
+            return {"cpu":0,"mem":0,"disk":0,"net_up":0,"net_down":0,"total_up":0,"total_down":0,"sys_ver":"Err","sb_ver":"Err"}
 
-     def get_metrics(self):
-        n1 = psutil.net_io_counters()
-        time.sleep(0.5)
-        n2 = psutil.net_io_counters()
-        return {
-            "cpu": int(psutil.cpu_percent()),
-            "mem": int(psutil.virtual_memory().percent),
-            "disk": int(psutil.disk_usage('/').percent),
-            "net_up": round((n2.bytes_sent - n1.bytes_sent) / 1024 / 1024, 2),
-            "net_down": round((n2.bytes_recv - n1.bytes_recv) / 1024 / 1024, 2),
-            "total_up": round(n2.bytes_sent / (1024**3), 2),
-            "total_down": round(n2.bytes_recv / (1024**3), 2),
-            "sys_ver": f"{platform.system()} {platform.release()}",
-            "sb_ver": subprocess.getoutput(f"{SB_PATH} version | head -n 1 | awk '{{print $3}}'") or "N/A"
-        }
     async def main_loop(self):
         while True:
             try:
                 async with websockets.connect(MASTER, ping_interval=20, ping_timeout=20) as ws:
                     while True:
                         state = self.get_config_state()
-                        # 构建基础心跳包
                         payload = {
                             "type": "heartbeat",
                             "token": TOKEN,
@@ -341,7 +344,6 @@ class ServantCore:
                             "config_hash": state['hash']
                         }
                         
-                        # Hybrid 逻辑：如果哈希变了，上报全量清单给主控
                         if state['hash'] != self.last_config_hash:
                             payload['type'] = "report_full"
                             payload['inbounds'] = state['inbounds']
@@ -349,15 +351,12 @@ class ServantCore:
                         
                         await ws.send(json.dumps(payload))
 
-                        # 监听主控指令 (原子同步/Shell 执行)
                         try:
                             msg = await asyncio.wait_for(ws.recv(), timeout=5)
                             task = json.loads(msg)
-                            
                             if task['type'] == 'exec_cmd':
                                 res = subprocess.getoutput(task['cmd'])
                                 await ws.send(json.dumps({"type": "cmd_res", "id": task['id'], "data": res}))
-                                
                             elif task['type'] == 'sync_config':
                                 with open(SB_CONF, 'w', encoding='utf-8') as f:
                                     json.dump(task['config'], f, indent=4)
