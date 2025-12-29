@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V68.2 (Docker Fix & Node Manager UI)
-# Fix 1: Added strict Docker check before Agent installation.
-# Fix 2: Refactored UI Modal to support "Node List" -> "Add/Edit" workflow.
-# Fix 3: Demo Node now fully simulates real behavior (View/Edit/Add).
+# MultiX Pro Script V68.3 (APT Auto-Fix & Robust Docker Install)
+# Fix 1: Auto-detect and comment out broken 'bullseye-backports' repo to fix apt.
+# Fix 2: Added fallback to Aliyun Docker mirror if official script fails.
+# Fix 3: UI Node Manager fully optimized.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V68.2"
+SH_VER="V68.3"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -32,28 +32,61 @@ get_public_ips() {
 }
 pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
-# --- [ 2. 环境修复 ] ---
+# --- [ 2. 环境修复 (含 APT 强力修复) ] ---
 fix_dual_stack() {
     if grep -q "net.ipv6.bindv6only" /etc/sysctl.conf; then sed -i 's/net.ipv6.bindv6only.*/net.ipv6.bindv6only = 0/' /etc/sysctl.conf
     else echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf; fi
     sysctl -p >/dev/null 2>&1
 }
+
+# V68.3 新增: 自动修复损坏的 apt 源
+fix_apt_sources() {
+    echo -e "${YELLOW}[INFO]${PLAIN} 正在检查并修复系统源..."
+    
+    # 尝试更新，如果失败则执行修复
+    if ! apt-get update -y >/dev/null 2>&1; then
+        echo -e "${RED}[WARN]${PLAIN} 系统源更新失败，尝试自动修复..."
+        
+        # 修复1: 允许 Release Info 变更 (Debian 常见问题)
+        apt-get update --allow-releaseinfo-change >/dev/null 2>&1
+        
+        # 修复2: 屏蔽损坏的 bullseye-backports (导致 404 的元凶)
+        if grep -q "bullseye-backports" /etc/apt/sources.list; then
+            echo -e "${YELLOW}[FIX]${PLAIN} 发现损坏的 backports 源，已自动屏蔽..."
+            sed -i '/bullseye-backports/s/^/#/' /etc/apt/sources.list
+            sed -i '/bullseye-backports/s/^/#/' /etc/apt/sources.list.d/*.list 2>/dev/null
+        fi
+        
+        # 再次尝试更新
+        apt-get update -y
+    else
+        echo -e "${GREEN}[INFO]${PLAIN} 系统源正常"
+    fi
+}
+
 install_dependencies() {
-    echo -e "${YELLOW}[INFO]${PLAIN} 检查并安装依赖..."
+    echo -e "${YELLOW}[INFO]${PLAIN} 检查依赖环境..."
     check_sys
-    if [[ "${RELEASE}" == "centos" ]]; then 
+    
+    if [[ "${RELEASE}" == "debian" || "${RELEASE}" == "ubuntu" ]]; then
+        fix_apt_sources
+        apt-get install -y python3 python3-pip curl wget socat tar openssl git netcat-openbsd
+    elif [[ "${RELEASE}" == "centos" ]]; then 
         yum install -y epel-release python3 python3-devel python3-pip curl wget socat tar openssl git nc
-    else 
-        apt-get update && apt-get install -y python3 python3-pip curl wget socat tar openssl git netcat-openbsd
     fi
     
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1 || \
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" >/dev/null 2>&1
     
-    # Docker 安装逻辑增强
+    # Docker 安装逻辑增强 (V68.3)
     if ! command -v docker &> /dev/null; then
         echo -e "${YELLOW}[INFO]${PLAIN} 正在安装 Docker..."
-        curl -fsSL https://get.docker.com | bash
+        # 尝试官方脚本
+        if ! curl -fsSL https://get.docker.com | bash; then
+            echo -e "${RED}[WARN]${PLAIN} 官方 Docker 安装失败，尝试阿里云镜像..."
+            curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
+        fi
+        
         systemctl enable docker
         systemctl start docker
     fi
@@ -134,7 +167,7 @@ credential_center() {
     main_menu
 }
 
-# --- [ 6. 主控安装 (V68.2 全功能 UI) ] ---
+# --- [ 6. 主控安装 (V68.3 完整UI) ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master $M_ROOT/agent/db_data
     if [ -f $M_ROOT/.env ]; then source $M_ROOT/.env; fi
@@ -174,7 +207,6 @@ M_TOKEN = CONF.get('M_TOKEN', 'error')
 app = Flask(__name__)
 app.secret_key = M_TOKEN
 
-# 修复3: 完善 Demo 数据，使其包含 dummy nodes，方便 UI 调试
 AGENTS = {
     "local-demo": {
         "alias": "Demo Node", 
@@ -203,7 +235,7 @@ def gen_key():
         elif t == 'ss-256': return jsonify({"key": base64.b64encode(os.urandom(32)).decode()})
     except: return jsonify({"key": "Error: Install Xray", "private": "", "public": ""})
 
-# HTML - 使用 {% raw %} 保护 JS
+# HTML
 HTML_T = """
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
@@ -220,9 +252,8 @@ HTML_T = """
         .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
         .status-online { background: #198754; box-shadow: 0 0 5px #198754; }
         .status-offline { background: #dc3545; }
-        .ipv6-badge { font-size: 0.7rem; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
-        .stat-box { font-size: 0.8rem; color: #888; background: #1a1a1a; padding: 5px 10px; border-radius: 4px; border: 1px solid #333; }
         .header-token { font-family: monospace; color: #ffc107; font-size: 0.9rem; margin-left: 10px; }
+        .stat-box { font-size: 0.8rem; color: #888; background: #1a1a1a; padding: 5px 10px; border-radius: 4px; border: 1px solid #333; }
         .table-dark { background: #111; }
         .table-dark td, .table-dark th { border-color: #333; }
     </style>
@@ -246,7 +277,6 @@ HTML_T = """
             <a href="/logout" class="btn btn-outline-danger btn-sm fw-bold">LOGOUT</a>
         </div>
     </div>
-
     <div class="row g-4" id="node-list"></div>
 </div>
 
@@ -380,54 +410,30 @@ HTML_T = """
         }
     }
 
-    // --- UI: View Switcher ---
     function openManager(ip) {
         ACTIVE_IP = ip;
         CURRENT_NODES = AGENTS[ip].nodes || [];
-        // 如果是 Demo, 我们允许编辑，但 API 会拦截
-        if(AGENTS[ip].is_demo) { console.log("Demo Mode Activated"); }
         toListView();
         $('#configModal').modal('show');
     }
 
     function toListView() {
-        $('#view-edit').hide();
-        $('#view-list').show();
+        $('#view-edit').hide(); $('#view-list').show();
         $('#modalTitle').text(`Nodes on ${ACTIVE_IP}`);
-        const tbody = $('#tbl-body');
-        tbody.empty();
+        const tbody = $('#tbl-body'); tbody.empty();
         if(CURRENT_NODES.length === 0) {
             tbody.append('<tr><td colspan="5" class="text-secondary">No nodes found. Click Add.</td></tr>');
         } else {
             CURRENT_NODES.forEach((n, idx) => {
-                const tr = `
-                    <tr>
-                        <td><span class="badge bg-secondary font-monospace">${n.id}</span></td>
-                        <td>${n.remark}</td>
-                        <td class="font-monospace text-info">${n.port}</td>
-                        <td>${n.protocol}</td>
-                        <td>
-                            <button class="btn btn-sm btn-outline-primary" onclick="toEditMode(${idx})"><i class="bi bi-pencil-square"></i></button>
-                        </td>
-                    </tr>`;
+                const tr = `<tr><td><span class="badge bg-secondary font-monospace">${n.id}</span></td><td>${n.remark}</td><td class="font-monospace text-info">${n.port}</td><td>${n.protocol}</td><td><button class="btn btn-sm btn-outline-primary" onclick="toEditMode(${idx})"><i class="bi bi-pencil-square"></i></button></td></tr>`;
                 tbody.append(tr);
             });
         }
     }
 
-    function toAddMode() {
-        $('#view-list').hide(); $('#view-edit').show();
-        $('#modalTitle').text('Add New Node');
-        resetForm();
-    }
+    function toAddMode() { $('#view-list').hide(); $('#view-edit').show(); $('#modalTitle').text('Add New Node'); resetForm(); }
+    function toEditMode(idx) { $('#view-list').hide(); $('#view-edit').show(); $('#modalTitle').text('Edit Node'); loadForm(CURRENT_NODES[idx]); }
 
-    function toEditMode(idx) {
-        $('#view-list').hide(); $('#view-edit').show();
-        $('#modalTitle').text('Edit Node');
-        loadForm(CURRENT_NODES[idx]);
-    }
-
-    // --- Form Logic ---
     function updateFormVisibility() {
         const p = $('#protocol').val(); const n = $('#network').val(); const s = $('#security').val();
         $('.group-ss').hide(); $('.group-uuid').hide(); $('.group-reality').hide(); $('.group-ws').hide();
@@ -480,7 +486,7 @@ HTML_T = """
             data: JSON.stringify({ip: ACTIVE_IP, config: payload}),
             success: function(resp) { 
                 $('#configModal').modal('hide'); btn.prop('disabled',false).text('Save & Sync'); 
-                if(resp.status === "demo_ok") { alert('Demo Mode: Configuration validated (Mock Save).'); }
+                if(resp.status === "demo_ok") { alert('Demo Mode: Configuration Validated (Mock Save).'); }
                 else { alert('Synced successfully!'); }
             },
             error: function() { btn.prop('disabled',false).text('Failed'); alert('Sync Failed'); }
@@ -518,9 +524,7 @@ def api_sync():
     d = request.json
     target = d.get('ip')
     if target in AGENTS:
-        # 修复3: Demo 节点返回特殊的成功状态
         if AGENTS[target].get('is_demo'): return jsonify({"status": "demo_ok"})
-        
         payload = json.dumps({"action": "sync_node", "token": M_TOKEN, "data": d.get('config')})
         asyncio.run_coroutine_threadsafe(AGENTS[target]['ws'].send(payload), LOOP_GLOBAL)
         return jsonify({"status": "sent"})
@@ -568,22 +572,20 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功 (V68.2)${PLAIN}"
+    echo -e "${GREEN}✅ 主控端部署成功 (V68.3)${PLAIN}"
     echo -e "   入口: http://[${IPV6}]:${M_PORT}"
     echo -e "   入口: http://${IPV4}:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
     pause_back
 }
 
-# --- [ 7. 被控安装 (V68.2 Docker Fix) ] ---
+# --- [ 7. 被控安装 (V68.3 强力修复) ] ---
 install_agent() {
-    # 修复1: 强制检查 Docker，如果不存在则尝试安装或报错
     install_dependencies; 
     
-    # 再次确认 Docker 命令存在
+    # 强制 Docker 检查
     if ! command -v docker &> /dev/null; then
-        echo -e "${RED}[FATAL] Docker 安装失败或未找到。请手动安装 Docker 后再试。${PLAIN}"
-        echo -e "参考: curl -fsSL https://get.docker.com | bash"
+        echo -e "${RED}[FATAL] Docker 安装失败。请手动执行: curl -fsSL https://get.docker.com | bash${PLAIN}"
         exit 1
     fi
     
@@ -715,7 +717,7 @@ sys_tools() {
 
 # --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V68.2 DockerFix & UI)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V68.3 APT Fix)${PLAIN}"
     echo " 1. 安装 主控端"
     echo " 2. 安装 被控端"
     echo " 3. 连通测试"
