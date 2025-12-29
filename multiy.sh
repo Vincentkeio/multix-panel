@@ -1,21 +1,21 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V72.8 (FULL FIX & CONNECTIVITY MONITOR)
+# Multiy Pro Script V72.9 (FULL FIX & CONNECTIVITY MONITOR)
 # Fix 1: [Bug] Restored missing 'install_agent' function.
 # Fix 2: [UI] Full Glassmorphism Login & Dashboard with Refresh button.
 # Fix 3: [Net] Enhanced Dual-Stack monitoring for both Master and Agent.
 # Fix 4: [Protocol] Forced IPv6 option for NAT VPS during Agent setup.
 # ==============================================================================
 
-export M_ROOT="/opt/multix_mvp"
+export M_ROOT="/opt/multiy_mvp"
 export AGENT_CONF="${M_ROOT}/agent/.agent.conf"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V72.8"
+SH_VER="V72.9"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 基础函数 ] ---
-install_shortcut() { rm -f /usr/bin/multix; cp "$0" /usr/bin/multix && chmod +x /usr/bin/multix; }
+install_shortcut() { rm -f /usr/bin/multiy; cp "$0" /usr/bin/multiy && chmod +x /usr/bin/multiy; }
 check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[ERROR]${PLAIN} 必须 Root 运行！" && exit 1; }
 check_sys() {
     if [[ -f /etc/redhat-release ]]; then RELEASE="centos";
@@ -30,14 +30,14 @@ pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s 
 
 # --- [ 1. 主控安装 ] ---
 install_master() {
-    echo -e "${SKYBLUE}>>> 部署 MultiX 主控 (V72.8)${PLAIN}"
+    echo -e "${SKYBLUE}>>> 部署 Multiy 主控 (V72.9)${PLAIN}"
     check_sys; get_public_ips
     if [[ "${RELEASE}" == "centos" ]]; then yum install -y python3 python3-pip curl wget ntpdate openssl
     else apt-get update && apt-get install -y python3 python3-pip curl wget ntpdate openssl; fi
     pip3 install "Flask<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1
     
     mkdir -p $M_ROOT/master
-    openssl req -x509 -newkey rsa:2048 -keyout $M_ROOT/master/key.pem -out $M_ROOT/master/cert.pem -days 3650 -nodes -subj "/CN=MultiX" >/dev/null 2>&1
+    openssl req -x509 -newkey rsa:2048 -keyout $M_ROOT/master/key.pem -out $M_ROOT/master/cert.pem -days 3650 -nodes -subj "/CN=Multiy" >/dev/null 2>&1
 
     read -p "面板访问端口 [7575]: " M_PORT; M_PORT=${M_PORT:-7575}
     read -p "通信监听端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
@@ -48,8 +48,8 @@ install_master() {
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nWS_PORT='$WS_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
 
     _write_master_app_py
-    systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
-    echo -e "${GREEN}✅ 主控端部署成功！${PLAIN}"
+    systemctl daemon-reload; systemctl enable multiy-master; systemctl restart multiy-master
+    echo -e "${GREEN}✅ Multiy 主控端部署成功！${PLAIN}"
     echo -e "IPv4 面板: http://${IPV4}:${M_PORT}"
     echo -e "IPv6 面板: http://[${IPV6}]:${M_PORT}"
     pause_back
@@ -64,7 +64,7 @@ from threading import Thread
 def load_conf():
     c = {}
     try:
-        with open('/opt/multix_mvp/.env') as f:
+        with open('/opt/multiy_mvp/.env') as f:
             for l in f:
                 if '=' in l: k,v = l.strip().split('=', 1); c[k] = v.strip("'\"")
     except: pass
@@ -90,7 +90,7 @@ h2{color:#3b82f6;font-style:italic;margin-bottom:30px}
 input{width:100%;padding:12px;margin:10px 0;background:rgba(0,0,0,0.3);border:1px solid #333;color:#fff;border-radius:10px;box-sizing:border-box}
 button{width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:10px;font-weight:bold;cursor:pointer;margin-top:10px}
 </style></head>
-<body><div class="box"><h2>MultiX Pro</h2><form method="post"><input name="u" placeholder="User"><input name="p" type="password" placeholder="Pass"><button type="submit">LOGIN</button></form></div></body></html>
+<body><div class="box"><h2>Multiy Pro</h2><form method="post"><input name="u" placeholder="User"><input name="p" type="password" placeholder="Pass"><button type="submit">LOGIN</button></form></div></body></html>
 """
 
 INDEX_HTML = """
@@ -108,7 +108,7 @@ body{background:#020617;color:#e2e8f0;font-family:sans-serif;padding:30px}
 </head>
 <body x-data="panel()" x-init="start()">
 <div class="header">
-    <div><h2 style="color:#3b82f6">MultiX Pro</h2><small>Token: [[ master_token ]]</small></div>
+    <div><h2 style="color:#3b82f6">Multiy Pro</h2><small>Token: [[ master_token ]]</small></div>
     <div><button @click="fetchData()" class="refresh-btn">REFRESH</button> <a href="/logout" style="color:#ef4444;text-decoration:none">LOGOUT</a></div>
 </div>
 <div class="grid">
@@ -178,7 +178,7 @@ EOF
 
 # --- [ 2. 被控安装 (修复遗漏函数) ] ---
 install_agent() {
-    echo -e "${SKYBLUE}>>> 部署 MultiX 被控 (V72.8)${PLAIN}"
+    echo -e "${SKYBLUE}>>> 部署 Multiy 被控 (V72.9)${PLAIN}"
     mkdir -p $M_ROOT/agent
     read -p "主控域名/IP: " M_HOST
     read -p "通信端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
@@ -205,7 +205,8 @@ async def run():
     while True:
         try:
             async with websockets.connect(uri, ssl=ssl_ctx, open_timeout=15, family=family) as ws:
-                print(f"[Agent] Linked via {'IPv6' if ws.remote_address[0].count(':')>1 else 'IPv4'}", flush=True)
+                mode = 'IPv6' if ws.remote_address[0].count(':') > 1 else 'IPv4'
+                print(f"[Agent] Linked via {mode}", flush=True)
                 await ws.send(json.dumps({"token": TOKEN}))
                 while True:
                     stats = {"cpu":int(psutil.cpu_percent()), "mem":int(psutil.virtual_memory().percent), "hostname":socket.gethostname()}
@@ -216,9 +217,9 @@ async def run():
 asyncio.run(run())
 EOF
 
-    cat > /etc/systemd/system/multix-agent.service <<EOF
+    cat > /etc/systemd/system/multiy-agent.service <<EOF
 [Unit]
-Description=MultiX Agent
+Description=Multiy Agent
 After=network.target
 [Service]
 ExecStart=/usr/bin/python3 $M_ROOT/agent/agent.py
@@ -228,8 +229,8 @@ Environment=PYTHONUNBUFFERED=1
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload; systemctl enable multix-agent; systemctl restart multix-agent
-    echo -e "${GREEN}✅ 被控部署完成！使用 journalctl -u multix-agent -f 查看状态。${PLAIN}"
+    systemctl daemon-reload; systemctl enable multiy-agent; systemctl restart multiy-agent
+    echo -e "${GREEN}✅ 被控部署完成！使用 journalctl -u multiy-agent -f 查看状态。${PLAIN}"
     pause_back
 }
 
@@ -242,16 +243,16 @@ diag_menu() {
     read -p "选择: " d
     case $d in
         1) ss -tuln | grep -E '7575|9339' ;;
-        2) journalctl -u multix-agent -f ;;
+        2) journalctl -u multiy-agent -f ;;
         0) main_menu ;;
     esac; pause_back
 }
 
 # --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro ${SH_VER}${PLAIN}"
-    echo " 1. 安装/更新 主控端 (Jinja2 隔离版)"
-    echo " 2. 安装/更新 被控端 (NAT 优先)"
+    clear; echo -e "${SKYBLUE}🛰️ Multiy Pro ${SH_VER}${PLAIN}"
+    echo " 1. 安装/更新 Multiy 主控 (Jinja2 隔离版)"
+    echo " 2. 安装/更新 Multiy 被控 (NAT 优先)"
     echo " 3. 通信诊断中心"
     echo " 4. 实时日志查看"
     echo " 5. 深度清理组件"
@@ -259,8 +260,8 @@ main_menu() {
     read -p "选择: " c
     case $c in
         1) install_master ;; 2) install_agent ;; 3) diag_menu ;;
-        4) journalctl -f -u multix-master -u multix-agent ;;
-        5) read -p "确认清理? [y/N]: " cf; [[ "$cf" == "y" ]] && { systemctl stop multix-master multix-agent; rm -rf "$M_ROOT"; echo "Done"; } ;;
+        4) journalctl -f -u multiy-master -u multiy-agent ;;
+        5) read -p "确认清理? [y/N]: " cf; [[ "$cf" == "y" ]] && { systemctl stop multiy-master multiy-agent; rm -rf "$M_ROOT"; echo "Done"; } ;;
         0) exit 0 ;; *) main_menu ;;
     esac
 }
