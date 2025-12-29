@@ -199,22 +199,20 @@ EOF
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess, psutil, platform, random, threading
-# 关键修复：加入 render_template 引用
 from flask import Flask, request, jsonify, send_from_directory, render_template
 from werkzeug.serving import make_server
 
-# 获取当前脚本的绝对物理路径，确保 templates 目录被精准锁定
+# 1. 路径强制校准：确保 templates 和 static 在任何环境下都能找到
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 M_ROOT = "/opt/multiy_mvp"
 ENV_PATH = f"{M_ROOT}/.env"
 DB_PATH = f"{M_ROOT}/agents_db.json"
 
-# 初始化 Flask 并强制锁定模块化路径
 app = Flask(__name__, 
             template_folder=os.path.join(BASE_DIR, 'templates'),
             static_folder=os.path.join(BASE_DIR, 'static'))
 
-# --- [ 辅助系统 ] ---
+# --- [ 数据系统 ] ---
 def load_db():
     if os.path.exists(DB_PATH):
         try:
@@ -240,15 +238,14 @@ TOKEN = env.get('M_TOKEN', 'admin')
 AGENTS_LIVE = {} 
 WS_CLIENTS = {}
 
-# --- [ 3. 核心 API 路由 ] ---
+# --- [ 3. 路由逻辑 ] ---
 @app.route('/')
 def serve_index():
-    # 使用 render_template 才能处理组件化 {% include %} 语法
+    # 使用渲染引擎处理模块化碎片
     return render_template('index.html')
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
-    # 强制从 static 绝对路径读取资源
     return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
 
 @app.route('/api/state')
@@ -266,7 +263,17 @@ def api_state():
         combined[sid] = {**config, "metrics": metrics, "status": status}
     return jsonify({"agents": combined, "master": {"cpu": int(psutil.cpu_percent()), "mem": int(psutil.virtual_memory().percent), "disk": int(psutil.disk_usage('/').percent), "sys_ver": f"{platform.system()} {platform.release()}", "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"}, "config": {"user": env.get('M_USER', 'admin'), "token": TOKEN}})
 
-# --- [ 4. WebSocket 业务逻辑 ] ---
+@app.route('/api/update_admin', methods=['POST'])
+def update_admin():
+    data = request.json
+    curr = load_env()
+    if data.get('user'): curr['M_USER'] = data.get('user')
+    if data.get('pass'): curr['M_PASS'] = data.get('pass')
+    with open(ENV_PATH, 'w') as f:
+        for k, v in curr.items(): f.write(f"{k}='{v}'\n")
+    return jsonify({"res": "ok"})
+
+# --- [ 4. 通信逻辑 ] ---
 async def ws_handler(ws):
     sid = str(id(ws))
     WS_CLIENTS[sid] = ws
@@ -285,11 +292,11 @@ async def ws_handler(ws):
         WS_CLIENTS.pop(sid, None)
 
 async def main():
-    # 修正双栈监听 IPv4/IPv6
+    # IPv4/IPv6 双栈监听
     await websockets.serve(ws_handler, "::", 9339)
     srv = make_server('::', 7575, app)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    print(">>> Multiy Pro Master Active on Dual-Stack (:::7575).")
+    print(">>> Multiy Pro Master Active on :::7575")
     while True: await asyncio.sleep(1)
 
 if __name__ == "__main__":
