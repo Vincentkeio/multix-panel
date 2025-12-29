@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V70.3 (Syntax Depth Cleanup)
-# Fix 1: [Syntax] Stripped all invisible full-width spaces and special chars.
-# Fix 2: [Master] Guaranteed 0.0.0.0 binding for both Web and WS.
-# Fix 3: [UI] Demo Node config UI fully unlocked.
+# MultiX Pro Script V70.3 (Syntax Fix & Cleanup)
+# Fix 1: [Syntax] Stripped all full-width spaces causing line 416 errors.
+# Fix 2: [Master] Guaranteed 0.0.0.0 binding for both Web and WebSocket.
+# Fix 3: [UI] Full Node Management UI access for Demo Node restored.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
@@ -63,6 +63,7 @@ install_dependencies() {
     fi
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1 || \
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" >/dev/null 2>&1
+    
     if ! command -v docker &> /dev/null; then
         if ! curl -fsSL https://get.docker.com | bash; then
             curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
@@ -86,6 +87,27 @@ deep_cleanup() {
     echo -e "${GREEN}[INFO]${PLAIN} 清理完成"; pause_back
 }
 
+# --- [ 4. 服务管理 ] ---
+service_manager() {
+    while true; do
+        clear; echo -e "${SKYBLUE}⚙️ 服务管理${PLAIN}"
+        echo " 1. 启动 主控端"
+        echo " 2. 停止 主控端"
+        echo " 3. 重启 主控端"
+        echo " 4. 查看 主控状态"
+        echo "----------------"
+        echo " 5. 重启 被控端 (Agent)"
+        echo " 6. 查看 被控日志 (Debug)"
+        echo " 0. 返回"
+        read -p "选择: " s
+        case $s in
+            1) systemctl start multix-master && echo "Done" ;; 2) systemctl stop multix-master && echo "Done" ;;
+            3) systemctl restart multix-master && echo "Done" ;; 4) systemctl status multix-master -l --no-pager ;;
+            5) docker restart multix-agent && echo "Done" ;; 6) docker logs multix-agent --tail 50 ;; 0) break ;;
+        esac; read -n 1 -s -r -p "继续..."
+    done; main_menu
+}
+
 # --- [ 5. 凭据中心 ] ---
 credential_center() {
     clear; echo -e "${SKYBLUE}🔐 凭据管理中心${PLAIN}"
@@ -96,10 +118,11 @@ credential_center() {
         M_W=$(grep 'M_PASS=' $M_ROOT/.env | cut -d"'" -f2)
         get_public_ips
         echo -e "${YELLOW}>>> 主控管理入口 <<<${PLAIN}"
-        [[ "$IPV4" != "N/A" ]] && echo -e "IPv4: ${GREEN}http://${IPV4}:${M_P}${PLAIN}"
-        [[ "$IPV6" != "N/A" ]] && echo -e "IPv6: ${GREEN}http://[${IPV6}]:${M_P}${PLAIN}"
-        echo -e "用户: ${SKYBLUE}${M_U}${PLAIN} | 密码: ${SKYBLUE}${M_W}${PLAIN}"
-        echo -e "令牌: ${YELLOW}${M_T}${PLAIN}"
+        [[ "$IPV4" != "N/A" ]] && echo -e "IPv4 地址: ${GREEN}http://${IPV4}:${M_P}${PLAIN}"
+        [[ "$IPV6" != "N/A" ]] && echo -e "IPv6 地址: ${GREEN}http://[${IPV6}]:${M_P}${PLAIN}"
+        echo -e "管理用户: ${SKYBLUE}${M_U}${PLAIN}"
+        echo -e "管理密码: ${SKYBLUE}${M_W}${PLAIN}"
+        echo -e "通信令牌: ${YELLOW}${M_T}${PLAIN}"
     fi
     AGENT_HOST="未配置"; AGENT_TOKEN="未配置"
     if [ -f "$AGENT_CONF" ]; then 
@@ -107,9 +130,9 @@ credential_center() {
         AGENT_TOKEN=$(grep 'AGENT_TOKEN=' "$AGENT_CONF" | cut -d"'" -f2)
     fi
     echo -e "\n${YELLOW}>>> 被控端 (Agent) 配置 <<<${PLAIN}"
-    echo -e "主控目标: ${GREEN}${AGENT_HOST}${PLAIN} | 令牌: ${SKYBLUE}${AGENT_TOKEN}${PLAIN}"
+    echo -e "连接目标: ${GREEN}${AGENT_HOST}${PLAIN} | 连接令牌: ${SKYBLUE}${AGENT_TOKEN}${PLAIN}"
     echo "--------------------------------"
-    echo " 1. 修改主控配置 | 2. 修改被控配置 | 0. 返回"
+    echo " 1. 修改主控配置 | 2. 修改被控连接 | 0. 返回"
     read -p "选择: " c
     if [[ "$c" == "1" ]]; then
         read -p "新端口: " np; M_PORT=${np:-$M_P}
@@ -117,7 +140,7 @@ credential_center() {
         read -p "新密码: " nw; M_PASS=${nw:-$M_W}
         read -p "新令牌: " nt; M_TOKEN=${nt:-$M_T}
         echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
-        systemctl restart multix-master; echo "已重启"
+        systemctl restart multix-master; echo "主控已重启"
     elif [[ "$c" == "2" ]]; then
         read -p "新主控IP/域名: " nh; AGENT_HOST=${nh:-$AGENT_HOST}
         read -p "新令牌: " ntk; AGENT_TOKEN=${ntk:-$AGENT_TOKEN}
@@ -137,17 +160,18 @@ def log(msg): print(f"[Agent] {msg}", flush=True)
 def get_xui_ver(): return "Installed" if os.path.exists(DB_PATH) else "Not Found"
 def smart_sync_db(data):
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10); cur = conn.cursor(); cur.execute("PRAGMA table_info(inbounds)")
-        cols = [i[1] for i in cur.fetchall()]
+        if not os.path.exists(DB_PATH): log("DB missing"); return False
+        conn = sqlite3.connect(DB_PATH, timeout=10); cursor = conn.cursor(); cursor.execute("PRAGMA table_info(inbounds)")
+        cols = [info[1] for info in cursor.fetchall()]
         base = {'user_id':1,'up':0,'down':0,'total':0,'remark':data['remark'],'enable':1,'expiry_time':0,'listen':'','port':data['port'],'protocol':data['protocol'],'settings':data['settings'],'stream_settings':data['stream_settings'],'tag':'multix','sniffing':data.get('sniffing','{}')}
-        valid = {k:v for k,v in base.items() if k in cols}
+        valid = {k: v for k, v in base.items() if k in cols}
         nid = data.get('id')
         if nid:
             set_c = ", ".join([f"{k}=?" for k in valid.keys()])
-            cur.execute(f"UPDATE inbounds SET {set_c} WHERE id=?", list(valid.values())+[nid])
+            cursor.execute(f"UPDATE inbounds SET {set_c} WHERE id=?", list(valid.values()) + [nid])
         else:
             keys = ", ".join(valid.keys()); ph = ", ".join(["?"]*len(valid))
-            cur.execute(f"INSERT INTO inbounds ({keys}) VALUES ({ph})", list(valid.values()))
+            cursor.execute(f"INSERT INTO inbounds ({keys}) VALUES ({ph})", list(valid.values()))
         conn.commit(); conn.close(); return True
     except Exception as e: log(f"DB Error: {e}"); return False
 async def run():
@@ -162,28 +186,62 @@ async def run():
                     stats = {"cpu":int(psutil.cpu_percent()),"mem":int(psutil.virtual_memory().percent),"os":platform.system(),"xui":get_xui_ver()}
                     nodes = []
                     if os.path.exists(DB_PATH):
-                        conn = sqlite3.connect(DB_PATH); cur = conn.cursor(); cur.execute("SELECT id,remark,port,protocol,settings,stream_settings FROM inbounds");
-                        for r in cur.fetchall(): nodes.append({"id":r[0],"remark":r[1],"port":r[2],"protocol":r[3],"settings":json.loads(r[4]),"stream_settings":json.loads(r[5])})
+                        conn = sqlite3.connect(DB_PATH); cur = conn.cursor()
+                        cur.execute("SELECT id, remark, port, protocol, settings, stream_settings FROM inbounds")
+                        for r in cur.fetchall(): nodes.append({"id": r[0], "remark": r[1], "port": r[2], "protocol": r[3], "settings": json.loads(r[4]), "stream_settings": json.loads(r[5])})
                         conn.close()
-                    await ws.send(json.dumps({"type":"heartbeat","data":stats,"nodes":nodes}))
+                    await ws.send(json.dumps({"type": "heartbeat", "data": stats, "nodes": nodes}))
                     try:
-                        msg = await asyncio.wait_for(ws.recv(),timeout=5); task = json.loads(msg)
+                        msg = await asyncio.wait_for(ws.recv(), timeout=5); task = json.loads(msg)
                         if task.get('action') == 'sync_node': os.system("docker restart 3x-ui"); smart_sync_db(task['data']); os.system("docker restart 3x-ui")
                     except: continue
-        except Exception as e: log(f"Fail: {e}"); await asyncio.sleep(5)
+        except Exception as e: log(f"Connect Fail: {e}"); await asyncio.sleep(5)
 asyncio.run(run())
 EOF
     sed -i "s/\$host/$host/g" $M_ROOT/agent/agent.py
     sed -i "s/\$token/$token/g" $M_ROOT/agent/agent.py
 }
 
+# --- [ 3. 连通性测试 + 智能修复 ] ---
+smart_network_repair() {
+    echo -e "\n${YELLOW}🔧 正在执行智能网络修复...${PLAIN}"
+    ip link set dev eth0 mtu 1280 2>/dev/null
+    ip link set dev ens3 mtu 1280 2>/dev/null
+    ntpdate pool.ntp.org >/dev/null 2>&1
+    sed -i '/net.ipv4.ip_forward/d' /etc/sysctl.conf
+    echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+    echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
+    sysctl -p >/dev/null 2>&1
+    echo -e "${GREEN}✅ 修复完成！${PLAIN}"; pause_back
+}
+
+connection_test() {
+    echo -e "${SKYBLUE}📡 智能连通性测试${PLAIN}"
+    if [ -f "$AGENT_CONF" ]; then
+        AGENT_HOST=$(grep 'AGENT_HOST=' "$AGENT_CONF" | cut -d"'" -f2)
+        AGENT_TOKEN=$(grep 'AGENT_TOKEN=' "$AGENT_CONF" | cut -d"'" -f2)
+    else
+        read -p "IP/Domain: " AGENT_HOST; read -p "Token: " AGENT_TOKEN
+    fi
+    [ -z "$AGENT_HOST" ] && return
+    nc -zv -w 5 "$AGENT_HOST" 8888
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}[FAIL] TCP 连接失败。${PLAIN}"
+        read -p "是否执行智能修复? [y/N]: " r
+        [[ "$r" == "y" ]] && smart_network_repair
+    else echo -e "${GREEN}[PASS] TCP 连接成功。${PLAIN}"; fi
+    pause_back
+}
+
 # --- [ 6. 主控安装 ] ---
 install_master() {
     install_dependencies; mkdir -p $M_ROOT/master
-    read -p "端口 [7575]: " IN_PORT; M_PORT=${IN_PORT:-7575}
-    read -p "用户 [admin]: " IN_USER; M_USER=${IN_USER:-admin}
-    read -p "密码 [admin]: " IN_PASS; M_PASS=${IN_PASS:-admin}
-    read -p "令牌 [随机]: " IN_TOKEN; M_TOKEN=${IN_TOKEN:-$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)}
+    echo -e "${SKYBLUE}>>> 主控配置${PLAIN}"
+    read -p "端口 [默认 7575]: " IN_PORT; M_PORT=${IN_PORT:-7575}
+    read -p "用户 [默认 admin]: " IN_USER; M_USER=${IN_USER:-admin}
+    read -p "密码 [默认 admin]: " IN_PASS; M_PASS=${IN_PASS:-admin}
+    RAND=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+    read -p "Token [默认随机]: " IN_TOKEN; M_TOKEN=${IN_TOKEN:-$RAND}
     echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
     _write_master_app_py
     cat > /etc/systemd/system/multix-master.service <<EOF
@@ -200,11 +258,11 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
-    credential_center
+    echo -e "${GREEN}✅ 主控部署成功${PLAIN}"; credential_center
 }
 
 _write_master_app_py() {
-    cat > $M_ROOT/master/app.py <<'EOF'
+cat > $M_ROOT/master/app.py <<'EOF'
 import json, asyncio, psutil, os, socket, subprocess, base64, logging
 from flask import Flask, render_template_string, request, session, redirect, jsonify
 import websockets
@@ -276,7 +334,7 @@ HTML_T = """
 <script>let AGENTS={},ACTIVE_IP='',CURRENT_NODES=[];function updateState(){$.get('/api/state',function(d){$('#error-banner').hide();$('#cpu').text(d.master.stats.cpu);$('#mem').text(d.master.stats.mem);$('#ipv4').text(d.master.ipv4);$('#ipv6').text(d.master.ipv6);AGENTS=d.agents;renderGrid()}).fail(function(){$('#error-banner').text('Fail').fadeIn()})}function renderGrid(){$('#node-list').empty();for(const[ip,a]of Object.entries(AGENTS)){const s=(a.is_demo||a.stats.cpu!==undefined)?'status-online':'status-offline';const c=`<div class="col-md-6 col-lg-4"><div class="card h-100 p-3"><div class="d-flex justify-content-between align-items-center mb-2"><h5 class="fw-bold text-white mb-0 text-truncate">${a.alias||'Unknown'}</h5><span class="status-dot ${s}"></span></div><div class="small text-secondary font-monospace mb-3">${ip}</div><div class="d-flex flex-wrap gap-2 mb-3"><span class="stat-box">OS: ${a.stats.os||'N/A'}</span><span class="stat-box">3X: ${a.stats.xui||'N/A'}</span><span class="stat-box">CPU: ${a.stats.cpu||0}%</span><span class="stat-box">MEM: ${a.stats.mem||0}%</span></div><button class="btn btn-primary w-100 fw-bold" onclick="openManager('${ip}')">MANAGE NODES (${a.nodes?a.nodes.length:0})</button></div></div>`;$('#node-list').append(c)}}function openManager(ip){ACTIVE_IP=ip;CURRENT_NODES=AGENTS[ip].nodes||[];toListView();$('#configModal').modal('show')}function toListView(){$('#view-edit').hide();$('#view-list').show();$('#modalTitle').text(`Nodes on ${ACTIVE_IP}`);const t=$('#tbl-body');t.empty();if(CURRENT_NODES.length===0)t.append('<tr><td colspan="5">Empty.</td></tr>');else CURRENT_NODES.forEach((n,i)=>{t.append(`<tr><td><span class="badge bg-secondary font-monospace">${n.id}</span></td><td>${n.remark}</td><td class="font-monospace text-info">${n.port}</td><td>${n.protocol}</td><td><button class="btn btn-sm btn-outline-primary" onclick="toEditMode(${i})"><i class="bi bi-pencil-square"></i></button></td></tr>`)})}function toAddMode(){$('#view-list').hide();$('#view-edit').show();$('#modalTitle').text('Add Node');resetForm()}function toEditMode(i){$('#view-list').hide();$('#view-edit').show();$('#modalTitle').text('Edit Node');loadForm(CURRENT_NODES[i])}function updateFormVisibility(){const p=$('#protocol').val(),n=$('#network').val(),s=$('#security').val();$('.group-ss,.group-uuid,.group-reality,.group-ws').hide();if(p==='shadowsocks'){$('.group-ss').show()}else{$('.group-uuid').show()}if(s==='reality')$('.group-reality').show();if(n==='ws')$('.group-ws').show()} $('#protocol,#network,#security').change(updateFormVisibility);function genUUID(){$('#uuid').val(crypto.randomUUID())}function genSSKey(){const t=$('#ssCipher').val().includes('256')?'ss-256':'ss-128';$.ajax({url:'/api/gen_key',type:'POST',contentType:'application/json',data:JSON.stringify({type:t}),success:function(d){$('#ssPass').val(d.key)}})}function genReality(){$.ajax({url:'/api/gen_key',type:'POST',contentType:'application/json',data:JSON.stringify({type:'reality'}),success:function(d){$('#privKey').val(d.private);$('#pubKey').val(d.public)}})}function resetForm(){$('#nodeForm')[0].reset();$('#nodeId').val('');$('#protocol').val('vless');$('#network').val('tcp');$('#security').val('reality');genUUID();genReality();updateFormVisibility()}function loadForm(n){try{const s=n.settings||{},ss=n.stream_settings||{};$('#nodeId').val(n.id);$('#remark').val(n.remark);$('#port').val(n.port);$('#protocol').val(n.protocol);if(n.protocol==='shadowsocks'){$('#ssCipher').val(s.method);$('#ssPass').val(s.password)}else{$('#uuid').val(s.clients?s.clients[0].id:'')}$('#network').val(ss.network||'tcp');$('#security').val(ss.security||'none');if(ss.realitySettings){$('#dest').val(ss.realitySettings.dest);$('#serverNames').val((ss.realitySettings.serverNames||[]).join(','));$('#privKey').val(ss.realitySettings.privateKey);$('#pubKey').val(ss.realitySettings.publicKey);$('#shortIds').val((ss.realitySettings.shortIds||[]).join(','))}if(ss.wsSettings){$('#wsPath').val(ss.wsSettings.path);$('#wsHost').val(ss.wsSettings.headers?.Host)}updateFormVisibility()}catch(e){resetForm()}}$('#saveBtn').click(function(){const p=$('#protocol').val(),n=$('#network').val(),s=$('#security').val();let cl=[];if(p!=='shadowsocks')cl.push({id:$('#uuid').val(),flow:(s==='reality'&&p==='vless')?'xtls-rprx-vision':'',email:'u@mx.com'});let st={network:n,security:s};if(s==='reality')st.realitySettings={dest:$('#dest').val(),privateKey:$('#privKey').val(),publicKey:$('#pubKey').val(),shortIds:$('#shortIds').val().split(','),serverNames:$('#serverNames').val().split(','),fingerprint:'chrome'};if(n==='ws')st.wsSettings={path:$('#wsPath').val(),headers:{Host:$('#wsHost').val()}};let se=p==='shadowsocks'?{method:$('#ssCipher').val(),password:$('#ssPass').val(),network:'tcp,udp'}:{clients:cl,decryption:'none'};const pl={id:$('#nodeId').val()||null,remark:$('#remark').val(),port:parseInt($('#port').val()),protocol:p,settings:JSON.stringify(se),stream_settings:JSON.stringify(st),sniffing:JSON.stringify({enabled:true,destOverride:["http","tls","quic"]}),total:0,expiry_time:0};const btn=$(this);btn.prop('disabled',true).text('...');$.ajax({url:'/api/sync',type:'POST',contentType:'application/json',data:JSON.stringify({ip:ACTIVE_IP,config:pl}),success:function(r){$('#configModal').modal('hide');btn.prop('disabled',false).text('Sync');if(r.status==='demo_ok')alert('Demo OK');else alert('Done')},error:function(){btn.prop('disabled',false).text('Sync');alert('Fail')}})});$(document).ready(function(){updateState();setInterval(updateState,3000)});</script>
 {% endraw %}
 </body></html>
-"""
+EOF
 
     @app.route('/')
     def index():
@@ -338,17 +396,30 @@ EOF
 # --- [ 9. 主菜单 ] ---
 main_menu() {
     clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V70.3 Syntax Fix)${PLAIN}"
-    echo " 1. 安装/更新 主控端"
-    echo " 2. 安装/更新 被控端"
+    echo " 1. 安装 主控端"
+    echo " 2. 安装 被控端"
     echo " 3. 智能连通测试"
-    echo " 7. 凭据管理中心"
+    echo " 4. 被控重启"
+    echo " 5. 深度清理"
+    echo " 6. 环境修复"
+    echo " 7. 凭据管理"
+    echo " 8. 实时日志"
+    echo " 9. 运维工具"
+    echo " 10. 服务管理"
     echo " 11. 智能网络修复"
     echo " 0. 退出"
     read -p "选择: " c
     case $c in
         1) install_master ;; 2) install_agent ;;
-        3) connection_test ;; 7) credential_center ;;
-        11) smart_network_repair ;; 0) exit 0 ;; *) main_menu ;;
+        3) connection_test ;;
+        4) docker restart multix-agent; pause_back ;;
+        5) deep_cleanup ;;
+        6) install_dependencies; pause_back ;;
+        7) credential_center ;;
+        8) journalctl -u multix-master -f || docker logs -f multix-agent --tail 50; pause_back ;;
+        9) sys_tools ;; 10) service_manager ;; 
+        11) smart_network_repair ;;
+        0) exit 0 ;; *) main_menu ;;
     esac
 }
 main_menu
