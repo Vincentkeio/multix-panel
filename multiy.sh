@@ -479,24 +479,21 @@ smart_diagnostic() {
 }
 
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ Multiy Pro Beta${SH_VER}${PLAIN}"
-    echo " 1. 安装/物理自愈主控 (旗舰合一版)"
-    echo " 2. 安装/更新被控 (原生双栈隧道)"
+    clear; echo -e "${SKYBLUE}🛰️ Multiy Pro Beta ${SH_VER}${PLAIN}"
+    echo " 1. 安装/更新主控 (不执行强制清理)"
+    echo " 2. 安装/更新被控 (不执行强制清理)"
     echo " 3. 实时凭据与监听看板"
     echo " 4. 链路智能诊断中心"
-    echo " 5. 深度清理中心 (物理抹除)"
+    echo " 5. 深度清理中心 (物理抹除旧进程/端口/环境)"
     echo " 0. 退出"
     read -p "选择: " c
     case $c in 
-        1) install_master ;; 
-        2) install_agent ;; 
+        1) install_master ;;  # 直接进入安装，不再调用 env_cleaner
+        2) install_agent ;;   # 直接进入安装
         3) credential_center ;;
         4) smart_diagnostic ;;
-        5) 
-            systemctl stop multiy-master multiy-agent 2>/dev/null
-            rm -rf "$M_ROOT"; rm -f /etc/systemd/system/multiy-*; echo "抹除成功"; exit ;; 
+        5) env_cleaner; rm -rf "$M_ROOT"; rm -f /etc/systemd/system/multiy-*; echo "清理完成"; exit ;; 
         0) exit ;; 
     esac
 }
-
 check_root; install_shortcut; main_menu
