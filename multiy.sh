@@ -1,18 +1,16 @@
 #!/bin/bash
-# Multiy Pro V85.0 - Socket.io 工业级重构版
-# 保留所有历史功能：凭据看板、智能诊断、深度清理、自愈拉起
+# Multiy Pro V85.5 - 工业级 Socket.io 重构版 (高兼容/防死锁)
 
 export M_ROOT="/opt/multiy_mvp"
-SH_VER="V85.0"
+SH_VER="V85.5"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 基础工具 ] ---
 check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[错误]${PLAIN} 需 Root 权限!" && exit 1; }
 install_shortcut() { [ ! -f /usr/bin/multiy ] && cp "$0" /usr/bin/multiy && chmod +x /usr/bin/multiy; }
-get_env_val() { [ -f "$M_ROOT/.env" ] && grep "^$1=" "$M_ROOT/.env" | cut -d"'" -f2 || echo ""; }
 pause_back() { echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
-# --- [ 1. 凭据与配置看板 - 功能最全版 ] ---
+# --- [ 1. 凭据与配置中心 ] ---
 credential_center() {
     clear
     [ ! -f "$M_ROOT/.env" ] && echo -e "${RED}尚未安装主控！${PLAIN}" && pause_back && return
@@ -21,7 +19,7 @@ credential_center() {
     V6=$(curl -s6m 3 api64.ipify.org || echo "N/A")
     
     echo -e "${SKYBLUE}==================================================${PLAIN}"
-    echo -e "          🛰️  MULTIY PRO 凭据与配置看板"
+    echo -e "          🛰️  MULTIY PRO 全方位凭据看板"
     echo -e "${SKYBLUE}==================================================${PLAIN}"
     echo -e "${GREEN}[ 1. 管理入口 (Web) ]${PLAIN}"
     echo -e " 🔹 IPv4 地址: ${SKYBLUE}http://$V4:$M_PORT${PLAIN}"
@@ -35,19 +33,22 @@ credential_center() {
     echo -e " 🔹 校验令牌: ${YELLOW}$M_TOKEN${PLAIN}"
     
     echo -e "\n${GREEN}[ 3. 系统进程监测 ]${PLAIN}"
-    ss -tuln | grep -q ":9339" && echo -e " 🔹 9339 隧道: ${GREEN}● 监听中 (Socket.io模式)${PLAIN}" || echo -e " 🔹 9339 隧道: ${RED}○ 未监听 (进程异常)${PLAIN}"
-    ss -tuln | grep -q ":$M_PORT" && echo -e " 🔹 $M_PORT 面板: ${GREEN}● 监听中 (Flask)${PLAIN}" || echo -e " 🔹 $M_PORT 面板: ${RED}○ 未监听${PLAIN}"
+    ss -tuln | grep -q ":9339" && echo -e " 🔹 9339 隧道: ${GREEN}● 正在监听 (Socket.io模式)${PLAIN}" || echo -e " 🔹 9339 隧道: ${RED}○ 未监听到 (请手动检查报错)${PLAIN}"
+    ss -tuln | grep -q ":$M_PORT" && echo -e " 🔹 $M_PORT 面板: ${GREEN}● 正在监听 (Flask)${PLAIN}" || echo -e " 🔹 $M_PORT 面板: ${RED}○ 未监听到${PLAIN}"
     echo -e "${SKYBLUE}==================================================${PLAIN}"
     pause_back
 }
 
-# --- [ 2. 主控安装 - 引入成熟框架 ] ---
+# --- [ 2. 主控安装 ] ---
 install_master() {
-    clear; echo -e "${SKYBLUE}>>> 部署工业级主控环境 (Socket.io)${PLAIN}"
+    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 工业级主控 (V85.5)${PLAIN}"
+    
+    echo -e "${YELLOW}正在强力修复 Python 依赖环境...${PLAIN}"
     pkill -9 -f "app.py" 2>/dev/null
     apt-get update && apt-get install -y python3 python3-pip openssl curl >/dev/null 2>&1
-    # 核心依赖
-    pip3 install "Flask<3.0.0" "python-socketio" "eventlet" "psutil" --break-system-packages >/dev/null 2>&1
+    # 强制安装最新兼容版本
+    pip3 install --upgrade pip --break-system-packages >/dev/null 2>&1
+    pip3 install "Flask<3.0.0" "python-socketio" "eventlet==0.33.3" "psutil" --break-system-packages --user >/dev/null 2>&1
 
     mkdir -p "$M_ROOT/master"
     openssl req -x509 -newkey rsa:2048 -keyout "$M_ROOT/master/key.pem" -out "$M_ROOT/master/cert.pem" -days 3650 -nodes -subj "/CN=Multiy" >/dev/null 2>&1
@@ -64,22 +65,25 @@ install_master() {
     _generate_master_py
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
     
-    # 自动尝试开启本地防火墙
-    if command -v ufw >/dev/null; then ufw allow 9339/tcp; ufw allow "$M_PORT"/tcp; fi
+    # 防火墙本地放行
+    if command -v ufw >/dev/null; then ufw allow 9339/tcp; ufw allow "$M_PORT"/tcp; ufw reload; fi
     
-    echo -e "${GREEN}✅ 主控已成功启动。${PLAIN}"
-    sleep 2; credential_center
+    echo -e "${GREEN}✅ 主控动作已执行完毕，请进入看板检查监听状态。${PLAIN}"
+    pause_back
 }
 
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import socketio, eventlet, os, json, ssl, time, psutil
 from flask import Flask, render_template_string, session, redirect, request, jsonify
+from threading import Thread
 
+# 强力加载环境变量
 def load_env():
     c = {}
-    if os.path.exists('/opt/multiy_mvp/.env'):
-        with open('/opt/multiy_mvp/.env') as f:
+    path = '/opt/multiy_mvp/.env'
+    if os.path.exists(path):
+        with open(path, encoding='utf-8') as f:
             for l in f:
                 if '=' in l: k,v = l.strip().split('=', 1); c[k] = v.strip("'\"")
     return c
@@ -90,71 +94,77 @@ app = Flask(__name__)
 app.wsgi_app = socketio.WSGIApp(sio, app.wsgi_app)
 AGENTS = {}
 
-@sio.event
-def connect(sid, environ):
-    print(f"检测到初步握手: {sid}")
-
 @sio.on('auth')
 def authenticate(sid, data):
-    conf = load_env()
-    if data.get('token') == conf.get('M_TOKEN'):
+    env = load_env()
+    if data.get('token') == env.get('M_TOKEN'):
         AGENTS[sid] = {"alias": data.get('hostname', 'Node'), "stats": {"cpu":0,"mem":0}, "last_seen": time.time(), "ip": request.remote_addr}
-        print(f"验证成功: {sid} ({data.get('hostname')})")
+        sio.emit('ready', {'msg': 'verified'}, room=sid)
         return True
     return False
 
 @sio.on('heartbeat')
 def handle_heartbeat(sid, data):
     if sid in AGENTS:
-        AGENTS[sid]['stats'] = data
-        AGENTS[sid]['last_seen'] = time.time()
+        AGENTS[sid]['stats'] = data; AGENTS[sid]['last_seen'] = time.time()
 
 @app.route('/api/state')
 def api_state():
-    conf = load_env()
-    return jsonify({"master_token": conf.get('M_TOKEN'), "agents": AGENTS})
+    return jsonify({"master_token": load_env().get('M_TOKEN'), "agents": AGENTS})
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    env = load_env()
+    app.secret_key = env.get('M_TOKEN')
+    if request.method == 'POST' and request.form.get('u') == env.get('M_USER') and request.form.get('p') == env.get('M_PASS'):
+        session['logged'] = True; return redirect('/')
+    return "<body><form method='post'><input name='u' placeholder='Admin'><br><input name='p' type='password' placeholder='Pass'><br><button>LOGIN</button></form></body>"
 
 @app.route('/')
 def index():
     if not session.get('logged'): return redirect('/login')
-    # 此处省略复杂的 HTML 模板，保持原有卡片样式
-    return "<h1>Multiy Pro Panel</h1><p>Check /api/state for agents data</p>"
+    return "<h1>Multiy Pro V85.5 Panel Running</h1>"
+
+def run_server():
+    env = load_env()
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_context.load_cert_chain('/opt/multiy_mvp/master/cert.pem', '/opt/multiy_mvp/master/key.pem')
+    # 强制监听
+    eventlet.wsgi.server(eventlet.wrap_ssl(eventlet.listen(('0.0.0.0', 9339)), 
+                         certfile='/opt/multiy_mvp/master/cert.pem', 
+                         keyfile='/opt/multiy_mvp/master/key.pem', 
+                         server_side=True), app)
 
 if __name__ == '__main__':
-    py_conf = load_env()
-    app.secret_key = py_conf.get('M_TOKEN')
-    # 使用 Eventlet 强力监听 9339 端口并注入 SSL
-    eventlet.wsgi.server(eventlet.wrap_ssl(eventlet.listen(('0.0.0.0', 9339)), 
-                         certfile='cert.pem', keyfile='key.pem', server_side=True), app)
+    run_server()
 EOF
 }
 
-# --- [ 3. 被控安装 - SSL 强力跳过版 ] ---
+# --- [ 3. 服务引擎 ] ---
+_deploy_service() {
+    local NAME=$1; local EXEC=$2
+    BODY="[Unit]\nDescription=${NAME}\nAfter=network.target\n[Service]\nExecStart=/usr/bin/python3 ${EXEC}\nRestart=always\nWorkingDirectory=$(dirname ${EXEC})\nEnvironment=PYTHONUNBUFFERED=1\n[Install]\nWantedBy=multi-user.target"
+    echo -e "$BODY" > "/etc/systemd/system/${NAME}.service"
+    systemctl daemon-reload; systemctl enable "${NAME}"; systemctl restart "${NAME}"
+}
+
+# --- [ 4. 被控安装 ] ---
 install_agent() {
-    clear; echo -e "${SKYBLUE}>>> 安装工业级被控环境 (Socket.io Client)${PLAIN}"
+    clear; echo -e "${SKYBLUE}>>> 安装 Multiy 被控 (SSL 豁免模式)${PLAIN}"
     mkdir -p "$M_ROOT/agent"
     read -p "1. 主控域名或 IP: " M_HOST
     read -p "2. 主控 Token: " M_TOKEN
     
-    # 客户端依赖
-    apt-get update && apt-get install -y python3-pip >/dev/null 2>&1
-    pip3 install "python-socketio[client]" "psutil" --break-system-packages >/dev/null 2>&1
+    pip3 install "python-socketio[client]" "psutil" --break-system-packages --user >/dev/null 2>&1
 
     cat > "$M_ROOT/agent/agent.py" << 'EOF'
 import socketio, time, psutil, socket, ssl
-
-# 核心：豁免自签名证书校验
 sio = socketio.Client(ssl_verify=False)
 MASTER = "REPLACE_HOST"; TOKEN = "REPLACE_TOKEN"
 
 @sio.event
 def connect():
-    print("隧道已建立，正在验证令牌...")
     sio.emit('auth', {'token': TOKEN, 'hostname': socket.gethostname()})
-
-@sio.on('ready')
-def on_ready(data):
-    print("验证通过，开始同步监控数据。")
 
 def send_heartbeat():
     while True:
@@ -168,52 +178,42 @@ if __name__ == "__main__":
         try:
             sio.connect(f"https://{MASTER}:9339")
             send_heartbeat()
-        except Exception as e:
-            print(f"连接异常: {e}，5秒后重试...")
-            time.sleep(5)
+        except Exception: time.sleep(5)
 EOF
     sed -i "s/REPLACE_HOST/$M_HOST/; s/REPLACE_TOKEN/$M_TOKEN/" "$M_ROOT/agent/agent.py"
     _deploy_service "multiy-agent" "$M_ROOT/agent/agent.py"
-    echo -e "${GREEN}✅ 被控端已启动，已开启自签证书豁免模式。${PLAIN}"; pause_back
+    echo -e "${GREEN}✅ 被控已启动。${PLAIN}"; pause_back
 }
 
-# --- [ 4. 智能链路诊断 ] ---
+# --- [ 5. 诊断与清理 ] ---
 smart_diagnostic() {
     clear; echo -e "${SKYBLUE}🔍 智能链路诊断中心${PLAIN}"
     [ ! -f "$M_ROOT/agent/agent.py" ] && echo "未安装被控" && pause_back && return
     A_HOST=$(grep "MASTER =" "$M_ROOT/agent/agent.py" | cut -d'"' -f2)
     echo -e "目标地址: ${SKYBLUE}$A_HOST:9339${PLAIN}"
-    echo -e "\n${YELLOW}[正在探测 9339 端口通透性...]${PLAIN}"
     if curl -sk --max-time 3 "https://$A_HOST:9339" >/dev/null 2>&1 || [ $? -eq 52 ]; then
-        echo -e "👉 隧道检测: ${GREEN}成功 (9339 端口已开启且响应 WSS)${PLAIN}"
+        echo -e "👉 隧道检测: ${GREEN}成功 (9339 响应 WSS)${PLAIN}"
     else
-        echo -e "👉 隧道检测: ${RED}失败 (请检查主控安全组)${PLAIN}"
+        echo -e "👉 隧道检测: ${RED}失败 (端口不可达)${PLAIN}"
     fi
-    echo -e "\n最近 Agent 日志:"; journalctl -u multiy-agent -n 10 --output cat
     pause_back
 }
 
-# --- [ 5. 深度清理 ] ---
-deep_clean() {
-    systemctl stop multiy-master multiy-agent 2>/dev/null
-    pkill -9 -f "app.py"; pkill -9 -f "agent.py"
-    rm -rf "$M_ROOT" /etc/systemd/system/multiy-* /usr/bin/multiy
-    echo "环境已彻底重置。"; exit 0
-}
-
-# --- [ 主菜单 ] ---
 main_menu() {
     clear; echo -e "${SKYBLUE}🛰️ Multiy Pro ${SH_VER}${PLAIN}"
-    echo " 1. 安装/更新 Multiy 主控 (Socket.io 重构)"
-    echo " 2. 安装/更新 Multiy 被控 (SSL 豁免模式)"
+    echo " 1. 安装/更新 Multiy 主控 (强制 9339 启动版)"
+    echo " 2. 安装/更新 Multiy 被控"
     echo " 3. 智能链路诊断中心"
-    echo " 4. 凭据与配置中心 (全功能看板)"
+    echo " 4. 凭据与配置中心 (实时看板)"
     echo " 5. 深度清理中心"
     echo " 0. 退出"
     read -p "选择: " c
     case $c in
         1) install_master ;; 2) install_agent ;; 3) smart_diagnostic ;;
-        4) credential_center ;; 5) deep_clean ;; 0) exit 0 ;; *) main_menu ;;
+        4) credential_center ;; 5) 
+            systemctl stop multiy-master multiy-agent 2>/dev/null; rm -rf "$M_ROOT" /etc/systemd/system/multiy-* /usr/bin/multiy
+            echo "环境已重置。"; exit 0 ;;
+        *) exit 0 ;;
     esac
 }
 
