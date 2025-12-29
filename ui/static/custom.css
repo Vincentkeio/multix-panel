@@ -1,1 +1,10 @@
 
+[x-cloak] { display: none !important; }
+body { background-color: #020617; color: #f8fafc; scroll-behavior: smooth; }
+.glass { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
+.glass-flat { background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255,255,255,0.03); }
+.neon-border { border: 1px solid rgba(59, 130, 246, 0.4); box-shadow: 0 0 15px rgba(59, 130, 246, 0.1); }
+.animate-spin-slow { animation: spin 3s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
