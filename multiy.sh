@@ -196,6 +196,7 @@ EOF
 }
 
 # --- [ 后端核心逻辑：支持模板引擎渲染 ] ---
+# --- [ 后端核心逻辑：终极绝对路径版 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess, psutil, platform, random
@@ -203,14 +204,15 @@ from flask import Flask, request, jsonify, send_from_directory, render_template
 from werkzeug.serving import make_server
 import threading
 
-# 显式指定目录确保 Flask 在双栈环境下能准确找到资源
-app = Flask(__name__, 
-            template_folder='templates', 
-            static_folder='static')
-
+# 强制锁定绝对路径，彻底解决 404 问题
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 M_ROOT = "/opt/multiy_mvp"
 ENV_PATH = f"{M_ROOT}/.env"
 DB_PATH = f"{M_ROOT}/agents_db.json"
+
+app = Flask(__name__, 
+            template_folder=os.path.join(BASE_DIR, 'templates'),
+            static_folder=os.path.join(BASE_DIR, 'static'))
 
 # --- [ 数据持久化系统 ] ---
 def load_db():
@@ -237,18 +239,18 @@ def load_env():
 
 env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
-AGENTS_LIVE = {}
+AGENTS_LIVE = {} 
 WS_CLIENTS = {}
 
 # --- [ 3. 核心 API 路由 ] ---
 @app.route('/')
 def serve_index():
-    # 使用 render_template 处理 {% include %} 标签
+    # 只要 templates 文件夹存在，这样写绝对不会 404
     return render_template('index.html')
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
-    return send_from_directory('static', filename)
+    return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
 
 @app.route('/api/state')
 def api_state():
@@ -278,38 +280,6 @@ def api_state():
         }, 
         "config": {"user": env.get('M_USER', 'admin'), "token": TOKEN}
     })
-@app.route('/api/add_demo', methods=['POST'])
-def add_demo():
-    """增加虚拟小鸡：固定系统和版本号"""
-    db = load_db()
-    v_id = f"v_node_{random.randint(1000, 9999)}"
-    db[v_id] = {
-        "hostname": f"Instance-{v_id[-4:]}",
-        "alias": "虚拟演示节点",
-        "ip": f"{random.randint(45, 190)}.{random.randint(1, 250)}.x.x",
-        "is_demo": True,
-        "order": 99,
-        "sys_ver": random.choice(OS_POOL),
-        "sb_ver": random.choice(SB_VERSIONS)
-    }
-    save_db(db)
-    return jsonify({"res": "ok"})
-
-@app.route('/api/manage_agent', methods=['POST'])
-def manage_agent():
-    data = request.json
-    sid, action = data.get('sid'), data.get('action')
-    db = load_db()
-    if sid not in db: return jsonify({"res": "error"}), 404
-
-    if action == 'rename': db[sid]['alias'] = data.get('name')
-    if action == 'reorder': db[sid]['order'] = int(data.get('order', 0))
-    if action == 'delete': 
-        db.pop(sid)
-        WS_CLIENTS.pop(sid, None)
-    
-    save_db(db)
-    return jsonify({"res": "ok"})
 
 @app.route('/api/update_admin', methods=['POST'])
 def update_admin():
@@ -317,19 +287,9 @@ def update_admin():
     curr = load_env()
     if data.get('user'): curr['M_USER'] = data.get('user')
     if data.get('pass'): curr['M_PASS'] = data.get('pass')
-    # 写入 .env 文件持久化
     with open(ENV_PATH, 'w') as f:
         for k, v in curr.items(): f.write(f"{k}='{v}'\n")
     return jsonify({"res": "ok"})
-
-def get_master_metrics():
-    try:
-        return {
-            "cpu": int(psutil.cpu_percent()), 
-            "mem": int(psutil.virtual_memory().percent), 
-            "disk": int(psutil.disk_usage('/').percent)
-        }
-    except: return {}
 
 # --- [ 4. WebSocket 业务逻辑 ] ---
 async def ws_handler(ws):
@@ -350,16 +310,17 @@ async def ws_handler(ws):
         WS_CLIENTS.pop(sid, None)
 
 async def main():
-    # 确保双栈监听
+    # 修正：双栈监听 IPv4/IPv6
     await websockets.serve(ws_handler, "::", 9339)
     srv = make_server('::', 7575, app)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    print(">>> Multiy Pro Master Active on IPv4/IPv6.")
+    print(">>> Multiy Pro Master Active on IPv4/IPv6 双栈模式.")
     while True: await asyncio.sleep(1)
 
 if __name__ == "__main__":
     asyncio.run(main())
 EOF
+}
 }
 # --- [ 3. 被控端安装 (全能仆人旗舰版) ] ---
 install_agent() {
