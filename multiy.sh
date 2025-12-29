@@ -227,38 +227,6 @@ EOF
 }
 
 
-# [WebSocket 核心逻辑]
-async def ws_handler(ws):
-    addr = ws.remote_address[0]
-    sid = str(id(ws))
-    try:
-        async for msg in ws:
-            data = json.loads(msg)
-            if data.get('type') == 'auth' and data.get('token') == TOKEN:
-                AGENTS[sid] = {
-                    "alias": data.get('hostname', 'Node'), "stats": {"cpu":0,"mem":0},
-                    "ip": addr, "connected_at": time.strftime("%H:%M:%S"), "last_seen": time.time()
-                }
-            elif data.get('type') == 'heartbeat' and sid in AGENTS:
-                AGENTS[sid]['stats'] = data
-                AGENTS[sid].update({"last_seen": time.time()})
-    except: pass
-    finally:
-        if sid in AGENTS: del AGENTS[sid]
-
-# [API 接口]
-@app.route('/api/state')
-def api_state():
-    return jsonify({
-        "agents": AGENTS,
-        "config": {
-            "token": TOKEN,
-            "ws_port": 9339,
-            "m_host": env.get('M_HOST'),
-            "ip4": subprocess.getoutput("curl -s4m 1 api.ipify.org || echo 'N/A'"),
-            "ip6": subprocess.getoutput("curl -s6m 1 api64.ipify.org || echo 'N/A'")
-        }
-    })
 
 # [旗舰 UI 模板]
 
