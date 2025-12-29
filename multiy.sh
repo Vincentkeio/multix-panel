@@ -89,7 +89,7 @@ def load_env():
     return c
 
 conf = load_env()
-sio = socketio.Server(cors_allowed_origins='*', async_mode='eventlet')
+sio = socketio.Server(cors_allowed_origins='*', async_mode='eventlet', ping_timeout=15, ping_interval=5)
 app = Flask(__name__)
 app.wsgi_app = socketio.WSGIApp(sio, app.wsgi_app)
 AGENTS = {}
@@ -106,6 +106,8 @@ def authenticate(sid, data):
             "connected_at": time.strftime("%H:%M:%S")
         }
         sio.emit('ready', {'msg': 'verified'}, room=sid)
+        # 强制推送更新
+        sio.emit('update_ui', AGENTS)
         return True
     return False
 
@@ -114,72 +116,88 @@ def handle_heartbeat(sid, data):
     if sid in AGENTS:
         AGENTS[sid]['stats'] = data
         AGENTS[sid]['last_seen'] = time.time()
+        # 核心修复：心跳到达时实时通知前端渲染
+        sio.emit('update_ui', AGENTS)
 
 @sio.on('disconnect')
 def disconnect(sid):
-    if sid in AGENTS: del AGENTS[sid]
+    if sid in AGENTS: 
+        del AGENTS[sid]
+        sio.emit('update_ui', AGENTS)
 
 @app.route('/api/state')
 def api_state():
     return jsonify({"agents": AGENTS})
 
-# --- [ 旗舰级美化前端：包含示例卡片逻辑 ] ---
+# --- [ 仪表盘：全功能美化渲染 ] ---
 INDEX_HTML = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><script src="https://cdn.tailwindcss.com"></script>
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Multiy Pro Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 <style>
     body{background:#020617;color:#fff;font-family:ui-sans-serif,system-ui}
     .glass{background:rgba(255,255,255,0.02);backdrop-filter:blur(15px);border:1px solid rgba(255,255,255,0.08);border-radius:2rem}
     .progress-bar{height:6px;border-radius:10px;background:rgba(255,255,255,0.05);overflow:hidden}
+    .active-glow{box-shadow: 0 0 15px rgba(59, 130, 246, 0.5)}
 </style></head>
-<body class="p-6 md:p-12" x-data="panel()" x-init="start()">
+<body class="p-6 md:p-12" x-data="panel()" x-init="init()">
     <div class="max-w-7xl mx-auto">
         <div class="flex justify-between items-end mb-16">
             <div>
-                <h1 class="text-5xl font-black italic tracking-tighter text-blue-500">MULTIY <span class="text-white">PRO</span></h1>
-                <p class="text-slate-500 font-bold text-xs uppercase mt-2 tracking-widest">Global Secure Mesh Infrastructure</p>
+                <h1 class="text-6xl font-black italic tracking-tighter text-blue-500">MULTIY <span class="text-white">PRO</span></h1>
+                <p class="text-slate-500 font-bold text-xs uppercase mt-2 tracking-widest">Global Node Control Center</p>
             </div>
             <div class="text-right">
-                <div class="text-[10px] text-slate-500 font-bold uppercase mb-1">System Status</div>
-                <div class="flex items-center gap-2 bg-green-500/10 text-green-500 px-4 py-1 rounded-full text-[10px] font-black border border-green-500/20">
-                    <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span> WSS TUNNEL ACTIVE
+                <div class="text-[10px] text-slate-500 font-bold uppercase mb-1">Tunnel Status</div>
+                <div class="flex items-center gap-2 bg-green-500/10 text-green-500 px-5 py-2 rounded-full text-[10px] font-black border border-green-500/20 active-glow">
+                    <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span> 9339 WSS SECURE
                 </div>
             </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             <template x-for="(node, sid) in agents" :key="sid">
-                <div class="glass p-10 hover:border-blue-500/50 transition-all">
+                <div class="glass p-10 hover:border-blue-500/50 transition-all duration-300 group">
                     <div class="flex justify-between mb-10">
                         <div>
-                            <h2 class="text-2xl font-bold" x-text="node.alias"></h2>
+                            <h2 class="text-2xl font-black group-hover:text-blue-400 transition" x-text="node.alias"></h2>
                             <code class="text-[10px] text-blue-400 font-bold" x-text="node.ip"></code>
                         </div>
-                        <span class="text-[10px] bg-white/5 px-3 py-1 rounded-md h-fit" x-text="node.connected_at"></span>
+                        <span class="text-[9px] bg-white/5 px-4 py-2 rounded-xl h-fit font-bold" x-text="node.connected_at"></span>
                     </div>
-                    <div class="space-y-6">
+                    <div class="space-y-8">
                         <div>
-                            <div class="flex justify-between text-[10px] uppercase font-bold mb-2 text-slate-500"><span>Processor</span><span class="text-white" x-text="node.stats.cpu+'%'"></span></div>
-                            <div class="progress-bar"><div class="h-full bg-blue-500 transition-all duration-500" :style="'width:'+node.stats.cpu+'%'"></div></div>
+                            <div class="flex justify-between text-[10px] uppercase font-black mb-2 text-slate-500"><span>Processor</span><span class="text-blue-400" x-text="node.stats.cpu+'%'"></span></div>
+                            <div class="progress-bar"><div class="h-full bg-blue-500 transition-all duration-700" :style="'width:'+node.stats.cpu+'%'"></div></div>
                         </div>
                         <div>
-                            <div class="flex justify-between text-[10px] uppercase font-bold mb-2 text-slate-500"><span>Memory</span><span class="text-white" x-text="node.stats.mem+'%'"></span></div>
-                            <div class="progress-bar"><div class="h-full bg-indigo-500 transition-all duration-500" :style="'width:'+node.stats.mem+'%'"></div></div>
+                            <div class="flex justify-between text-[10px] uppercase font-black mb-2 text-slate-500"><span>Memory</span><span class="text-purple-400" x-text="node.stats.mem+'%'"></span></div>
+                            <div class="progress-bar"><div class="h-full bg-purple-500 transition-all duration-700" :style="'width:'+node.stats.mem+'%'"></div></div>
                         </div>
                     </div>
                 </div>
             </template>
             
             <template x-if="Object.keys(agents).length === 0">
-                <div class="glass p-10 opacity-40 border-dashed">
-                    <div class="mb-10"><h2 class="text-2xl font-bold">Example Node</h2><code class="text-[10px] text-slate-600 font-bold">127.0.0.1 (Waiting...)</code></div>
-                    <div class="text-slate-500 text-xs italic font-bold">等待小鸡通过 9339 端口接入...</div>
+                <div class="glass p-10 border-dashed border-2 border-slate-800 flex flex-col items-center justify-center min-h-[300px]">
+                    <div class="w-12 h-12 border-4 border-slate-700 border-t-blue-500 rounded-full animate-spin mb-6"></div>
+                    <div class="text-slate-500 text-xs font-black uppercase italic">Waiting for node handshake...</div>
                 </div>
             </template>
         </div>
     </div>
     <script>
-        function panel(){ return { agents:{}, start(){this.fetch();setInterval(()=>this.fetch(),3000)}, async fetch(){ try{const r=await fetch('/api/state');const d=await r.json();this.agents=d.agents}catch(e){} } } }
+        function panel(){ return { 
+            agents:{}, 
+            socket: null,
+            init(){
+                this.socket = io();
+                this.socket.on('update_ui', (data) => { this.agents = data; });
+                this.fetch();
+            },
+            async fetch(){ try{const r=await fetch('/api/state');const d=await r.json();this.agents=d.agents}catch(e){} } 
+        } }
     </script>
 </body></html>
 """
@@ -190,7 +208,7 @@ def login():
     if request.method == 'POST':
         if request.form.get('u') == env.get('M_USER') and request.form.get('p') == env.get('M_PASS'):
             session['logged'] = True; return redirect('/')
-    return '<h2>Multiy Login</h2><form method="post"><input name="u"><input name="p" type="password"><button>Login</button></form>'
+    return """<body style="background:#020617;display:flex;justify-content:center;align-items:center;height:100vh;color:#fff;font-family:sans-serif"><form method="post" style="background:rgba(255,255,255,0.03);backdrop-filter:blur(20px);padding:60px;border-radius:35px;border:1px solid rgba(255,255,255,0.1);width:340px;text-align:center"><h2 style="color:#3b82f6;font-size:2rem;font-weight:900;margin-bottom:40px;font-style:italic;letter-spacing:-2px">MULTIY <span style="color:#fff">PRO</span></h2><input name="u" placeholder="Admin" style="width:100%;padding:15px;margin:12px 0;background:#000;border:1px solid #333;color:#fff;border-radius:15px;outline:none"><input name="p" type="password" placeholder="Pass" style="width:100%;padding:15px;margin:12px 0;background:#000;border:1px solid #333;color:#fff;border-radius:15px;outline:none"><button style="width:100%;padding:16px;background:#3b82f6;color:#fff;border:none;border-radius:15px;font-weight:900;cursor:pointer;margin-top:20px;box-shadow:0 10px 20px rgba(59,130,246,0.3)">ACCESS SYSTEM</button></form></body>"""
 
 @app.route('/')
 def index():
@@ -207,7 +225,6 @@ if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(env.get('M_PORT', 7575)))
 EOF
 }
-
 # --- [ 3. 被控逻辑 - 保持 SSL 豁免 ] ---
 install_agent() {
     clear; echo -e "${SKYBLUE}>>> 部署 Multiy 被控 (V90.0)${PLAIN}"
