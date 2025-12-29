@@ -183,16 +183,29 @@ async def ws_handler(ws):
         async for msg in ws:
             data = json.loads(msg)
             if data.get('token') != TOKEN: continue
+            
             if data.get('type') in ['heartbeat', 'report_full']:
                 if sid not in AGENTS:
-                    AGENTS[sid] = {"ip": addr, "is_dirty": False, "status": "online", "physical_nodes": [], "draft_nodes": [], "metrics": {}}
+                    AGENTS[sid] = {
+                        "ip": addr, "status": "online", "is_dirty": False,
+                        "physical_nodes": [], "draft_nodes": [], "metrics": {"cpu":0, "mem":0, "net_up":0, "net_down":0}
+                    }
+                
+                # 核心：确保 metrics 里的数据能被前端 Alpine.js 读取
+                new_metrics = data.get('metrics', {})
                 AGENTS[sid].update({
-                    "hostname": data.get('hostname'), "metrics": data.get('metrics'),
-                    "remote_hash": data.get('config_hash'), "last_seen": time.time()
+                    "hostname": data.get('hostname', 'Node'),
+                    "metrics": new_metrics,
+                    "remote_hash": data.get('config_hash'),
+                    "last_seen": time.time(),
+                    "status": "online"
                 })
+
                 if data.get('type') == 'report_full':
                     AGENTS[sid]["physical_nodes"] = data.get('inbounds', [])
-                    if not AGENTS[sid]["is_dirty"]: AGENTS[sid]["draft_nodes"] = data.get('inbounds', [])
+                    if not AGENTS[sid]["is_dirty"]:
+                        AGENTS[sid]["draft_nodes"] = data.get('inbounds', [])
+
     except: pass
     finally:
         if sid in AGENTS: AGENTS[sid]["status"] = "offline"
@@ -208,7 +221,16 @@ def index():
 
 @app.route('/api/state')
 def api_state():
-    return jsonify({"agents": AGENTS, "master": {"token": TOKEN, "host": env.get('M_HOST')}})
+    # 对齐前端 UI 的 fetch 需求
+    return jsonify({
+        "agents": AGENTS,
+        "config": {
+            "token": TOKEN,
+            "m_host": env.get('M_HOST'),
+            "ip4": subprocess.getoutput("curl -s4m 1 api.ipify.org || echo 'N/A'"),
+            "ip6": subprocess.getoutput("curl -s6m 1 api64.ipify.org || echo 'N/A'")
+        }
+    })
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
