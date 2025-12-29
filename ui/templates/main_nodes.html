@@ -1,1 +1,29 @@
+<template x-for="(n, index) in nodes" :key="index">
+    <div 
+        @click="isLoggedIn ? openEditModal(n) : alert('请先登录管理')"
+        :class="isLoggedIn ? 'hover:border-blue-500 cursor-pointer shadow-lg' : 'opacity-90'"
+        class="relative group bg-[#111113] border border-white/5 rounded-xl p-5 transition-all duration-300"
+    >
+        <template x-if="isLoggedIn">
+            <div class="absolute top-2 right-2 text-white/20 group-hover:text-blue-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+            </div>
+        </template>
 
+        <div class="flex items-center space-x-4">
+            <div :class="n.online ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-red-500'" class="w-2.5 h-2.5 rounded-full animate-pulse"></div>
+            <h3 class="text-white font-medium text-lg" x-text="n.name"></h3>
+        </div>
+
+        <div class="mt-4 grid grid-cols-2 gap-4">
+            <div class="bg-white/5 rounded-lg p-2 text-center">
+                <p class="text-[10px] text-white/40 uppercase">CPU</p>
+                <p class="text-sm font-mono text-blue-400" x-text="n.metrics.cpu + '%'"></p>
+            </div>
+            <div class="bg-white/5 rounded-lg p-2 text-center">
+                <p class="text-[10px] text-white/40 uppercase">Load</p>
+                <p class="text-sm font-mono text-purple-400" x-text="n.metrics.load"></p>
+            </div>
+        </div>
+    </div>
+</template>
