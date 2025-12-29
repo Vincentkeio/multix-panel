@@ -188,43 +188,103 @@
         </div>
     </div>
 
-    <div x-show="showAdminModal" x-cloak class="fixed inset-0 z-[60] flex items-center justify-center p-6">
-        <div class="absolute inset-0 bg-black/90 backdrop-blur-xl" @click="showAdminModal=false"></div>
-        <div class="relative w-full max-w-4xl glass p-10 rounded-[3rem] border border-white/10 shadow-2xl flex flex-col md:flex-row gap-10 overflow-hidden">
-            <div class="flex-1 space-y-6">
-                <h3 class="text-2xl font-black italic text-blue-400">Security Center</h3>
-                <div class="space-y-4 bg-white/5 p-6 rounded-3xl">
-                    <div class="space-y-1">
-                        <label class="text-[10px] text-slate-500 font-bold uppercase">Admin Username</label>
-                        <input x-model="config.user" class="w-full bg-black/40 border border-white/10 p-3 rounded-xl text-xs">
-                    </div>
-                    <div class="space-y-1">
-                        <label class="text-[10px] text-slate-500 font-bold uppercase">New Password</label>
-                        <input type="password" placeholder="留空则不修改" class="w-full bg-black/40 border border-white/10 p-3 rounded-xl text-xs">
-                    </div>
-                    <button class="w-full py-3 bg-blue-600 rounded-xl text-[10px] font-black uppercase">保存账户设置</button>
-                </div>
+ <div x-show="adminModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 bg-black/90 backdrop-blur-xl" x-cloak x-transition>
+    <div class="bg-[#0a0a0c] w-full max-w-2xl rounded-[2.5rem] border border-white/10 overflow-hidden shadow-2xl shadow-blue-500/5" @click.away="adminModal = false">
+        
+        <div class="p-8 border-b border-white/5 flex justify-between items-center bg-white/2">
+            <div>
+                <h2 class="text-2xl font-black italic tracking-tighter text-white">SYSTEM CONTROL</h2>
+                <p class="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">账户设置与节点资产控制</p>
             </div>
-            <div class="flex-[1.5] flex flex-col h-[500px]">
-                <h3 class="text-2xl font-black italic text-green-400 mb-6">Asset Manager</h3>
-                <div class="flex-1 overflow-y-auto space-y-3 pr-2">
+            <button @click="adminModal = false" class="w-10 h-10 flex items-center justify-center rounded-full bg-white/5 text-slate-400 hover:text-white transition">
+                <i class="ri-close-line text-xl"></i>
+            </button>
+        </div>
+
+        <div class="p-8 space-y-10 max-h-[70vh] overflow-y-auto custom-scrollbar">
+            <section class="space-y-4">
+                <div class="flex items-center gap-2 mb-2">
+                    <i class="ri-shield-user-line text-green-500"></i>
+                    <h3 class="text-xs font-black text-white uppercase tracking-widest">账户设置</h3>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="bg-white/5 p-4 rounded-2xl border border-white/5 flex items-center justify-between group">
+                        <div class="flex-1">
+                            <label class="text-[8px] text-slate-500 font-bold uppercase mb-1 block tracking-widest">Operator Name</label>
+                            <span x-show="!isEditingUser" class="text-sm font-black text-white" x-text="config.user"></span>
+                            <input x-show="isEditingUser" x-model="tempUser" class="bg-black/40 border border-green-500/30 p-1 rounded text-sm text-green-400 outline-none w-full font-bold">
+                        </div>
+                        <button @click="isEditingUser = !isEditingUser; if(isEditingUser) tempUser = config.user" class="ml-4 p-2 rounded-lg hover:bg-white/5 text-blue-400 transition-all">
+                            <i :class="isEditingUser ? 'ri-close-line text-red-400' : 'ri-edit-line text-sm'"></i>
+                        </button>
+                    </div>
+
+                    <div class="bg-white/5 p-4 rounded-2xl border border-white/5 flex items-center justify-between group">
+                        <div class="flex-1">
+                            <label class="text-[8px] text-slate-500 font-bold uppercase mb-1 block tracking-widest">Security Key</label>
+                            <span x-show="!isEditingPass" class="text-sm font-black text-slate-600 italic">••••••••</span>
+                            <input x-show="isEditingPass" type="password" x-model="tempPass" placeholder="New Password" class="bg-black/40 border border-green-500/30 p-1 rounded text-sm text-green-400 outline-none w-full font-bold">
+                        </div>
+                        <button @click="isEditingPass = !isEditingPass; if(isEditingPass) tempPass = ''" class="ml-4 p-2 rounded-lg hover:bg-white/5 text-blue-400 transition-all">
+                            <i :class="isEditingPass ? 'ri-close-line text-red-400' : 'ri-edit-line text-sm'"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div x-show="isEditingUser || isEditingPass" x-transition>
+                    <button @click="confirmUpdateAdmin()" class="w-full py-4 bg-green-500 text-black rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-green-400 transition shadow-lg shadow-green-500/20">
+                        确认并保存账户修改
+                    </button>
+                </div>
+            </section>
+
+            <section class="space-y-4">
+                <div class="flex justify-between items-center mb-2">
+                    <div class="flex items-center gap-2">
+                        <i class="ri-server-line text-blue-500"></i>
+                        <h3 class="text-xs font-black text-white uppercase tracking-widest">节点资产控制</h3>
+                    </div>
+                    <button @click="addVirtualNode()" class="px-4 py-2 bg-blue-500 text-white text-[10px] font-black rounded-xl hover:bg-blue-400 transition shadow-lg shadow-blue-500/20">
+                        + 增加虚拟小鸡
+                    </button>
+                </div>
+                
+                <div class="space-y-3">
                     <template x-for="(n, sid) in sortedAgents" :key="sid">
-                        <div class="flex items-center justify-between bg-white/5 p-4 rounded-2xl border border-white/5">
-                            <div class="flex items-center gap-3">
-                                <span class="text-[8px] text-slate-500 font-mono" x-text="'ID:'+sid.slice(0,4)"></span>
-                                <input x-model="n.alias" placeholder="设置别名" class="bg-transparent font-bold text-xs outline-none border-b border-transparent focus:border-green-500">
+                        <div class="flex items-center justify-between bg-white/2 p-4 rounded-2xl border border-white/5 hover:border-white/10 transition group">
+                            <div class="flex items-center gap-4">
+                                <div class="flex flex-col items-center">
+                                    <span class="text-[8px] text-slate-600 font-bold uppercase">Order</span>
+                                    <input type="number" x-model="n.order" @change="manageAgent(sid, 'reorder', n.order)" class="w-10 bg-black/40 text-center font-black text-xs text-blue-400 outline-none rounded-md border border-white/5">
+                                </div>
+                                <div class="h-8 w-px bg-white/10"></div>
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <span x-show="editingSid !== sid" class="text-sm font-bold text-white" x-text="n.alias || n.hostname"></span>
+                                        <input x-show="editingSid === sid" x-model="tempAlias" class="bg-black/40 border border-blue-500/50 px-2 py-0.5 rounded text-xs text-blue-400 outline-none font-bold">
+                                        
+                                        <button @click="if(editingSid === sid){ saveAlias(sid) }else{ editingSid = sid; tempAlias = n.alias || n.hostname }" class="transition-all" :class="editingSid === sid ? 'text-green-500' : 'text-slate-500 hover:text-blue-400'">
+                                            <i :class="editingSid === sid ? 'ri-checkbox-circle-fill text-lg' : 'ri-edit-box-line text-sm'"></i>
+                                        </button>
+                                        <template x-if="n.is_demo"><span class="text-[7px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded border border-blue-500/30 font-bold uppercase tracking-tighter">Demo</span></template>
+                                    </div>
+                                    <span class="text-[8px] text-slate-600 font-mono tracking-tight" x-text="'ID: ' + sid"></span>
+                                </div>
                             </div>
-                            <div class="flex gap-3">
-                                <button class="text-slate-400 hover:text-white"><i class="ri-arrow-up-down-line"></i></button>
-                                <button @click="deleteAgent(sid)" class="text-red-500/50 hover:text-red-500"><i class="ri-delete-bin-7-line"></i></button>
-                            </div>
+                            <button @click="manageAgent(sid, 'delete')" class="w-10 h-10 flex items-center justify-center text-slate-700 hover:text-red-500 transition"><i class="ri-delete-bin-line"></i></button>
                         </div>
                     </template>
                 </div>
+            </section>
+
+            <div class="mt-8 pt-6 border-t border-white/5">
+                <button @click="logout()" class="w-full py-3 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition">
+                    <i class="ri-logout-box-r-line mr-2"></i> 退出管理系统
+                </button>
             </div>
-            <button @click="showAdminModal=false" class="absolute top-6 right-6 text-2xl text-slate-500 hover:text-white"><i class="ri-close-line"></i></button>
         </div>
     </div>
+</div>
 
     <script>
 <script>
