@@ -303,7 +303,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 EOF
 }
-
+}
 # --- [ 3. 被控端安装 (全能仆人旗舰版) ] ---
 install_agent() {
     apt-get install -y python3-pip
