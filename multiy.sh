@@ -12,14 +12,45 @@ pause_back() { echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"; read
 
 # --- [ 环境深度清理 ] ---
 env_cleaner() {
-    echo -e "${YELLOW}>>> 正在执行环境物理级大扫除...${PLAIN}"
-    systemctl stop multiy-master multiy-agent 2>/dev/null
-    pkill -9 python3 2>/dev/null
+    echo -e "${YELLOW}>>> 正在执行环境物理级大扫除 (含旧版 Multix 清理)...${PLAIN}"
+    
+    # 1. 停止所有可能的服务名 (包含旧版 multix)
+    systemctl stop multiy-master multiy-agent multix multix-master multix-agent 2>/dev/null
+    systemctl disable multix multix-master multix-agent 2>/dev/null
+    
+    # 2. 移除旧版服务文件 (防止干扰)
+    rm -f /etc/systemd/system/multix* 2>/dev/null
+    systemctl daemon-reload
+    
+    # 3. 强制杀死残留进程
+    # 精准匹配新旧所有可能的路径关键字
+    echo -e "${YELLOW}正在清理旧进程残留...${PLAIN}"
+    pkill -9 -f "master/app.py" 2>/dev/null
+    pkill -9 -f "agent/agent.py" 2>/dev/null
+    pkill -9 -f "multix" 2>/dev/null
+    pkill -9 -f "multiy" 2>/dev/null
+    pkill -9 python3 2>/dev/null # 最后的暴力兜底
+    
+    # 4. 针对 7575 和 9339 端口进行定点强杀
+    for port in 7575 9339; do
+        local pid=$(lsof -t -i:"$port" 2>/dev/null)
+        if [ ! -z "$pid" ]; then
+            echo -e "${YELLOW}发现端口 $port 被进程 $pid 占用，强制释放...${PLAIN}"
+            kill -9 "$pid" 2>/dev/null
+        fi
+    done
 
-    # 彻底卸载冲突库
+    # 5. 彻底卸载冲突库并重新安装旗舰版三件套
+    echo -e "${YELLOW}正在更新 Python 环境依赖...${PLAIN}"
     python3 -m pip uninstall -y python-socketio eventlet python-engineio websockets flask 2>/dev/null
-    # 安装旗舰版所需三件套
-    python3 -m pip install flask websockets psutil --break-system-packages --user >/dev/null 2>&1
+    python3 -m pip install --upgrade flask websockets psutil --break-system-packages 2>/dev/null
+    
+    # 6. 确保 lsof 已安装
+    if ! command -v lsof &> /dev/null; then
+        apt-get update && apt-get install -y lsof >/dev/null 2>&1
+    fi
+    
+    echo -e "${GREEN}>>> 物理大扫除完成，环境已就绪。${PLAIN}"
 }
 
 # --- [ 1. 凭据与配置详情看板 ] ---
