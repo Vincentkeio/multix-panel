@@ -312,21 +312,32 @@ class ServantCore:
         except:
             return {"hash": "error", "inbounds": []}
 
-    def get_metrics(self):
-        """仪表盘基础指标采集"""
-        net_1 = psutil.net_io_counters()
+def get_metrics(self):
+        """旗舰版增强指标采集"""
+        # 1. 采集瞬时流量（用于计算实时 M/s）
+        n1 = psutil.net_io_counters()
         time.sleep(0.5)
-        net_2 = psutil.net_io_counters()
+        n2 = psutil.net_io_counters()
+        
+        # 2. 计算累计流量 (单位：GB)
+        # bytes / 1024^3 = GB
+        t_up = round(n2.bytes_sent / (1024**3), 2)
+        t_down = round(n2.bytes_recv / (1024**3), 2)
+
         return {
             "cpu": int(psutil.cpu_percent()),
             "mem": int(psutil.virtual_memory().percent),
             "disk": int(psutil.disk_usage('/').percent),
-            "net_up": round((net_2.bytes_sent - net_1.bytes_sent) / 1024 / 1024, 2),
-            "net_down": round((net_2.bytes_recv - net_1.bytes_recv) / 1024 / 1024, 2),
+            # 实时速率 (M/s)
+            "net_up": round((n2.bytes_sent - n1.bytes_sent) / 1024 / 1024, 2),
+            "net_down": round((n2.bytes_recv - n1.bytes_recv) / 1024 / 1024, 2),
+            # 累计总量 (GB)
+            "total_up": t_up,
+            "total_down": t_down,
+            # 系统与软件版本
             "sys_ver": f"{platform.system()} {platform.release()}",
             "sb_ver": subprocess.getoutput(f"{SB_PATH} version | head -n 1 | awk '{{print $3}}'") or "N/A"
         }
-
     async def main_loop(self):
         while True:
             try:
