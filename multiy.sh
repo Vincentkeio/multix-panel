@@ -189,19 +189,48 @@ async def ws_handler(ws):
         async for msg in ws:
             data = json.loads(msg)
             if data.get('token') != TOKEN: continue
+            
             if data.get('type') in ['heartbeat', 'report_full']:
                 if sid not in AGENTS:
-                    AGENTS[sid] = {"ip": addr, "status": "online", "is_dirty": False, "metrics": {"cpu":0,"mem":0,"net_up":0,"net_down":0}}
+                    # 初始化所有新字段的默认值
+                    AGENTS[sid] = {
+                        "ip": addr, "status": "online", "is_dirty": False,
+                        "physical_nodes": [], "draft_nodes": [], 
+                        "metrics": {
+                            "cpu":0, "mem":0, "disk":0,
+                            "net_up":0, "net_down":0,
+                            "total_up":0, "total_down":0,
+                            "sys_ver":"N/A", "sb_ver":"N/A"
+                        }
+                    }
+                
+                # 核心：将 Agent 发来的全量指标存入 AGENTS
+                m = data.get('metrics', {})
                 AGENTS[sid].update({
-                    "hostname": data.get('hostname', 'Node'),
-                    "metrics": data.get('metrics', {}),
-                    "last_seen": time.time(), "status": "online"
+                    "hostname": data.get('hostname', '未知节点'),
+                    "metrics": {
+                        "cpu": m.get('cpu', 0),
+                        "mem": m.get('mem', 0),
+                        "disk": m.get('disk', 0),
+                        "net_up": m.get('net_up', 0),
+                        "net_down": m.get('net_down', 0),
+                        "total_up": m.get('total_up', 0),
+                        "total_down": m.get('total_down', 0),
+                        "sys_ver": m.get('sys_ver', 'N/A'),
+                        "sb_ver": m.get('sb_ver', 'N/A')
+                    },
+                    "last_seen": time.time(),
+                    "status": "online"
                 })
+
+                if data.get('type') == 'report_full':
+                    AGENTS[sid]["physical_nodes"] = data.get('inbounds', [])
+                    if not AGENTS[sid]["is_dirty"]:
+                        AGENTS[sid]["draft_nodes"] = data.get('inbounds', [])
     except: pass
     finally:
         if sid in AGENTS: AGENTS[sid]["status"] = "offline"
         WS_CLIENTS.pop(sid, None)
-
 @app.route('/')
 def index():
     if not session.get('logged'): return redirect('/login')
