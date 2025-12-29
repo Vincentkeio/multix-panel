@@ -250,7 +250,78 @@
                         this.isRefreshing = false;
                     }
                 },
+// 在 Alpine.data('dashboard', () => ({ ... })) 内部添加：
 
+// 1. 初始化新变量
+adminModal: false,
+newAdminPass: '',
+
+// 2. 核心：计算属性（实现前端实时排序）
+// 只要 agents 数据发生变化，界面就会根据 order 自动重新排队
+get sortedAgents() {
+    return Object.fromEntries(
+        Object.entries(this.agents).sort(([,a], [,b]) => {
+            return (parseInt(a.order) || 0) - (parseInt(b.order) || 0);
+        })
+    );
+},
+
+// 3. 核心：增加虚拟小鸡
+async addVirtualNode() {
+    try {
+        const res = await fetch('/api/add_demo', { method: 'POST' });
+        if (res.ok) {
+            // 成功后立即刷新状态，让新小鸡出现在列表里
+            await this.fetchState(); 
+        }
+    } catch (e) {
+        console.error("添加失败:", e);
+    }
+},
+
+// 4. 核心：管理节点（重命名、排序、删除）
+async manageAgent(sid, action, value) {
+    try {
+        await fetch('/api/manage_agent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                sid: sid,
+                action: action,
+                name: action === 'rename' ? value : null,
+                order: action === 'reorder' ? parseInt(value) : null
+            })
+        });
+        
+        // 如果是删除操作，需要刷新整个状态
+        if (action === 'delete') {
+            await this.fetchState();
+        }
+    } catch (e) {
+        console.error("管理操作失败:", e);
+    }
+},
+
+// 5. 核心：账户设置修改
+async updateAdmin() {
+    if (!this.config.user) return alert("用户名不能为空");
+    try {
+        const res = await fetch('/api/update_admin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user: this.config.user,
+                pass: this.newAdminPass
+            })
+        });
+        if (res.ok) {
+            alert("系统配置已同步并持久化！");
+            this.newAdminPass = ''; // 清空密码框
+        }
+    } catch (e) {
+        alert("保存失败，请检查网络");
+    }
+},
                 get sortedAgents() {
                     return Object.entries(this.agents)
                         .sort((a, b) => (a[1].order || 0) - (b[1].order || 0))
