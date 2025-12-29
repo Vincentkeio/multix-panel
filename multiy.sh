@@ -1,17 +1,16 @@
 #!/bin/bash
 
 # ==============================================================================
-# Multiy Pro Script V73.5 (CREDENTIAL CENTER & SYSTEMD FIX)
-# Fix 1: [Systemd] Forced service installation for Debian 12 compatibility.
-# Fix 2: [UI] Re-added Credential & Config Center for instant management.
-# Fix 3: [Net] Enhanced Dual-Stack WSS with custom port logic.
-# Fix 4: [Protocol] Forced IPv6 option for NAT Agents.
+# Multiy Pro Script V73.6 (CREDENTIAL CENTER & SYSTEMD FIX)
+# Fix 1: [Systemd] Guaranteed service loading for Debian 12.
+# Fix 2: [UI] Full Credential Center (Option 5) for instant management.
+# Fix 3: [Net] Explicit Dual-Stack binding (v6only=0) for Master/Agent.
+# Fix 4: [Protocol] Forced IPv6 option for NAT VPS during Agent setup.
 # ==============================================================================
 
 export M_ROOT="/opt/multiy_mvp"
-export AGENT_CONF="${M_ROOT}/agent/.agent.conf"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V73.5"
+SH_VER="V73.6"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 基础工具 ] ---
@@ -25,7 +24,7 @@ pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s 
 
 # --- [ 1. 主控安装 ] ---
 install_master() {
-    echo -e "${SKYBLUE}>>> 部署 Multiy 主控 (V73.5)${PLAIN}"
+    echo -e "${SKYBLUE}>>> 部署 Multiy 主控 (V73.6)${PLAIN}"
     get_public_ips
     apt-get update && apt-get install -y python3 python3-pip curl wget ntpdate openssl
     pip3 install "Flask<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1
@@ -43,7 +42,7 @@ install_master() {
 
     _write_master_app_py
 
-    # 路径修复：向两个标准路径写入
+    # 路径修复：向两个标准路径写入服务文件
     SERVICE_CONF="[Unit]
 Description=Multiy Master Server
 After=network.target
@@ -100,7 +99,7 @@ body{background:var(--bg);color:#f8fafc;font-family:sans-serif;margin:0;padding:
 .glass{background:var(--glass);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);border-radius:24px}
 .header{display:flex;justify-content:space-between;max-width:1100px;margin:0 auto 40px}
 .card{padding:25px;border-left:4px solid var(--blue);transition:0.3s;margin-bottom:20px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px;max-width:1100px;margin:0 auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;max-width:1100px;margin:0 auto}
 .btn-m{width:100%;background:var(--blue);color:#fff;border:none;padding:12px;border-radius:12px;font-weight:bold;cursor:pointer;margin-top:15px}
 .badge{background:rgba(59,130,246,0.15);color:var(--blue);padding:6px 14px;border-radius:30px;font-size:11px}
 </style>
@@ -125,7 +124,7 @@ body{background:var(--bg);color:#f8fafc;font-family:sans-serif;margin:0;padding:
                 <div style="background:#0f172a;padding:10px;border-radius:12px;flex:1;text-align:center"><small style="display:block;font-size:9px">CPU</small><b x-text="a.stats.cpu+'%'"></b></div>
                 <div style="background:#0f172a;padding:10px;border-radius:12px;flex:1;text-align:center"><small style="display:block;font-size:9px">MEM</small><b x-text="a.stats.mem+'%'"></b></div>
             </div>
-            <button class="btn-m" @click="alert('Module building...')">MANAGE NODE</button>
+            <button class="btn-m" @click="alert('Manage Sing-box Module Loading...')">MANAGE NODE</button>
         </div>
     </template>
 </div>
@@ -147,9 +146,9 @@ def login():
     return """<body style="background:#020617;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif">
     <form method="post" style="background:rgba(255,255,255,0.03);backdrop-filter:blur(20px);padding:50px;border-radius:30px;border:1px solid rgba(255,255,255,0.1);width:320px;text-align:center">
         <h2 style="color:#3b82f6;font-weight:900">Multiy <span style="color:#fff">Login</span></h2>
-        <input name="u" placeholder="Admin" style="width:100%;padding:14px;margin:10px 0;background:rgba(0,0,0,0.4);border:1px solid #333;color:#fff;border-radius:12px">
-        <input name="p" type="password" placeholder="Pass" style="width:100%;padding:14px;margin:12px 0;background:rgba(0,0,0,0.4);border:1px solid #333;color:#fff;border-radius:12px">
-        <button style="width:100%;padding:15px;background:#3b82f6;color:#fff;border:none;border-radius:12px;font-weight:bold;cursor:pointer;margin-top:20px">ENTER SYSTEM</button>
+        <input name="u" placeholder="Admin Username" style="width:100%;padding:14px;margin:12px 0;background:rgba(0,0,0,0.4);border:1px solid #333;color:#fff;border-radius:12px">
+        <input name="p" type="password" placeholder="Password" style="width:100%;padding:14px;margin:12px 0;background:rgba(0,0,0,0.4);border:1px solid #333;color:#fff;border-radius:12px">
+        <button style="width:100%;padding:15px;background:#3b82f6;color:#fff;border:none;border-radius:12px;font-weight:bold;cursor:pointer;margin-top:20px">ACCESS PANEL</button>
     </form></body>"""
 
 @app.route('/api/state')
@@ -190,15 +189,15 @@ EOF
 
 # --- [ 2. 被控安装 ] ---
 install_agent() {
-    echo -e "${SKYBLUE}>>> 部署 Multiy 被控 (V73.5)${PLAIN}"
+    echo -e "${SKYBLUE}>>> 部署 Multiy 被控 (V73.6)${PLAIN}"
     mkdir -p $M_ROOT/agent
     read -p "主控域名/IP: " M_HOST
     read -p "通信端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
     read -p "主控 Token: " M_TOKEN
-    echo -e "连接偏好：1. 强制 IPv6 (NAT) | 2. 强制 IPv4 | 3. 自动"
+    echo -e "连接偏好：1. 强制 IPv6 (适合NAT) | 2. 强制 IPv4 | 3. 自动探测"
     read -p "选择 [1-3]: " NET_PREF
 
-    # 安装 Sing-box
+    # 安装 Sing-box 二进制
     ARCH=$(uname -m); [[ "$ARCH" == "x86_64" ]] && SB_ARCH="amd64" || SB_ARCH="arm64"
     wget -qO /tmp/sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v1.8.0/sing-box-1.8.0-linux-${SB_ARCH}.tar.gz"
     tar -zxf /tmp/sb.tar.gz -C /tmp && mv /tmp/sing-box-*/sing-box /usr/local/bin/
@@ -233,41 +232,43 @@ EOF
 [Unit]
 Description=Multiy Agent
 After=network.target
+
 [Service]
 ExecStart=/usr/bin/python3 $M_ROOT/agent/agent.py
 Restart=always
 WorkingDirectory=$M_ROOT/agent
 Environment=PYTHONUNBUFFERED=1
+
 [Install]
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multiy-agent; systemctl restart multiy-agent
-    echo -e "${GREEN}✅ 被控部署完成！使用菜单 3 查看连通日志。${PLAIN}"
+    echo -e "${GREEN}✅ 被控部署完成！使用菜单 3 查看状态。${PLAIN}"
     pause_back
 }
 
-# --- [ 5. 凭据与配置中心 ] ---
+# --- [ 5. 凭据与配置中心 (即时查看/修改) ] ---
 credential_center() {
     clear; echo -e "${SKYBLUE}🔐 Multiy 凭据与配置中心${PLAIN}"
     if [ -f $M_ROOT/.env ]; then
         source $M_ROOT/.env
         get_public_ips
         echo -e "------------------------------------------------"
-        echo -e "${YELLOW}[访问信息]${PLAIN}"
-        echo -e "IPv4 地址: ${GREEN}http://${IPV4}:${M_PORT}${PLAIN}"
-        echo -e "IPv6 地址: ${GREEN}http://[${IPV6}]:${M_PORT}${PLAIN}"
-        echo -e "管理用户: ${GREEN}${M_USER}${PLAIN}"
-        echo -e "管理密码: ${GREEN}${M_PASS}${PLAIN}"
+        echo -e "${YELLOW}[面板访问信息]${PLAIN}"
+        echo -e "IPv4 URL: ${GREEN}http://${IPV4}:${M_PORT}${PLAIN}"
+        echo -e "IPv6 URL: ${GREEN}http://[${IPV6}]:${M_PORT}${PLAIN}"
+        echo -e "登录用户: ${GREEN}${M_USER}${PLAIN}"
+        echo -e "登录密码: ${GREEN}${M_PASS}${PLAIN}"
         echo -e "------------------------------------------------"
-        echo -e "${YELLOW}[通信配置]${PLAIN}"
-        echo -e "通信端口: ${SKYBLUE}${WS_PORT}${PLAIN}"
-        echo -e "主控令牌: ${YELLOW}${M_TOKEN}${PLAIN}"
+        echo -e "${YELLOW}[Agent 通信配置]${PLAIN}"
+        echo -e "WS 端口: ${SKYBLUE}${WS_PORT}${PLAIN}"
+        echo -e "Master Token: ${YELLOW}${M_TOKEN}${PLAIN}"
         echo -e "------------------------------------------------"
     else
-        echo -e "${RED}[错误]${PLAIN} 未检测到主控配置文件"
+        echo -e "${RED}[错误]${PLAIN} 未找到主控配置文件"
     fi
-    echo " 1. 修改 访问/通信端口"
-    echo " 2. 修改 管理员账号/密码"
+    echo " 1. 修改 访问端口 / 通信端口"
+    echo " 2. 修改 管理员用户名 / 密码"
     echo " 3. 修改 通信令牌 (Token)"
     echo " 0. 返回"
     read -p "选择: " opt
@@ -277,7 +278,7 @@ credential_center() {
             read -p "新通信端口 [$WS_PORT]: " n_wp; WS_PORT=${n_wp:-$WS_PORT}
             sed -i "s/M_PORT='.*'/M_PORT='$M_PORT'/" $M_ROOT/.env
             sed -i "s/WS_PORT='.*'/WS_PORT='$WS_PORT'/" $M_ROOT/.env
-            systemctl restart multiy-master; echo "已同步并重启服务"; credential_center ;;
+            systemctl restart multiy-master; echo "配置已同步并重启"; credential_center ;;
         2)
             read -p "新用户名 [$M_USER]: " n_mu; M_USER=${n_mu:-$M_USER}
             read -p "新密码 [$M_PASS]: " n_pa; M_PASS=${n_pa:-$M_PASS}
@@ -285,9 +286,9 @@ credential_center() {
             sed -i "s/M_PASS='.*'/M_PASS='$M_PASS'/" $M_ROOT/.env
             systemctl restart multiy-master; echo "已更新"; credential_center ;;
         3)
-            read -p "新Token (留空随机): " n_tk; n_tk=${n_tk:-$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)}
+            read -p "新Token (留空随机生成): " n_tk; n_tk=${n_tk:-$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)}
             sed -i "s/M_TOKEN='.*'/M_TOKEN='$n_tk'/" $M_ROOT/.env
-            systemctl restart multiy-master; echo "已更新，被控需同步重装"; credential_center ;;
+            systemctl restart multiy-master; echo "已更新，被控端需重装同步"; credential_center ;;
         0) main_menu ;;
     esac
 }
@@ -308,13 +309,14 @@ status_monitor() {
     esac; pause_back
 }
 
+# --- [ 9. 主菜单 ] ---
 main_menu() {
     clear; echo -e "${SKYBLUE}🛰️ Multiy Pro ${SH_VER}${PLAIN}"
-    echo " 1. 安装/更新 Multiy 主控 (修复 Systemd)"
-    echo " 2. 安装/更新 Multiy 被控 (NAT 优先)"
+    echo " 1. 安装/更新 Multiy 主控 (强制修正路径)"
+    echo " 2. 安装/更新 Multiy 被控 (NAT 优化)"
     echo " 3. 连接监控中心 (状态 & 路径)"
     echo " 4. 深度清理组件"
-    echo " 5. 凭据与配置中心 (修改/查看)"
+    echo " 5. 凭据与配置中心 (查看/修改)"
     echo " 0. 退出"
     read -p "选择: " c
     case $c in
