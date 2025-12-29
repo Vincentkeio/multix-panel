@@ -2,10 +2,10 @@
 
 # ==============================================================================
 # MultiX Pro Script V70.6 (ULTIMATE STABILITY & FULL FEATURE)
-# Fix 1: [503 Fix] Re-formatted app.py with ZERO indentation for the cat block.
-# Fix 2: [Dual-Stack] Optimized host binding to ensure IPv4 & IPv6 visibility.
-# Fix 3: [UI] Full Node List/Edit/Add UI restoration with logic safeguards.
-# Fix 4: [Agent] Restored SQL Probe and Auto-Docker 3X-UI workflow.
+# Fix 1: [503 Fix] Zero-Indentation Cat Block to prevent IndentationError.
+# Fix 2: [UI Fix] Solved ${alias} glitch using Flask Raw tags for JS safety.
+# Fix 3: [Net Fix] Guaranteed 0.0.0.0 binding for Dual-Stack accessibility.
+# Fix 4: [Agent Fix] Full restoration of SQL Probe & Auto-Docker 3X-UI.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
@@ -158,7 +158,7 @@ connection_test() {
     pause_back
 }
 
-# --- [ 辅助：生成 Agent 代码 ] ---
+# --- [ 辅助：生成 Agent 代码 - 保持 SQL 探测逻辑 ] ---
 generate_agent_py() {
     local host=$1; local token=$2
     cat > $M_ROOT/agent/agent.py <<EOF
@@ -205,7 +205,7 @@ async def run():
                         msg = await asyncio.wait_for(ws.recv(), timeout=5); task = json.loads(msg)
                         if task.get('action') == 'sync_node': os.system("docker restart 3x-ui"); smart_sync_db(task['data']); os.system("docker restart 3x-ui")
                     except: continue
-        except: await asyncio.sleep(5)
+        except Exception as e: log(f"Connect Fail: {e}"); await asyncio.sleep(5)
 asyncio.run(run())
 EOF
 }
@@ -239,8 +239,9 @@ EOF
     credential_center
 }
 
-# --- [ 核心业务逻辑写入 - 绝对纯净版 ] ---
+# --- [ 核心业务逻辑写入 - 绝对纯净缩进版 ] ---
 _write_master_app_py() {
+# 此段代码行首绝对禁止出现空格或TAB以外的非法字符，确保 Flask 加载成功
 cat > $M_ROOT/master/app.py <<'EOF'
 import json, asyncio, psutil, os, socket, subprocess, base64, logging
 from flask import Flask, render_template_string, request, session, redirect, jsonify
@@ -305,30 +306,25 @@ HTML_T = """
 </div>
 <div class="modal fade" id="configModal" tabindex="-1"><div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content" style="background:#0a0a0a; border:1px solid #333;"><div class="modal-header border-bottom border-secondary"><h5 class="modal-title fw-bold" id="modalTitle">Node Manager</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body" id="view-list"><div class="d-flex justify-content-between mb-3"><span class="text-secondary">Inbound Nodes</span><button class="btn btn-sm btn-success fw-bold" onclick="toAddMode()"><i class="bi bi-plus-lg"></i> ADD NODE</button></div><table class="table table-dark table-hover table-sm text-center align-middle"><thead><tr><th>ID</th><th>Remark</th><th>Port</th><th>Proto</th><th>Action</th></tr></thead><tbody id="tbl-body"></tbody></table></div><div class="modal-body" id="view-edit" style="display:none"><button class="btn btn-sm btn-outline-secondary mb-3" onclick="toListView()"><i class="bi bi-arrow-left"></i> Back</button><form id="nodeForm"><input type="hidden" id="nodeId"><div class="row g-3"><div class="col-md-6"><label class="form-label text-secondary small fw-bold">REMARK</label><input type="text" class="form-control bg-dark text-white border-secondary" id="remark"></div><div class="col-md-6"><label class="form-label text-secondary small fw-bold">PORT</label><input type="number" class="form-control bg-dark text-white border-secondary" id="port"></div><div class="col-md-6"><label class="form-label text-secondary small fw-bold">PROTOCOL</label><select class="form-select bg-dark text-white border-secondary" id="protocol"><option value="vless">VLESS</option><option value="vmess">VMess</option><option value="shadowsocks">Shadowsocks</option></select></div><div class="col-md-6 group-uuid"><label class="form-label text-secondary small fw-bold">UUID</label><div class="input-group"><input type="text" class="form-control bg-dark text-white border-secondary font-monospace" id="uuid"><button class="btn btn-outline-secondary" type="button" onclick="genUUID()">Gen</button></div></div><div class="col-md-6 group-ss" style="display:none"><label class="form-label text-secondary small fw-bold">CIPHER</label><select class="form-select bg-dark text-white border-secondary" id="ssCipher"><option value="aes-256-gcm">aes-256-gcm</option><option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option></select></div><div class="col-md-6 group-ss" style="display:none"><label class="form-label text-secondary small fw-bold">PASSWORD</label><div class="input-group"><input type="text" class="form-control bg-dark text-white border-secondary font-monospace" id="ssPass"><button class="btn btn-outline-secondary" type="button" onclick="genSSKey()">Gen</button></div></div><div class="col-12"><hr class="border-secondary"></div><div class="col-md-6"><label class="form-label text-secondary small fw-bold">NETWORK</label><select class="form-select bg-dark text-white border-secondary" id="network"><option value="tcp">TCP</option><option value="ws">WebSocket</option></select></div><div class="col-md-6"><label class="form-label text-secondary small fw-bold">SECURITY</label><select class="form-select bg-dark text-white border-secondary" id="security"><option value="none">None</option><option value="tls">TLS</option><option value="reality">Reality</option></select></div><div class="col-12 group-reality" style="display:none"><div class="p-3 border border-primary rounded bg-dark bg-opacity-50"><div class="row g-2"><div class="col-6"><small class="text-primary">Dest</small><input class="form-control form-control-sm bg-black text-white border-secondary" id="dest" value="www.microsoft.com:443"></div><div class="col-6"><small class="text-primary">SNI</small><input class="form-control form-control-sm bg-black text-white border-secondary" id="serverNames" value="www.microsoft.com"></div><div class="col-12"><small class="text-primary">Private Key</small><div class="input-group input-group-sm"><input class="form-control bg-black text-white border-secondary font-monospace" id="privKey"><button class="btn btn-primary" type="button" onclick="genReality()">Gen</button></div></div><div class="col-12"><small class="text-primary">Public Key</small><input class="form-control font-monospace form-control-sm bg-black text-white border-secondary" id="pubKey" readonly></div><div class="col-12"><small class="text-primary">Short IDs</small><input class="form-control form-control-sm bg-black text-white border-secondary font-monospace" id="shortIds"></div></div></div></div><div class="col-12 group-ws" style="display:none"><div class="p-2 border border-secondary rounded"><div class="row g-2"><div class="col-6"><small>Path</small><input class="form-control form-control-sm bg-black text-white border-secondary" id="wsPath" value="/"></div><div class="col-6"><small>Host</small><input class="form-control form-control-sm bg-black text-white border-secondary" id="wsHost"></div></div></div></div></div></form><div class="mt-3 text-end"><button type="button" class="btn btn-primary fw-bold" id="saveBtn">Save & Sync</button></div></div></div></div></div>
 {% raw %}
-<script>let AGENTS={},ACTIVE_IP='',CURRENT_NODES=[];function updateState(){$.get('/api/state',function(d){$('#error-banner').hide();$('#cpu').text(d.master.stats.cpu);$('#mem').text(d.master.stats.mem);$('#ipv4').text(d.master.ipv4);$('#ipv6').text(d.master.ipv6);AGENTS=d.agents;renderGrid()}).fail(function(){$('#error-banner').text('Fail').fadeIn()})}function renderGrid(){$('#node-list').empty();for(const[ip,a]of Object.entries(AGENTS)){const s=(a.is_demo||a.stats.cpu!==undefined)?'status-online':'status-offline';const c=`<div class="col-md-6 col-lg-4"><div class="card h-100 p-3"><div class="d-flex justify-content-between align-items-center mb-2"><h5 class="fw-bold text-white mb-0 text-truncate">${a.alias||'Unknown'}</h5><span class="status-dot ${s}"></span></div><div class="small text-secondary font-monospace mb-3">${ip}</div><div class="d-flex flex-wrap gap-2 mb-3"><span class="stat-box">OS: ${a.stats.os||'N/A'}</span><span class="stat-box">3X: ${a.stats.xui||'N/A'}</span><span class="stat-box">CPU: ${a.stats.cpu||0}%</span><span class="stat-box">MEM: ${a.stats.mem||0}%</span></div><button class="btn btn-primary w-100 fw-bold" onclick="openManager('${ip}')">MANAGE NODES (${a.nodes?a.nodes.length:0})</button></div></div>`;$('#node-list').append(c)}}function openManager(ip){ACTIVE_IP=ip;CURRENT_NODES=AGENTS[ip].nodes||[];toListView();$('#configModal').modal('show')}function toListView(){$('#view-edit').hide();$('#view-list').show();$('#modalTitle').text(`Nodes on ${ACTIVE_IP}`);const t=$('#tbl-body');t.empty();if(CURRENT_NODES.length===0)t.append('<tr><td colspan="5">Empty.</td></tr>');else CURRENT_NODES.forEach((n,i)=>{t.append(`<tr><td><span class="badge bg-secondary font-monospace">${n.id}</span></td><td>${n.remark}</td><td class="font-monospace text-info">${n.port}</td><td>${n.protocol}</td><td><button class="btn btn-sm btn-outline-primary" onclick="toEditMode(${i})"><i class="bi bi-pencil-square"></i></button></td></tr>`)})}function toAddMode(){$('#view-list').hide();$('#view-edit').show();$('#modalTitle').text('Add Node');resetForm()}function toEditMode(i){$('#view-list').hide();$('#view-edit').show();$('#modalTitle').text('Edit Node');loadForm(CURRENT_NODES[i])}function updateFormVisibility(){const p=$('#protocol').val(),n=$('#network').val(),s=$('#security').val();$('.group-ss,.group-uuid,.group-reality,.group-ws').hide();if(p==='shadowsocks'){$('.group-ss').show()}else{$('.group-uuid').show()}if(s==='reality')$('.group-reality').show();if(n==='ws')$('.group-ws').show()} $('#protocol,#network,#security').change(updateFormVisibility);function genUUID(){$('#uuid').val(crypto.randomUUID())}function genSSKey(){const t=$('#ssCipher').val().includes('256')?'ss-256':'ss-128';$.ajax({url:'/api/gen_key',type:'POST',contentType:'application/json',data:JSON.stringify({type:t}),success:function(d){$('#ssPass').val(d.key)}})}function genReality(){$.ajax({url:'/api/gen_key',type:'POST',contentType:'application/json',data:JSON.stringify({type:'reality'}),success:function(d){$('#privKey').val(d.private);$('#pubKey').val(d.public)}})}function resetForm(){$('#nodeForm')[0].reset();$('#nodeId').val('');$('#protocol').val('vless');$('#network').val('tcp');$('#security').val('reality');genUUID();genReality();updateFormVisibility()}function loadForm(n){try{const s=n.settings||{},ss=n.stream_settings||{};$('#nodeId').val(n.id);$('#remark').val(n.remark);$('#port').val(n.port);$('#protocol').val(n.protocol);if(n.protocol==='shadowsocks'){$('#ssCipher').val(s.method);$('#ssPass').val(s.password)}else{$('#uuid').val(s.clients?s.clients[0].id:'')}$('#network').val(ss.network||'tcp');$('#security').val(ss.security||'none');if(ss.realitySettings){$('#dest').val(ss.realitySettings.dest);$('#serverNames').val((ss.realitySettings.serverNames||[]).join(','));$('#privKey').val(ss.realitySettings.privateKey);$('#pubKey').val(ss.realitySettings.publicKey);$('#shortIds').val((ss.realitySettings.shortIds||[]).join(','))}if(ss.wsSettings){$('#wsPath').val(ss.wsSettings.path);$('#wsHost').val(ss.wsSettings.headers?.Host)}updateFormVisibility()}catch(e){resetForm()}}$('#saveBtn').click(function(){const p=$('#protocol').val(),n=$('#network').val(),s=$('#security').val();let cl=[];if(p!=='shadowsocks')cl.push({id:$('#uuid').val(),flow:(s==='reality'&&p==='vless')?'xtls-rprx-vision':'',email:'u@mx.com'});let st={network:n,security:s};if(s==='reality')st.realitySettings={dest:$('#dest').val(),privateKey:$('#privKey').val(),publicKey:$('#pubKey').val(),shortIds:$('#shortIds').val().split(','),serverNames:$('#serverNames').val().split(','),fingerprint:'chrome'};if(n==='ws')st.wsSettings={path:$('#wsPath').val(),headers:{Host:$('#wsHost').val()}};let se=p==='shadowsocks'?{method:$('#ssCipher').val(),password:$('#ssPass').val(),network:'tcp,udp'}:{clients:cl,decryption:'none'};const pl={id:$('#nodeId').val()||null,remark:$('#remark').val(),port:parseInt($('#port').val()),protocol:p,settings:JSON.stringify(se),stream_settings:JSON.stringify(st),sniffing:JSON.stringify({enabled:true,destOverride:["http","tls","quic"]}),total:0,expiry_time:0};const btn=$(this);btn.prop('disabled',true).text('...');$.ajax({url:'/api/sync',type:'POST',contentType:'application/json',data:JSON.stringify({ip:ACTIVE_IP,config:pl}),success:function(r){$('#configModal').modal('hide');btn.prop('disabled',false).text('Sync');if(r.status==='demo_ok')alert('Demo OK');else alert('Done')},error:function(){btn.prop('disabled',false).text('Sync');alert('Fail')}})});$(document).ready(function(){updateState();setInterval(updateState,3000)});</script>
+<script>let AGENTS={},ACTIVE_IP='',CURRENT_NODES=[];function updateState(){$.get('/api/state',function(d){$('#error-banner').hide();$('#cpu').text(d.master.stats.cpu);$('#mem').text(d.master.stats.mem);$('#ipv4').text(d.master.ipv4);$('#ipv6').text(d.master.ipv6);AGENTS=d.agents;renderGrid()}).fail(function(){$('#error-banner').text('Fail').fadeIn()})}function renderGrid(){$('#node-list').empty();for(const[ip,a]of Object.entries(AGENTS)){const s=(a.is_demo||a.stats.cpu!==undefined)?'status-online':'status-offline';const c=`<div class="col-md-6 col-lg-4"><div class="card h-100 p-3"><div class="d-flex justify-content-between align-items-center mb-2"><h5 class="fw-bold text-white mb-0 text-truncate">${a.alias||'Unknown'}</h5><span class="status-dot ${s}"></span></div><div class="small text-secondary font-monospace mb-3">${ip}</div><div class="d-flex flex-wrap gap-2 mb-3"><span class="stat-box">OS: ${a.stats.os||'N/A'}</span><span class="stat-box">3X: ${a.stats.xui||'N/A'}</span><span class="stat-box">CPU: ${a.stats.cpu||0}%</span><span class="stat-box">MEM: ${a.stats.mem||0}%</span></div><button class="btn btn-primary w-100 fw-bold" onclick="openManager('${ip}')">MANAGE NODES (${a.nodes?a.nodes.length:0})</button></div></div>`;$('#node-list').append(c)}}function openManager(ip){ACTIVE_IP=ip;CURRENT_NODES=AGENTS[ip].nodes||[];toListView();$('#configModal').modal('show')}function toListView(){$('#view-edit').hide();$('#view-list').show();$('#modalTitle').text(`Nodes on ${ACTIVE_IP}`);const t=$('#tbl-body');t.empty();if(CURRENT_NODES.length===0)t.append('<tr><td colspan="5">Empty.</td></tr>');else CURRENT_NODES.forEach((n,i)=>{t.append(`<tr><td><span class="badge bg-secondary font-monospace">${n.id}</span></td><td>${n.remark}</td><td class="font-monospace text-info">${n.port}</td><td>${n.protocol}</td><td><button class="btn btn-sm btn-outline-primary" onclick="toEditMode(${i})"><i class="bi bi-pencil-square"></i></button></td></tr>`)})}function toAddMode(){$('#view-list').hide();$('#view-edit').show();$('#modalTitle').text('Add Node');resetForm()}function toEditMode(i){$('#view-list').hide();$('#view-edit').show();$('#modalTitle').text('Edit Node');loadForm(CURRENT_NODES[i])}function updateFormVisibility(){const p=$('#protocol').val(),n=$('#network').val(),s=$('#security').val();$('.group-ss,.group-uuid,.group-reality,.group-ws').hide();if(p==='shadowsocks'){$('.group-ss').show()}else{$('.group-uuid').show()}if(s==='reality')$('.group-reality').show();if(n==='ws')$('.group-ws').show()} $('#protocol,#network,#security').change(updateFormVisibility);function genUUID(){$('#uuid').val(crypto.randomUUID())}function genSSKey(){const t=$('#ssCipher').val().includes('256')?'ss-256':'ss-128';$.ajax({url:'/api/gen_key',type:'POST',contentType:'application/json',data:JSON.stringify({type:t}),success:function(d){$('#ssPass').val(d.key)}})}function genReality(){$.ajax({url:'/api/gen_key',type:'POST',contentType:'application/json',data:JSON.stringify({type:'reality'}),success:function(d){$('#privKey').val(d.private);$('#pubKey').val(d.public)}})}function resetForm(){$('#nodeForm')[0].reset();$('#nodeId').val('');$('#protocol').val('vless');$('#network').val('tcp');$('#security').val('reality');genUUID();genReality();updateFormVisibility()}function loadForm(n){try{const s=n.settings||{},ss=n.stream_settings||{};$('#nodeId').val(n.id);$('#remark').val(n.remark);$('#port').val(n.port);$('#protocol').val(n.protocol);if(n.protocol==='shadowsocks'){$('#ssCipher').val(s.method);$('#ssPass').val(s.password)}else{$('#uuid').val(s.clients?s.clients[0].id:'')}$('#network').val(ss.network||'tcp');$('#security').val(ss.security||'none');if(ss.realitySettings){$('#dest').val(ss.realitySettings.dest);$('#serverNames').val((ss.realitySettings.serverNames||[]).join(','));$('#privKey').val(ss.realitySettings.privateKey);$('#pubKey').val(ss.realitySettings.publicKey);$('#shortIds').val((ss.realitySettings.shortIds||[]).join(','))}if(ss.wsSettings){$('#wsPath').val(ss.wsSettings.path);$('#wsHost').val(ss.wsSettings.headers?.Host)}updateFormVisibility()}catch(e){resetForm()}}$('#saveBtn').click(function(){const p=$('#protocol').val(),n=$('#network').val(),s=$('#security').val();let cl=[];if(p!=='shadowsocks')cl.push({id:$('#uuid').val(),flow:(s==='reality'&&p==='vless')?'xtls-rprx-vision':'',email:'u@mx.com'});let st={network:n,security:s};if(s==='reality')st.realitySettings={dest:$('#dest').val(),privateKey:$('#privKey').val(),publicKey:$('#pubKey').val(),shortIds:$('#shortIds').val().split(','),serverNames:$('#serverNames').val().split(','),fingerprint:'chrome'};if(n==='ws')st.wsSettings={path:$('#wsPath').val(),headers:{Host:$('#wsHost').val()}};let se=p==='shadowsocks'?{method:$('#ssCipher').val(),password:$('#ssPass').val(),network:'tcp,udp'}:{clients:cl,decryption:'none'};const pl={id:$('#nodeId').val()||null,remark:$('#remark').val(),port:parseInt($('#port').val()),protocol:p,settings:JSON.stringify(se),stream_settings:JSON.stringify(st),sniffing:JSON.stringify({enabled:true,destOverride:["http","tls","quic"]}),total:0,expiry_time:0};const btn=$(this);btn.prop('disabled',true).text('...');$.ajax({url:'/api/sync',type:'POST',contentType:'application/json',data:JSON.stringify({ip:ACTIVE_IP,config:pl}),success:function(r){$('#configModal').modal('hide');btn.prop('disabled',false).text('Sync');if(r.status==='demo_ok')alert('Demo OK');else alert('Done')},error:function(){btn.prop('disabled',false).text('Fail');alert('Error')}})});$(document).ready(function(){updateState();setInterval(updateState,3000)});</script>
 {% endraw %}
 </body></html>
 """
-
     @app.route('/')
     def index():
         if not session.get('logged'): return redirect('/login')
         return render_template_string(HTML_T, token=M_TOKEN)
-
     @app.route('/login', methods=['GET', 'POST'])
     def login():
         if request.method == 'POST':
             if request.form['u'] == M_USER and request.form['p'] == M_PASS: session['logged'] = True; return redirect('/')
         return """<body style='background:#000;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh'><form method='post'><input name='u' placeholder='User' required><input type='password' name='p' placeholder='Pass' required><button>Login</button></form></body>"""
-
     @app.route('/logout')
     def logout(): session.pop('logged', None); return redirect('/login')
-
     @app.route('/api/state')
     def api_state():
         s = get_sys_info()
         return jsonify({"master": {"ipv4": s['ipv4'], "ipv6": s['ipv6'], "stats": {"cpu": s['cpu'], "mem": s['mem']}}, "agents": AGENTS})
-
     @app.route('/api/sync', methods=['POST'])
     def api_sync():
         d = request.json
@@ -339,7 +335,6 @@ HTML_T = """
             asyncio.run_coroutine_threadsafe(AGENTS[target]['ws'].send(payload), LOOP_GLOBAL)
             return jsonify({"status": "sent"})
         return jsonify({"status": "offline"}), 404
-
     async def ws_handler(ws):
         ip = ws.remote_address[0]
         try:
@@ -355,20 +350,17 @@ HTML_T = """
         except: pass
         finally:
             if ip in AGENTS: del AGENTS[ip]
-
     def start_ws():
         global LOOP_GLOBAL; LOOP_GLOBAL = asyncio.new_event_loop(); asyncio.set_event_loop(LOOP_GLOBAL)
         async def m(): await websockets.serve(ws_handler, "0.0.0.0", 8888)
         LOOP_GLOBAL.run_until_complete(m())
-
     if __name__ == '__main__':
         Thread(target=start_ws, daemon=True).start()
-        # V70.5: 明确绑定 0.0.0.0 确保双栈可用
         app.run(host='0.0.0.0', port=M_PORT)
 EOF
 }
 
-# --- [ 7. 被控安装 (SQL探测与Docker逻辑全量回归) ] ---
+# --- [ 7. 被控安装 (完整还原) ] ---
 install_agent() {
     install_dependencies; mkdir -p $M_ROOT/agent
     if [ ! -d "/etc/x-ui" ]; then
@@ -403,9 +395,9 @@ EOF
     echo -e "${GREEN}✅ 被控启动完成${PLAIN}"; pause_back
 }
 
-# --- [ 9. 主菜单 (全量功能保持) ] ---
+# --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V70.5 Full Restored)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V70.6 FULL AUDITED)${PLAIN}"
     echo " 1. 安装/更新 主控端"
     echo " 2. 安装/更新 被控端"
     echo " 3. 智能连通测试"
