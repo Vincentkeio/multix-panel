@@ -60,148 +60,48 @@ credential_center() {
 }
 
 # --- [ 模块：主控端 ] ---
+# [Module: Master Core - Fix Input]
 install_master() {
-    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 主控 (物理双监听版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 主控 (Token 交互修复版)${PLAIN}"
+    
+    # 基础环境检查与安装
     apt-get update && apt-get install -y python3 python3-pip curl wget openssl ntpdate >/dev/null 2>&1
     pip3 install "Flask<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1
     
     mkdir -p "$M_ROOT/master"
     openssl req -x509 -newkey rsa:2048 -keyout "$M_ROOT/master/key.pem" -out "$M_ROOT/master/cert.pem" -days 3650 -nodes -subj "/CN=Multiy" >/dev/null 2>&1
 
-    read -p "面板端口 [7575]: " M_PORT; M_PORT=${M_PORT:-7575}
-    read -p "通信端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
-    read -p "管理用户 [admin]: " M_USER; M_USER=${M_USER:-admin}
-    read -p "管理密码 [admin]: " M_PASS; M_PASS=${M_PASS:-admin}
+    # 获取用户自定义参数
+    read -p "1. 面板访问端口 [7575]: " M_PORT; M_PORT=${M_PORT:-7575}
+    read -p "2. 通信监听端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
+    read -p "3. 管理用户 [admin]: " M_USER; M_USER=${M_USER:-admin}
+    read -p "4. 管理密码 [admin]: " M_PASS; M_PASS=${M_PASS:-admin}
     
-    # Token 交互逻辑优化
+    # --- Token 自定义逻辑 (修复点) ---
     DEFAULT_TK=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-    echo -e "系统建议 Token: ${YELLOW}${DEFAULT_TK}${PLAIN}"
-    read -p "请输入自定义 Token (直接回车使用建议值): " IN_TOKEN
-    M_TOKEN=${IN_TOKEN:-$DEFAULT_TK}
+    echo -e "------------------------------------------------"
+    echo -e "系统生成的建议 Token: ${YELLOW}${DEFAULT_TK}${PLAIN}"
+    echo -e "直接回车将使用上述建议值，或手动输入你自定义的 Token。"
+    # 使用 -r 确保特殊字符不转义，使用 -p 强制等待
+    read -p "请输入自定义 Token: " IN_TOKEN
     
-    # 强制写入并同步配置
-    echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nWS_PORT='$WS_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > "$M_ROOT/.env"
+    M_TOKEN=${IN_TOKEN:-$DEFAULT_TK}
+    echo -e "------------------------------------------------"
+    echo -e "最终确定的 Token 为: ${GREEN}${M_TOKEN}${PLAIN}"
+    # --------------------------------
 
-    # 关键：彻底杀掉旧进程，防止 Token 缓存
+    # 保存配置并清理旧进程
+    echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nWS_PORT='$WS_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > "$M_ROOT/.env"
     pkill -9 -f "master/app.py" >/dev/null 2>&1
 
+    # 生成后端文件并启动服务
     _generate_master_py
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
+    
     echo -e "${GREEN}✅ 主控端部署成功！${PLAIN}"
-    credential_center
+    # 确保这里调用后能返回菜单
+    pause_back
 }
-
-_generate_master_py() {
-cat > "$M_ROOT/master/app.py" << 'EOF'
-import json, asyncio, psutil, os, socket, websockets, ssl
-from flask import Flask, render_template_string, request, session, redirect, jsonify
-from threading import Thread
-
-def load_env():
-    c = {}
-    try:
-        with open('/opt/multiy_mvp/.env') as f:
-            for l in f:
-                if '=' in l: k,v = l.strip().split('=', 1); c[k] = v.strip("'\"")
-    except: pass
-    return c
-
-app = Flask(__name__)
-app.jinja_env.variable_start_string, app.jinja_env.variable_end_string = '[[', ']]'
-AGENTS = {}
-
-@app.route('/api/state')
-def api_state():
-    conf = load_env()
-    return jsonify({
-        "master_token": conf.get('M_TOKEN'),
-        "agents": {ip: {"stats": a['stats'], "alias": a.get('alias')} for ip,a in AGENTS.items()}
-    })
-
-@app.route('/')
-def index():
-    if not session.get('logged'): return redirect('/login')
-    conf = load_env()
-    return render_template_string("""
-    <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Multiy Pro</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <style>body{background:#020617;color:#fff}.glass{background:rgba(15,23,42,0.8);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);padding:25px;border-radius:24px}</style>
-    </head><body class="p-10" x-data="panel()" x-init="start()">
-        <div class="flex justify-between items-center mb-10">
-            <h1 class="text-3xl font-black italic text-blue-500">Multiy <span class="text-white text-2xl">Pro</span></h1>
-            <div class="flex gap-4">
-                <span class="text-xs bg-slate-900 px-4 py-2 rounded-full border border-slate-800">Token: <span x-text="tk"></span></span>
-                <a href="/logout" class="text-xs text-red-400 bg-red-900/20 px-4 py-2 rounded-full">退出</a>
-            </div>
-        </div>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <template x-for="(a, ip) in agents" :key="ip">
-                <div class="glass border-l-4 border-blue-500">
-                    <div class="flex justify-between"><b class="text-lg text-blue-100" x-text="a.alias"></b><span class="w-3 h-3 bg-green-500 rounded-full shadow-[0_0_10px_#22c55e]"></span></div>
-                    <div class="text-xs text-slate-500 my-4 font-mono" x-text="ip"></div>
-                    <div class="flex gap-6 text-sm">
-                        <div><small class="block text-slate-500 text-[10px]">CPU</small><span x-text="a.stats.cpu+'%'"></span></div>
-                        <div><small class="block text-slate-500 text-[10px]">MEM</small><span x-text="a.stats.mem+'%'"></span></div>
-                    </div>
-                </div>
-            </template>
-        </div>
-        <script>
-        function panel(){ return { agents:{}, tk:'', start(){this.fetchData();setInterval(()=>this.fetchData(),4000)}, async fetchData(){ const r=await fetch('/api/state'); const d=await r.json(); this.agents=d.agents; this.tk=d.master_token; } } }
-        </script>
-    </body></html>
-    """)
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    conf = load_env()
-    app.secret_key = conf.get('M_TOKEN')
-    if request.method == 'POST' and request.form.get('u') == conf.get('M_USER') and request.form.get('p') == conf.get('M_PASS'):
-        session['logged'] = True; return redirect('/')
-    return """<body style="background:#020617;display:flex;justify-content:center;align-items:center;height:100vh;color:#fff;font-family:sans-serif">
-    <form method="post" style="background:#0f172a;padding:50px;border-radius:30px;width:300px;border:1px solid #1e293b">
-        <h2 style="color:#3b82f6;text-align:center;font-weight:900">Multiy <span style="color:#fff">Login</span></h2>
-        <input name="u" placeholder="Username" style="width:100%;padding:12px;margin:15px 0;background:#020617;border:1px solid #334155;color:#fff;border-radius:10px">
-        <input name="p" type="password" placeholder="Password" style="width:100%;padding:12px;margin:15px 0;background:#020617;border:1px solid #334155;color:#fff;border-radius:10px">
-        <button style="width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:10px;font-weight:bold;cursor:pointer">进入控制面板</button>
-    </form></body>"""
-
-@app.route('/logout')
-def logout(): session.pop('logged', None); return redirect('/login')
-
-async def ws_handler(ws):
-    ip = ws.remote_address[0]
-    conf = load_env()
-    try:
-        auth_raw = await asyncio.wait_for(ws.recv(), timeout=10)
-        if json.loads(auth_raw).get('token') == conf.get('M_TOKEN'):
-            AGENTS[ip] = {"ws": ws, "stats": {"cpu":0,"mem":0}, "alias":"连接中..."}
-            async for msg in ws:
-                d = json.loads(msg)
-                if d.get('type') == 'heartbeat':
-                    AGENTS[ip]['stats'] = d.get('data')
-                    AGENTS[ip]['alias'] = d['data'].get('hostname', 'Node')
-    except: pass
-    finally: AGENTS.pop(ip, None)
-
-def start_ws():
-    conf = load_env()
-    loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
-    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ssl_ctx.load_cert_chain('cert.pem', 'key.pem')
-    # 物理物理双监听加固
-    v4 = websockets.serve(ws_handler, "0.0.0.0", int(conf.get('WS_PORT', 9339)), ssl=ssl_ctx)
-    v6 = websockets.serve(ws_handler, "::", int(conf.get('WS_PORT', 9339)), ssl=ssl_ctx)
-    loop.run_until_complete(asyncio.gather(v4, v6)); loop.run_forever()
-
-if __name__ == '__main__':
-    conf = load_env()
-    Thread(target=start_ws, daemon=True).start()
-    app.run(host='::', port=int(conf.get('M_PORT', 7575)))
-EOF
-}
-
 # --- [ 模块：被控端 ] ---
 install_agent() {
     clear; echo -e "${SKYBLUE}>>> 部署 Multiy 被控 (V75.0)${PLAIN}"
