@@ -27,7 +27,7 @@ _deploy_service() {
     systemctl daemon-reload; systemctl enable "${NAME}"; systemctl restart "${NAME}"
 }
 
-# --- [ 模块：主控逻辑 ] ---
+# --- [ 模块：主控逻辑生成 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import json, asyncio, psutil, os, websockets, ssl, time
@@ -126,6 +126,20 @@ if __name__ == '__main__':
 EOF
 }
 
+# --- [ 核心模块：凭据与清理 ] ---
+credential_center() {
+    clear; echo -e "${SKYBLUE}🔐 Multiy 凭据中心${PLAIN}"
+    M_TOKEN=$(get_env_val "M_TOKEN"); M_PORT=$(get_env_val "M_PORT")
+    V4=$(curl -s4m 3 api.ipify.org); V6=$(curl -s6m 3 api64.ipify.org)
+    echo -e "IPv4 URL: ${GREEN}http://$V4:$M_PORT${PLAIN}\nIPv6 URL: ${GREEN}http://[$V6]:$M_PORT${PLAIN}"
+    echo -e "Token: ${YELLOW}$M_TOKEN${PLAIN}"
+    pause_back
+}
+deep_clean() {
+    systemctl stop multiy-master multiy-agent 2>/dev/null; rm -rf "$M_ROOT" /etc/systemd/system/multiy-*
+    echo "清理完成"; pause_back
+}
+
 # --- [ 核心模块：主控安装 ] ---
 install_master() {
     clear; echo -e "${SKYBLUE}>>> 部署 Multiy 主控 (强化卡片版)${PLAIN}"
@@ -208,20 +222,6 @@ smart_diagnostic() {
     echo -e "\n${YELLOW}[最新连接日志]${PLAIN}"
     journalctl -u multiy-agent -n 10 --output cat
     pause_back
-}
-
-# --- [ 模块：凭据与清理 ] ---
-credential_center() {
-    clear; echo -e "${SKYBLUE}🔐 Multiy 凭据中心${PLAIN}"
-    M_TOKEN=$(get_env_val "M_TOKEN"); M_PORT=$(get_env_val "M_PORT")
-    V4=$(curl -s4m 3 api.ipify.org); V6=$(curl -s6m 3 api64.ipify.org)
-    echo -e "IPv4 URL: ${GREEN}http://$V4:$M_PORT${PLAIN}\nIPv6 URL: ${GREEN}http://[$V6]:$M_PORT${PLAIN}"
-    echo -e "Token: ${YELLOW}$M_TOKEN${PLAIN}"
-    pause_back
-}
-deep_clean() {
-    systemctl stop multiy-master multiy-agent 2>/dev/null; rm -rf "$M_ROOT" /etc/systemd/system/multiy-*
-    echo "清理完成"; pause_back
 }
 
 # --- [ 主菜单逻辑 ] ---
