@@ -212,7 +212,7 @@ app = Flask(__name__,
             template_folder=os.path.join(BASE_DIR, 'templates'),
             static_folder=os.path.join(BASE_DIR, 'static'))
 
-# --- [ 数据系统 ] ---
+# --- [ 数据持久化系统 ] ---
 def load_db():
     if os.path.exists(DB_PATH):
         try:
@@ -238,10 +238,9 @@ TOKEN = env.get('M_TOKEN', 'admin')
 AGENTS_LIVE = {} 
 WS_CLIENTS = {}
 
-# --- [ 3. 路由逻辑 ] ---
+# --- [ 3. 核心 API 路由 ] ---
 @app.route('/')
 def serve_index():
-    # 使用渲染引擎处理模块化碎片
     return render_template('index.html')
 
 @app.route('/static/<path:filename>')
@@ -261,7 +260,18 @@ def api_state():
             metrics = live.get('metrics', {})
             status = live.get('status', 'offline')
         combined[sid] = {**config, "metrics": metrics, "status": status}
-    return jsonify({"agents": combined, "master": {"cpu": int(psutil.cpu_percent()), "mem": int(psutil.virtual_memory().percent), "disk": int(psutil.disk_usage('/').percent), "sys_ver": f"{platform.system()} {platform.release()}", "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"}, "config": {"user": env.get('M_USER', 'admin'), "token": TOKEN}})
+    
+    return jsonify({
+        "agents": combined, 
+        "master": {
+            "cpu": int(psutil.cpu_percent()), 
+            "mem": int(psutil.virtual_memory().percent), 
+            "disk": int(psutil.disk_usage('/').percent),
+            "sys_ver": f"{platform.system()} {platform.release()}",
+            "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"
+        }, 
+        "config": {"user": env.get('M_USER', 'admin'), "token": TOKEN}
+    })
 
 @app.route('/api/update_admin', methods=['POST'])
 def update_admin():
@@ -292,17 +302,15 @@ async def ws_handler(ws):
         WS_CLIENTS.pop(sid, None)
 
 async def main():
-    # IPv4/IPv6 双栈监听
     await websockets.serve(ws_handler, "::", 9339)
     srv = make_server('::', 7575, app)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    print(">>> Multiy Pro Master Active on :::7575")
+    print(">>> Multiy Pro Master Active on Dual-Stack (:::7575)")
     while True: await asyncio.sleep(1)
 
 if __name__ == "__main__":
     asyncio.run(main())
 EOF
-}
 }
 # --- [ 3. 被控端安装 (全能仆人旗舰版) ] ---
 install_agent() {
