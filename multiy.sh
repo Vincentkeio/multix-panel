@@ -195,37 +195,35 @@ EOF
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
 
-# --- [ 后端核心逻辑：支持模板引擎渲染 ] ---
-# --- [ 后端核心逻辑：终极绝对路径版 ] ---
+# --- [ 后端核心逻辑：深度校准 404 修复版 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
-import asyncio, websockets, json, os, time, subprocess, psutil, platform, random
+import asyncio, websockets, json, os, time, subprocess, psutil, platform, random, threading
+# 关键修复：加入 render_template 引用
 from flask import Flask, request, jsonify, send_from_directory, render_template
 from werkzeug.serving import make_server
-import threading
 
-# 强制锁定绝对路径，彻底解决 404 问题
+# 获取当前脚本的绝对物理路径，确保 templates 目录被精准锁定
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 M_ROOT = "/opt/multiy_mvp"
 ENV_PATH = f"{M_ROOT}/.env"
 DB_PATH = f"{M_ROOT}/agents_db.json"
 
+# 初始化 Flask 并强制锁定模块化路径
 app = Flask(__name__, 
             template_folder=os.path.join(BASE_DIR, 'templates'),
             static_folder=os.path.join(BASE_DIR, 'static'))
 
-# --- [ 数据持久化系统 ] ---
+# --- [ 辅助系统 ] ---
 def load_db():
     if os.path.exists(DB_PATH):
         try:
-            with open(DB_PATH, 'r', encoding='utf-8') as f:
-                return json.load(f)
+            with open(DB_PATH, 'r', encoding='utf-8') as f: return json.load(f)
         except: return {}
     return {}
 
 def save_db(db_data):
-    with open(DB_PATH, 'w', encoding='utf-8') as f:
-        json.dump(db_data, f, indent=4)
+    with open(DB_PATH, 'w', encoding='utf-8') as f: json.dump(db_data, f, indent=4)
 
 def load_env():
     c = {}
@@ -245,11 +243,12 @@ WS_CLIENTS = {}
 # --- [ 3. 核心 API 路由 ] ---
 @app.route('/')
 def serve_index():
-    # 只要 templates 文件夹存在，这样写绝对不会 404
+    # 使用 render_template 才能处理组件化 {% include %} 语法
     return render_template('index.html')
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
+    # 强制从 static 绝对路径读取资源
     return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
 
 @app.route('/api/state')
@@ -258,38 +257,14 @@ def api_state():
     combined = {}
     for sid, config in db.items():
         if config.get('is_demo'):
-            metrics = {
-                "cpu": random.randint(2, 7), "mem": random.randint(18, 32), "disk": random.randint(15, 25),
-                "net_up": round(random.uniform(0.1, 1.5), 1), "net_down": round(random.uniform(0.8, 4.5), 1)
-            }
+            metrics = {"cpu": random.randint(2, 7), "mem": random.randint(18, 32), "disk": random.randint(15, 25), "net_up": round(random.uniform(0.1, 1.5), 1), "net_down": round(random.uniform(0.8, 4.5), 1)}
             status = "online"
         else:
             live = AGENTS_LIVE.get(sid, {})
             metrics = live.get('metrics', {})
             status = live.get('status', 'offline')
         combined[sid] = {**config, "metrics": metrics, "status": status}
-    
-    return jsonify({
-        "agents": combined, 
-        "master": {
-            "cpu": int(psutil.cpu_percent()), 
-            "mem": int(psutil.virtual_memory().percent), 
-            "disk": int(psutil.disk_usage('/').percent),
-            "sys_ver": f"{platform.system()} {platform.release()}",
-            "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"
-        }, 
-        "config": {"user": env.get('M_USER', 'admin'), "token": TOKEN}
-    })
-
-@app.route('/api/update_admin', methods=['POST'])
-def update_admin():
-    data = request.json
-    curr = load_env()
-    if data.get('user'): curr['M_USER'] = data.get('user')
-    if data.get('pass'): curr['M_PASS'] = data.get('pass')
-    with open(ENV_PATH, 'w') as f:
-        for k, v in curr.items(): f.write(f"{k}='{v}'\n")
-    return jsonify({"res": "ok"})
+    return jsonify({"agents": combined, "master": {"cpu": int(psutil.cpu_percent()), "mem": int(psutil.virtual_memory().percent), "disk": int(psutil.disk_usage('/').percent), "sys_ver": f"{platform.system()} {platform.release()}", "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"}, "config": {"user": env.get('M_USER', 'admin'), "token": TOKEN}})
 
 # --- [ 4. WebSocket 业务逻辑 ] ---
 async def ws_handler(ws):
@@ -310,11 +285,11 @@ async def ws_handler(ws):
         WS_CLIENTS.pop(sid, None)
 
 async def main():
-    # 修正：双栈监听 IPv4/IPv6
+    # 修正双栈监听 IPv4/IPv6
     await websockets.serve(ws_handler, "::", 9339)
     srv = make_server('::', 7575, app)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    print(">>> Multiy Pro Master Active on IPv4/IPv6 双栈模式.")
+    print(">>> Multiy Pro Master Active on Dual-Stack (:::7575).")
     while True: await asyncio.sleep(1)
 
 if __name__ == "__main__":
