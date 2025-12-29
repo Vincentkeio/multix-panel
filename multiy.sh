@@ -155,6 +155,7 @@ EOF
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess
+# 核心：必须包含 send_from_directory
 from flask import Flask, render_template_string, session, redirect, request, jsonify, send_from_directory
 from werkzeug.serving import make_server
 
@@ -168,10 +169,6 @@ def load_env():
     return c
 
 app = Flask(__name__)
-# 必须显式添加这个路由，否则浏览器访问 /static/alpine.js 会返回 404
-@app.route('/static/<path:filename>')
-def serve_static(filename):
-    return send_from_directory('/opt/multiy_mvp/master/static', filename)
 env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
 app.secret_key = TOKEN
@@ -179,10 +176,9 @@ app.secret_key = TOKEN
 AGENTS = {}
 WS_CLIENTS = {}
 
-# --- [ 核心修复：静态资源路由 ] ---
+# --- [ 静态资源路由：确保在 app 定义之后，逻辑运行之前 ] ---
 @app.route('/static/<path:filename>')
 def serve_static(filename):
-    # 告诉 Flask 去这个物理路径找 tailwind.js 和 alpine.js
     return send_from_directory('/opt/multiy_mvp/master/static', filename)
 
 async def ws_handler(ws):
@@ -193,30 +189,14 @@ async def ws_handler(ws):
         async for msg in ws:
             data = json.loads(msg)
             if data.get('token') != TOKEN: continue
-            
             if data.get('type') in ['heartbeat', 'report_full']:
                 if sid not in AGENTS:
-                    AGENTS[sid] = {
-                        "ip": addr, "status": "online", "is_dirty": False,
-                        "physical_nodes": [], "draft_nodes": [], 
-                        "metrics": {"cpu":0, "mem":0, "net_up":0, "net_down":0}
-                    }
-                
-                m = data.get('metrics', {})
+                    AGENTS[sid] = {"ip": addr, "status": "online", "is_dirty": False, "metrics": {"cpu":0,"mem":0,"net_up":0,"net_down":0}}
                 AGENTS[sid].update({
-                    "hostname": data.get('hostname', '未知节点'),
-                    "metrics": {
-                        "cpu": m.get('cpu', 0), "mem": m.get('mem', 0),
-                        "net_up": m.get('net_up', 0), "net_down": m.get('net_down', 0)
-                    },
-                    "remote_hash": data.get('config_hash'),
+                    "hostname": data.get('hostname', 'Node'),
+                    "metrics": data.get('metrics', {}),
                     "last_seen": time.time(), "status": "online"
                 })
-
-                if data.get('type') == 'report_full':
-                    AGENTS[sid]["physical_nodes"] = data.get('inbounds', [])
-                    if not AGENTS[sid]["is_dirty"]:
-                        AGENTS[sid]["draft_nodes"] = data.get('inbounds', [])
     except: pass
     finally:
         if sid in AGENTS: AGENTS[sid]["status"] = "offline"
@@ -231,34 +211,19 @@ def index():
 @app.route('/api/state')
 def api_state():
     return jsonify({
-        "agents": AGENTS,
-        "config": {
-            "token": TOKEN, "m_host": env.get('M_HOST'),
-            "ip4": subprocess.getoutput("curl -s4m 1 api.ipify.org || echo 'N/A'"),
-            "ip6": subprocess.getoutput("curl -s6m 1 api64.ipify.org || echo 'N/A'")
-        }
+        "agents": AGENTS, 
+        "config": {"token": TOKEN, "ip4": env.get('M_HOST'), "ip6": "::"}
     })
-
-@app.route('/api/save_draft', methods=['POST'])
-def save_draft():
-    d = request.json
-    sid = d.get('sid')
-    if sid in AGENTS:
-        AGENTS[sid]['draft_nodes'] = d.get('nodes'); AGENTS[sid]['is_dirty'] = True
-        return jsonify({"res": "ok"})
-    return jsonify({"res": "err"}), 404
-
-@app.route('/api/sync_push', methods=['POST'])
-def sync_push():
-    return jsonify({"res": "ok"})
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST' and request.form.get('u') == env.get('M_USER') and request.form.get('p') == env.get('M_PASS'):
         session['logged'] = True; return redirect('/')
-    return '''<body style="background:#020617;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif"><form method="post" style="padding:40px;border:1px solid #333;border-radius:20px;background:#0f172a"><h2>MULTIY LOGIN</h2><input name="u" placeholder="User" style="display:block;margin:10px 0;padding:10px;background:#000;color:#fff;border:1px solid #444;width:200px"><input name="p" type="password" placeholder="Pass" style="display:block;margin:10px 0;padding:10px;background:#000;color:#fff;border:1px solid #444;width:200px"><button style="width:100%;padding:10px;background:#3b82f6;color:#fff;border:none;cursor:pointer">ENTER</button></form></body>'''
+    # 简易登录页防止逻辑缺失
+    return '''<body style="background:#000;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh"><form method="post"><h2>MULTIY LOGIN</h2><input name="u" placeholder="User"><input name="p" type="password" placeholder="Pass"><button>ENTER</button></form></body>'''
 
 async def main():
+    # 同时启动 WS 和 Web
     ws_server = await websockets.serve(ws_handler, "::", 9339)
     srv = make_server('::', int(env.get('M_PORT', 7575)), app)
     await asyncio.gather(asyncio.to_thread(srv.serve_forever), asyncio.Future())
