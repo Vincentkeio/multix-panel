@@ -168,6 +168,10 @@ def load_env():
     return c
 
 app = Flask(__name__)
+# 必须显式添加这个路由，否则浏览器访问 /static/alpine.js 会返回 404
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory('/opt/multiy_mvp/master/static', filename)
 env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
 app.secret_key = TOKEN
