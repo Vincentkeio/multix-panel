@@ -312,29 +312,19 @@ class ServantCore:
         except:
             return {"hash": "error", "inbounds": []}
 
-def get_metrics(self):
-        """旗舰版增强指标采集"""
-        # 1. 采集瞬时流量（用于计算实时 M/s）
+
+     def get_metrics(self):
         n1 = psutil.net_io_counters()
         time.sleep(0.5)
         n2 = psutil.net_io_counters()
-        
-        # 2. 计算累计流量 (单位：GB)
-        # bytes / 1024^3 = GB
-        t_up = round(n2.bytes_sent / (1024**3), 2)
-        t_down = round(n2.bytes_recv / (1024**3), 2)
-
         return {
             "cpu": int(psutil.cpu_percent()),
             "mem": int(psutil.virtual_memory().percent),
             "disk": int(psutil.disk_usage('/').percent),
-            # 实时速率 (M/s)
             "net_up": round((n2.bytes_sent - n1.bytes_sent) / 1024 / 1024, 2),
             "net_down": round((n2.bytes_recv - n1.bytes_recv) / 1024 / 1024, 2),
-            # 累计总量 (GB)
-            "total_up": t_up,
-            "total_down": t_down,
-            # 系统与软件版本
+            "total_up": round(n2.bytes_sent / (1024**3), 2),
+            "total_down": round(n2.bytes_recv / (1024**3), 2),
             "sys_ver": f"{platform.system()} {platform.release()}",
             "sb_ver": subprocess.getoutput(f"{SB_PATH} version | head -n 1 | awk '{{print $3}}'") or "N/A"
         }
