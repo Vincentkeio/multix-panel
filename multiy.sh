@@ -135,10 +135,14 @@ EOF
 }
 
 # --- [ 2. 主控安装：旗舰异步合一版 ] ---
+# --- [ 2. 主控安装：旗舰异步模块化版 ] ---
 install_master() {
-    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (全异步合一架构)${PLAIN}"
+    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (全异步模块化架构)${PLAIN}"
     apt-get install -y python3-pip
-    mkdir -p "$M_ROOT/master"
+    
+    # 强制创建标准目录结构
+    mkdir -p "$M_ROOT/master/static"
+    mkdir -p "$M_ROOT/master/templates/modals"
 
     echo -e "\n${YELLOW}--- 交互式设置 (回车使用默认值) ---${PLAIN}"
     read -p "1. 面板 Web 端口 [默认 7575]: " M_PORT; M_PORT=${M_PORT:-7575}
@@ -161,17 +165,27 @@ EOF
     # 2. 生成后端核心 (app.py)
     _generate_master_py
 
-    # 3. 从 GitHub 同步云端 UI 资源
+    # 3. 从 GitHub 同步模块化 UI 资源
     local RAW_URL="https://raw.githubusercontent.com/Vincentkeio/multix-panel/main/ui"
-    echo -e "${YELLOW}>>> 正在同步云端极客 UI 资源...${PLAIN}"
-    mkdir -p "$M_ROOT/master/static"
+    local V_CACHE="?v=$(date +%s)"
+    echo -e "${YELLOW}>>> 正在同步云端模块化 UI 资源...${PLAIN}"
     
-    # 使用随机参数 v 强制刷新 CDN 缓存
-    curl -sL -o "$M_ROOT/master/index.html" "$RAW_URL/index.html?v=$(date +%s)"
-    curl -sL -o "$M_ROOT/master/static/tailwind.js" "$RAW_URL/static/tailwind.js?v=$(date +%s)"
-    curl -sL -o "$M_ROOT/master/static/alpine.js" "$RAW_URL/static/alpine.js?v=$(date +%s)"
+    # 下载 HTML 模板
+    curl -sL -o "$M_ROOT/master/templates/index.html" "$RAW_URL/templates/index.html$V_CACHE"
+    curl -sL -o "$M_ROOT/master/templates/main_nodes.html" "$RAW_URL/templates/main_nodes.html$V_CACHE"
+    
+    # 下载弹窗碎片
+    curl -sL -o "$M_ROOT/master/templates/modals/admin_modal.html" "$RAW_URL/templates/modals/admin_modal.html$V_CACHE"
+    curl -sL -o "$M_ROOT/master/templates/modals/drawer.html" "$RAW_URL/templates/modals/drawer.html$V_CACHE"
+    curl -sL -o "$M_ROOT/master/templates/modals/login_modal.html" "$RAW_URL/templates/modals/login_modal.html$V_CACHE"
 
-    if [ ! -s "$M_ROOT/master/index.html" ]; then
+    # 下载静态资源
+    curl -sL -o "$M_ROOT/master/static/tailwind.js" "$RAW_URL/static/tailwind.js$V_CACHE"
+    curl -sL -o "$M_ROOT/master/static/alpine.js" "$RAW_URL/static/alpine.js$V_CACHE"
+    curl -sL -o "$M_ROOT/master/static/dashboard.js" "$RAW_URL/static/dashboard.js$V_CACHE"
+    curl -sL -o "$M_ROOT/master/static/custom.css" "$RAW_URL/static/custom.css$V_CACHE"
+
+    if [ ! -s "$M_ROOT/master/templates/index.html" ]; then
         echo -e "${RED}❌ 致命错误: 无法获取 UI 文件，请检查网络。${PLAIN}"
         exit 1
     fi
@@ -181,24 +195,24 @@ EOF
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
 
-# --- [ 后端核心逻辑：支持本地热分离 UI ] ---
+# --- [ 后端核心逻辑：支持模板引擎渲染 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess, psutil, platform, random
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, render_template
 from werkzeug.serving import make_server
 import threading
 
-app = Flask(__name__)
+# 显式指定目录确保 Flask 在双栈环境下能准确找到资源
+app = Flask(__name__, 
+            template_folder='templates', 
+            static_folder='static')
+
 M_ROOT = "/opt/multiy_mvp"
 ENV_PATH = f"{M_ROOT}/.env"
 DB_PATH = f"{M_ROOT}/agents_db.json"
 
-# --- [ 1. 静态随机池 (用于虚拟小鸡) ] ---
-OS_POOL = ["Debian 11", "Debian 12", "Ubuntu 20.04 LTS", "Ubuntu 22.04 LTS"]
-SB_VERSIONS = ["1.8.4", "1.8.5", "1.9.0-rc.1"]
-
-# --- [ 2. 数据持久化系统 ] ---
+# --- [ 数据持久化系统 ] ---
 def load_db():
     if os.path.exists(DB_PATH):
         try:
@@ -223,17 +237,18 @@ def load_env():
 
 env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
-AGENTS_LIVE = {} # 存放实时连接状态和指标
+AGENTS_LIVE = {}
 WS_CLIENTS = {}
 
 # --- [ 3. 核心 API 路由 ] ---
 @app.route('/')
 def serve_index():
-    return send_from_directory(os.path.join(M_ROOT, 'master'), 'index.html')
+    # 使用 render_template 处理 {% include %} 标签
+    return render_template('index.html')
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
-    return send_from_directory(os.path.join(M_ROOT, 'master/static'), filename)
+    return send_from_directory('static', filename)
 
 @app.route('/api/state')
 def api_state():
@@ -241,31 +256,28 @@ def api_state():
     combined = {}
     for sid, config in db.items():
         if config.get('is_demo'):
-            # 虚拟小鸡：生成和谐的低负载动效数据
             metrics = {
-                "cpu": random.randint(2, 7),
-                "mem": random.randint(18, 32),
-                "disk": random.randint(15, 25),
-                "net_up": round(random.uniform(0.1, 1.5), 1),
-                "net_down": round(random.uniform(0.8, 4.5), 1),
-                "sys_ver": config.get('sys_ver'),
-                "sb_ver": config.get('sb_ver')
+                "cpu": random.randint(2, 7), "mem": random.randint(18, 32), "disk": random.randint(15, 25),
+                "net_up": round(random.uniform(0.1, 1.5), 1), "net_down": round(random.uniform(0.8, 4.5), 1)
             }
             status = "online"
         else:
-            # 真实小鸡：合并内存中的实时上报指标
             live = AGENTS_LIVE.get(sid, {})
             metrics = live.get('metrics', {})
             status = live.get('status', 'offline')
-        
         combined[sid] = {**config, "metrics": metrics, "status": status}
     
     return jsonify({
         "agents": combined, 
-        "master": get_master_metrics(), 
+        "master": {
+            "cpu": int(psutil.cpu_percent()), 
+            "mem": int(psutil.virtual_memory().percent), 
+            "disk": int(psutil.disk_usage('/').percent),
+            "sys_ver": f"{platform.system()} {platform.release()}",
+            "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"
+        }, 
         "config": {"user": env.get('M_USER', 'admin'), "token": TOKEN}
     })
-
 @app.route('/api/add_demo', methods=['POST'])
 def add_demo():
     """增加虚拟小鸡：固定系统和版本号"""
@@ -328,32 +340,21 @@ async def ws_handler(ws):
         async for msg in ws:
             data = json.loads(msg)
             if data.get('token') != TOKEN: continue
-            
-            # 真实小鸡上线：自动入库或更新
             if sid not in db:
-                db[sid] = {
-                    "hostname": data.get('hostname', 'Node'), 
-                    "alias": "", "order": 0, "is_demo": False, 
-                    "ip": ws.remote_address[0]
-                }
+                db[sid] = {"hostname": data.get('hostname', 'Node'), "alias": "", "order": 0, "is_demo": False, "ip": ws.remote_address[0]}
                 save_db(db)
-            
-            AGENTS_LIVE[sid] = {
-                "metrics": data.get('metrics'), 
-                "status": "online",
-                "last_seen": time.time()
-            }
+            AGENTS_LIVE[sid] = {"metrics": data.get('metrics'), "status": "online", "last_seen": time.time()}
     except: pass
     finally:
         if sid in AGENTS_LIVE: AGENTS_LIVE[sid]["status"] = "offline"
         WS_CLIENTS.pop(sid, None)
 
 async def main():
-    # 启动双服务
+    # 确保双栈监听
     await websockets.serve(ws_handler, "::", 9339)
     srv = make_server('::', 7575, app)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    print(">>> Multiy Pro Master Active.")
+    print(">>> Multiy Pro Master Active on IPv4/IPv6.")
     while True: await asyncio.sleep(1)
 
 if __name__ == "__main__":
