@@ -184,20 +184,37 @@ EOF
 # --- [ 后端核心逻辑：支持本地热分离 UI ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
-import asyncio, websockets, json, os, time, subprocess, psutil, platform
-from flask import Flask, session, redirect, request, jsonify, send_from_directory
+import asyncio, websockets, json, os, time, subprocess, psutil, platform, random
+from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.serving import make_server
+import threading
 
 app = Flask(__name__)
 M_ROOT = "/opt/multiy_mvp"
-STATIC_DIR = f"{M_ROOT}/master/static"
+ENV_PATH = f"{M_ROOT}/.env"
+DB_PATH = f"{M_ROOT}/agents_db.json"
 
-# --- [ 基础配置加载 ] ---
+# --- [ 1. 静态随机池 (用于虚拟小鸡) ] ---
+OS_POOL = ["Debian 11", "Debian 12", "Ubuntu 20.04 LTS", "Ubuntu 22.04 LTS"]
+SB_VERSIONS = ["1.8.4", "1.8.5", "1.9.0-rc.1"]
+
+# --- [ 2. 数据持久化系统 ] ---
+def load_db():
+    if os.path.exists(DB_PATH):
+        try:
+            with open(DB_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except: return {}
+    return {}
+
+def save_db(db_data):
+    with open(DB_PATH, 'w', encoding='utf-8') as f:
+        json.dump(db_data, f, indent=4)
+
 def load_env():
     c = {}
-    path = f"{M_ROOT}/.env"
-    if os.path.exists(path):
-        with open(path, 'r', encoding='utf-8') as f:
+    if os.path.exists(ENV_PATH):
+        with open(ENV_PATH, 'r', encoding='utf-8') as f:
             for l in f:
                 if '=' in l:
                     k, v = l.strip().split('=', 1)
@@ -206,123 +223,138 @@ def load_env():
 
 env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
-app.secret_key = TOKEN
-AGENTS = {}
+AGENTS_LIVE = {} # 存放实时连接状态和指标
 WS_CLIENTS = {}
 
-# --- [ 核心：主控自监控采集 ] ---
-def get_master_metrics():
-    try:
-        n1 = psutil.net_io_counters()
-        time.sleep(0.1)
-        n2 = psutil.net_io_counters()
-        return {
-            "cpu": int(psutil.cpu_percent()),
-            "mem": int(psutil.virtual_memory().percent),
-            "disk": int(psutil.disk_usage('/').percent),
-            "net_up": round((n2.bytes_sent - n1.bytes_sent) / 1024 / 1024, 2),
-            "net_down": round((n2.bytes_recv - n1.bytes_recv) / 1024 / 1024, 2),
-            "sys_ver": f"{platform.system()} {platform.release()}",
-            "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"
-        }
-    except:
-        return {"cpu":0, "mem":0, "disk":0, "net_up":0, "net_down":0, "sys_ver":"N/A", "sb_ver":"N/A"}
+# --- [ 3. 核心 API 路由 ] ---
+@app.route('/')
+def serve_index():
+    return send_from_directory(os.path.join(M_ROOT, 'master'), 'index.html')
 
-# --- [ WebSocket 处理器 ] ---
-async def ws_handler(ws):
-    addr = ws.remote_address[0]
-    sid = str(id(ws))
-    WS_CLIENTS[sid] = ws
-    try:
-        async for msg in ws:
-            data = json.loads(msg)
-            if data.get('token') != TOKEN: continue
-            
-            if data.get('type') in ['heartbeat', 'report_full']:
-                if sid not in AGENTS:
-                    AGENTS[sid] = {
-                        "ip": addr, "status": "online", "alias": "", "order": 0,
-                        "metrics": {}, "physical_nodes": [], "draft_nodes": [], "is_dirty": False
-                    }
-                
-                m = data.get('metrics', {})
-                AGENTS[sid].update({
-                    "hostname": data.get('hostname', 'Node'),
-                    "node_count": len(data.get('inbounds', []) if data.get('type') == 'report_full' else AGENTS[sid].get('physical_nodes', [])),
-                    "metrics": m,
-                    "last_seen": time.time(),
-                    "status": "online"
-                })
-                
-                if data.get('type') == 'report_full':
-                    AGENTS[sid]["physical_nodes"] = data.get('inbounds', [])
-                    if not AGENTS[sid].get("is_dirty"):
-                        AGENTS[sid]["draft_nodes"] = data.get('inbounds', [])
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory(os.path.join(M_ROOT, 'master/static'), filename)
 
-    except: pass
-    finally:
-        if sid in AGENTS: AGENTS[sid]["status"] = "offline"
-        WS_CLIENTS.pop(sid, None)
-
-# --- [ API 路由 ] ---
 @app.route('/api/state')
 def api_state():
+    db = load_db()
+    combined = {}
+    for sid, config in db.items():
+        if config.get('is_demo'):
+            # 虚拟小鸡：生成和谐的低负载动效数据
+            metrics = {
+                "cpu": random.randint(2, 7),
+                "mem": random.randint(18, 32),
+                "disk": random.randint(15, 25),
+                "net_up": round(random.uniform(0.1, 1.5), 1),
+                "net_down": round(random.uniform(0.8, 4.5), 1),
+                "sys_ver": config.get('sys_ver'),
+                "sb_ver": config.get('sb_ver')
+            }
+            status = "online"
+        else:
+            # 真实小鸡：合并内存中的实时上报指标
+            live = AGENTS_LIVE.get(sid, {})
+            metrics = live.get('metrics', {})
+            status = live.get('status', 'offline')
+        
+        combined[sid] = {**config, "metrics": metrics, "status": status}
+    
     return jsonify({
-        "agents": AGENTS,
-        "master": get_master_metrics(),
-        "config": {
-            "token": TOKEN,
-            "ip4": env.get('M_HOST', '127.0.0.1'),
-            "user": env.get('M_USER', 'Admin')
-        }
+        "agents": combined, 
+        "master": get_master_metrics(), 
+        "config": {"user": env.get('M_USER', 'admin'), "token": TOKEN}
     })
+
+@app.route('/api/add_demo', methods=['POST'])
+def add_demo():
+    """增加虚拟小鸡：固定系统和版本号"""
+    db = load_db()
+    v_id = f"v_node_{random.randint(1000, 9999)}"
+    db[v_id] = {
+        "hostname": f"Instance-{v_id[-4:]}",
+        "alias": "虚拟演示节点",
+        "ip": f"{random.randint(45, 190)}.{random.randint(1, 250)}.x.x",
+        "is_demo": True,
+        "order": 99,
+        "sys_ver": random.choice(OS_POOL),
+        "sb_ver": random.choice(SB_VERSIONS)
+    }
+    save_db(db)
+    return jsonify({"res": "ok"})
 
 @app.route('/api/manage_agent', methods=['POST'])
 def manage_agent():
     data = request.json
     sid, action = data.get('sid'), data.get('action')
-    if sid in AGENTS:
-        if action == 'rename': AGENTS[sid]['alias'] = data.get('name')
-        if action == 'delete':
-            AGENTS.pop(sid); WS_CLIENTS.pop(sid, None)
-        return jsonify({"res": "ok"})
-    return jsonify({"res": "error"}), 404
+    db = load_db()
+    if sid not in db: return jsonify({"res": "error"}), 404
 
-@app.route('/api/save_draft', methods=['POST'])
-def save_draft():
+    if action == 'rename': db[sid]['alias'] = data.get('name')
+    if action == 'reorder': db[sid]['order'] = int(data.get('order', 0))
+    if action == 'delete': 
+        db.pop(sid)
+        WS_CLIENTS.pop(sid, None)
+    
+    save_db(db)
+    return jsonify({"res": "ok"})
+
+@app.route('/api/update_admin', methods=['POST'])
+def update_admin():
     data = request.json
-    sid = data.get('sid')
-    if sid in AGENTS:
-        AGENTS[sid]["draft_nodes"] = data.get('nodes', [])
-        AGENTS[sid]["is_dirty"] = True
-        return jsonify({"res": "ok"})
-    return jsonify({"res": "error"}), 404
+    curr = load_env()
+    if data.get('user'): curr['M_USER'] = data.get('user')
+    if data.get('pass'): curr['M_PASS'] = data.get('pass')
+    # 写入 .env 文件持久化
+    with open(ENV_PATH, 'w') as f:
+        for k, v in curr.items(): f.write(f"{k}='{v}'\n")
+    return jsonify({"res": "ok"})
 
-@app.route('/api/sync_push', methods=['POST'])
-async def sync_push():
-    data = request.json
-    sid = data.get('sid')
-    if sid in AGENTS and sid in WS_CLIENTS:
-        new_config = {"inbounds": AGENTS[sid]["draft_nodes"], "outbounds": [{"type": "direct", "tag": "direct"}]}
-        try:
-            await WS_CLIENTS[sid].send(json.dumps({"type": "sync_config", "config": new_config}))
-            AGENTS[sid]["is_dirty"] = False
-            return jsonify({"res": "ok"})
-        except: return jsonify({"res": "ws_error"}), 500
-    return jsonify({"res": "offline"}), 404
+def get_master_metrics():
+    try:
+        return {
+            "cpu": int(psutil.cpu_percent()), 
+            "mem": int(psutil.virtual_memory().percent), 
+            "disk": int(psutil.disk_usage('/').percent)
+        }
+    except: return {}
 
-# --- [ 静态资源与启动 ] ---
-@app.route('/static/<path:filename>')
-def static_files(filename):
-    return send_from_directory(STATIC_DIR, filename)
+# --- [ 4. WebSocket 业务逻辑 ] ---
+async def ws_handler(ws):
+    sid = str(id(ws))
+    WS_CLIENTS[sid] = ws
+    db = load_db()
+    try:
+        async for msg in ws:
+            data = json.loads(msg)
+            if data.get('token') != TOKEN: continue
+            
+            # 真实小鸡上线：自动入库或更新
+            if sid not in db:
+                db[sid] = {
+                    "hostname": data.get('hostname', 'Node'), 
+                    "alias": "", "order": 0, "is_demo": False, 
+                    "ip": ws.remote_address[0]
+                }
+                save_db(db)
+            
+            AGENTS_LIVE[sid] = {
+                "metrics": data.get('metrics'), 
+                "status": "online",
+                "last_seen": time.time()
+            }
+    except: pass
+    finally:
+        if sid in AGENTS_LIVE: AGENTS_LIVE[sid]["status"] = "offline"
+        WS_CLIENTS.pop(sid, None)
 
 async def main():
-    # 启动 WebSocket (端口 9339)
-    ws_server = await websockets.serve(ws_handler, "::", 9339)
-    # 启动 Flask (端口 7575)
-    srv = make_server('::', 7575, app)
-    print("MULTIX PRO Master Started.")
-    await asyncio.to_thread(srv.serve_forever)
+    # 启动双服务
+    await websockets.serve(ws_handler, "0.0.0.0", 9339)
+    srv = make_server('0.0.0.0', 7575, app)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    print(">>> Multiy Pro Master Active.")
+    while True: await asyncio.sleep(1)
 
 if __name__ == "__main__":
     asyncio.run(main())
