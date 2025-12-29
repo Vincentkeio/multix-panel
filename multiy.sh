@@ -22,24 +22,54 @@ env_cleaner() {
 }
 
 # --- [ 1. 凭据与配置详情看板 ] ---
+# --- [ 1. 凭据中心看板模块 ] ---
 credential_center() {
     clear
     [ ! -f "$M_ROOT/.env" ] && echo -e "${RED}[错误]${PLAIN} 尚未安装主控！" && pause_back && return
     source "$M_ROOT/.env"
+    
+    # 获取实时 IP
     V4=$(curl -s4m 2 api.ipify.org || echo "N/A")
-    V6=$(curl -s6m 2 api64.ipify.org || echo "N/A")
+    V6=$(curl -s6m 2 api64.ipify.org || echo "未分配")
     
     echo -e "${SKYBLUE}==================================================${PLAIN}"
     echo -e "          🛰️  MULTIY PRO 旗舰凭据看板"
     echo -e "${SKYBLUE}==================================================${PLAIN}"
+    
     echo -e "${GREEN}[ 1. 管理面板入口 ]${PLAIN}"
-    echo -e " 🔹 IPv4: http://$V4:$M_PORT"
-    echo -e " 🔹 IPv6: http://[$V6]:$M_PORT"
-    echo -e " 🔹 账号: ${YELLOW}$M_USER${PLAIN} / 密码: ${YELLOW}$M_PASS${PLAIN}"
+    echo -e " 🔹 IPv4 访问: http://$V4:$M_PORT"
+    echo -e " 🔹 IPv6 访问: http://[$V6]:$M_PORT"
+    echo -e " 🔹 管理账号: ${YELLOW}$M_USER${PLAIN}"
+    echo -e " 🔹 管理密码: ${YELLOW}$M_PASS${PLAIN}"
+    
     echo -e "\n${GREEN}[ 2. Agent 接入配置 (原生 WS) ]${PLAIN}"
-    echo -e " 🔹 接入 IP/域名: ${SKYBLUE}$M_HOST${PLAIN}"
+    echo -e " 🔹 接入地址: ${SKYBLUE}$M_HOST${PLAIN}"
     echo -e " 🔹 通信端口: ${SKYBLUE}9339${PLAIN}"
     echo -e " 🔹 通信令牌: ${YELLOW}$M_TOKEN${PLAIN}"
+    
+    echo -e "\n${GREEN}[ 3. 双栈监听物理状态 ]${PLAIN}"
+    
+    # 精准双栈检测函数
+    check_net_stat() {
+        local port=$1
+        local proto=$2 # tcp 或 tcp6
+        if [ "$proto" == "tcp" ]; then
+            netstat -lnpt | grep -q "0.0.0.0:$port " && echo -e "${GREEN}● IPv4 OK${PLAIN}" || echo -e "${RED}○ IPv4 OFF${PLAIN}"
+        else
+            netstat -lnpt | grep -q ":::$port " && echo -e "${GREEN}● IPv6 OK${PLAIN}" || echo -e "${RED}○ IPv6 OFF${PLAIN}"
+        fi
+    }
+
+    echo -ne " 🔹 面板服务 ($M_PORT): "
+    check_net_stat $M_PORT tcp
+    echo -ne "                     "
+    check_net_stat $M_PORT tcp6
+    
+    echo -ne " 🔹 通信服务 (9339): "
+    check_net_stat 9339 tcp
+    echo -ne "                     "
+    check_net_stat 9339 tcp6
+    
     echo -e "${SKYBLUE}==================================================${PLAIN}"
     pause_back
 }
