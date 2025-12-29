@@ -211,7 +211,7 @@ async def ws_handler(ws):
                     "metrics": {
                         "cpu": m.get('cpu', 0),
                         "mem": m.get('mem', 0),
-                        "disk": m.get('disk', 0),
+                        "disk": m.get('disk', 0), # 默认值 0
                         "net_up": m.get('net_up', 0),
                         "net_down": m.get('net_down', 0),
                         "total_up": m.get('total_up', 0),
@@ -219,10 +219,8 @@ async def ws_handler(ws):
                         "sys_ver": m.get('sys_ver', 'N/A'),
                         "sb_ver": m.get('sb_ver', 'N/A')
                     },
-                    "last_seen": time.time(),
-                    "status": "online"
+                    "last_seen": time.time(), "status": "online"
                 })
-
                 if data.get('type') == 'report_full':
                     AGENTS[sid]["physical_nodes"] = data.get('inbounds', [])
                     if not AGENTS[sid]["is_dirty"]:
