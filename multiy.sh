@@ -178,7 +178,7 @@ WS_CLIENTS = {}
 
 # --- [ 静态资源路由：确保在 app 定义之后，逻辑运行之前 ] ---
 @app.route('/static/<path:filename>')
-def serve_static(filename):
+def multiy_static_service(filename): # 函数名改了
     return send_from_directory('/opt/multiy_mvp/master/static', filename)
 
 async def ws_handler(ws):
