@@ -15,6 +15,7 @@ env_cleaner() {
     echo -e "${YELLOW}>>> 正在执行环境物理级大扫除...${PLAIN}"
     systemctl stop multiy-master multiy-agent 2>/dev/null
     pkill -9 python3 2>/dev/null
+    apt-get install -y python3-pip
     # 彻底卸载冲突库
     python3 -m pip uninstall -y python-socketio eventlet python-engineio websockets flask 2>/dev/null
     # 安装旗舰版所需三件套
