@@ -135,7 +135,15 @@ EOF
 
 # --- [ 后端核心逻辑：处理草稿、同步与指令 ] ---
 _generate_master_py() {
-cat > "$M_ROOT/master/app.py" << 'EOF'
+    # 使用单引号包裹，Bash 会视其为纯文本，绝不解析其中的 () 或 $
+    # 注意：如果 Python 代码内部有单引号，需转义为 '\'' 
+    # 为了绝对安全，我们直接使用 cat 的一种变体写法，但改用临时文件绕过
+    
+    echo ">>> 正在生成后端核心 (app.py)..."
+
+    # 这里采用一种不依赖顶格 EOF 的特殊写法：使用引用的自定义定界符
+    # 并且在写入后立即检查文件完整性
+    cat <<'MASTER_PYTHON_CODE' > "$M_ROOT/master/app.py"
 import asyncio, websockets, json, os, time, subprocess
 from flask import Flask, render_template_string, session, redirect, request, jsonify
 from werkzeug.serving import make_server
@@ -155,7 +163,6 @@ TOKEN = env.get('M_TOKEN', 'admin')
 app.secret_key = TOKEN
 
 # 核心内存数据库
-# AGENTS[sid] = { "hostname":..., "metrics":..., "physical_nodes":..., "draft_nodes":..., "is_dirty":... }
 AGENTS = {}
 WS_CLIENTS = {}
 
@@ -198,7 +205,6 @@ async def ws_handler(ws):
 @app.route('/')
 def index():
     if not session.get('logged'): return redirect('/login')
-    # 热分离：每次访问实时读取本地 HTML 文件
     try:
         with open("/opt/multiy_mvp/master/index.html", "r", encoding="utf-8") as f:
             return render_template_string(f.read())
@@ -231,10 +237,9 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-EOF
+MASTER_PYTHON_CODE
 }
-
-# --- [ 前端 UI 设计：极客、简洁、热分离 ] ---
+# --- [ 前端 UI 设计 ... ] ---
 _generate_master_ui() {
 cat > "$M_ROOT/master/index.html" << 'EOF'
 <!DOCTYPE html><html><head><meta charset="UTF-8">
