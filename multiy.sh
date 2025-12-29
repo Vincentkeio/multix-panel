@@ -272,14 +272,30 @@ def api_login():
         })
     return jsonify({"status": "fail", "msg": "凭据验证失败"}), 401
 
-# --- [ 3. 核心 API 路由 ] ---
+# --- [ 3. 核心 API 路由：智能探测版 ] ---
+import socket
+
+def get_public_ip(version=4):
+    """自动获取本机公网 IP (v4 或 v6)"""
+    try:
+        # 使用 Google DNS 或 Cloudflare DNS 建立测试连接探测出口 IP
+        test_server = "8.8.8.8" if version == 4 else "2606:4700:4700::1111"
+        s = socket.socket(socket.AF_INET if version == 4 else socket.AF_INET6, socket.SOCK_DGRAM)
+        s.connect((test_server, 53))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return None
+
 @app.route('/api/state')
 def api_state():
     db = load_db()
     combined = {}
     for sid, config in db.items():
+        # ... 原有的 agents 处理逻辑保持不变 ...
         if config.get('is_demo'):
-            metrics = {"cpu": random.randint(2, 7), "mem": random.randint(18, 32), "disk": random.randint(15, 25), "net_up": round(random.uniform(0.1, 1.5), 1), "net_down": round(random.uniform(0.8, 4.5), 1)}
+            metrics = {"cpu": random.randint(2, 7), "mem": random.randint(18, 32), "disk": random.randint(15, 25)}
             status = "online"
         else:
             live = AGENTS_LIVE.get(sid, {})
@@ -289,9 +305,10 @@ def api_state():
     
     curr_env = load_env()
     
-    # 自动探测主控 IPv6 地址 (用于前端展示)
-    # 如果环境中有 M_HOST_V6 则优先使用，否则尝试探测
-    m_ip6 = curr_env.get('M_HOST_V6', "探测中...") 
+    # --- [ 智能地址获取逻辑 ] ---
+    # 优先从环境变量读取，若无则自动探测
+    m_ip4 = curr_env.get('M_HOST_V4') or get_public_ip(4) or curr_env.get('M_HOST', '127.0.0.1')
+    m_ip6 = curr_env.get('M_HOST_V6') or get_public_ip(6) or "Not Detected"
     
     return jsonify({
         "agents": combined, 
@@ -302,39 +319,15 @@ def api_state():
             "sys_ver": f"{platform.system()} {platform.release()}",
             "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"
         }, 
-        # 补全前端 index.html 所需的所有字段
         "config": {
             "user": curr_env.get('M_USER', 'admin'), 
             "token": curr_env.get('M_TOKEN'),
-            "ip4": curr_env.get('M_HOST', '127.0.0.1'),
-            "ip6": m_ip6,
+            "ip4": m_ip4,  # 现在这里是纯 IP 了
+            "ip6": m_ip6,  # 成功探测后将显示真实 v6 地址
             "port": curr_env.get('M_PORT', '7575')
         }
     })
-
-@app.route('/api/update_admin', methods=['POST'])
-def update_admin():
-    data = request.json
-    # 权限校验：必须携带正确的旧 Token 才能修改
-    auth_token = request.headers.get('Authorization')
-    curr = load_env()
     
-    if auth_token != curr.get('M_TOKEN'):
-        return jsonify({"res": "fail", "msg": "Unauthorized"}), 403
-
-    # 支持修改 用户名、密码、以及全新的 Token
-    if data.get('user'): curr['M_USER'] = data.get('user')
-    if data.get('pass'): curr['M_PASS'] = data.get('pass')
-    if data.get('token'): curr['M_TOKEN'] = data.get('token')
-
-    with open(ENV_PATH, 'w') as f:
-        for k, v in curr.items(): f.write(f"{k}='{v}'\n")
-    
-    # 全局同步更新内存中的 Token
-    global TOKEN
-    TOKEN = curr.get('M_TOKEN', TOKEN)
-    
-    return jsonify({"res": "ok"})
 # --- [ 4. 通信逻辑 ] ---
 async def ws_handler(ws):
     sid = str(id(ws))
