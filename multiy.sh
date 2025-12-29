@@ -267,15 +267,18 @@ EOF
 }
 
 # --- [ 3. 被控端安装 (找回自愈功能) ] ---
+# --- [ 3. 被控端安装 (全能仆人旗舰版) ] ---
 install_agent() {
-    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰被控 (原生 WS 隧道)${PLAIN}"
+    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰被控 (Hybrid 状态对齐版)${PLAIN}"
     mkdir -p "$M_ROOT/agent"
     read -p "1. 主控域名或IP: " M_INPUT
     read -p "2. 通信令牌 (Token): " M_TOKEN
     
+    # 安装依赖
+    echo -e "${YELLOW}正在同步环境依赖...${PLAIN}"
     python3 -m pip install websockets psutil --break-system-packages --user >/dev/null 2>&1
 
-    # 自愈映射：IPv6 数字地址转虚拟域名
+    # 自愈映射逻辑 (保留你的 IPv6 劫持方案)
     if [[ "$M_INPUT" == *:* ]]; then
         echo -e "${YELLOW}[物理自愈] 正在为 IPv6 执行 hosts 劫持映射...${PLAIN}"
         sed -i "/multiy.local.master/d" /etc/hosts
@@ -285,42 +288,107 @@ install_agent() {
         FINAL_URL="ws://$M_INPUT:9339"
     fi
 
+    # 注入“全能仆人”逻辑
     cat > "$M_ROOT/agent/agent.py" << 'EOF'
-import asyncio, websockets, json, psutil, socket, time
-MASTER = "REPLACE_URL"; TOKEN = "REPLACE_TOKEN"
-async def run_agent():
-    while True:
+import asyncio, websockets, json, os, subprocess, psutil, platform, time, hashlib, socket
+
+# --- [ 仆人配置 ] ---
+MASTER = "REPLACE_URL"
+TOKEN = "REPLACE_TOKEN"
+SB_PATH = "/usr/local/bin/sing-box"
+SB_CONF = "/etc/sing-box/config.json"
+
+class ServantCore:
+    def __init__(self):
+        self.last_config_hash = ""
+        self.hostname = socket.gethostname()
+
+    def get_config_state(self):
+        """Hybrid 模式核心：读取物理配置并生成 MD5"""
+        if not os.path.exists(SB_CONF):
+            return {"hash": "none", "inbounds": []}
         try:
-            async with websockets.connect(MASTER, ping_interval=20, ping_timeout=20) as ws:
-                await ws.send(json.dumps({"type":"auth","token":TOKEN,"hostname":socket.gethostname()}))
-                while True:
-                    await ws.send(json.dumps({"type":"heartbeat","cpu":int(psutil.cpu_percent()),"mem":int(psutil.virtual_memory().percent)}))
-                    await asyncio.sleep(8)
-        except: await asyncio.sleep(5)
-if __name__ == "__main__": asyncio.run(run_agent())
+            with open(SB_CONF, 'r', encoding='utf-8') as f:
+                content = f.read()
+                data = json.loads(content)
+                m = hashlib.md5()
+                m.update(content.encode('utf-8'))
+                return {"hash": m.hexdigest(), "inbounds": data.get('inbounds', [])}
+        except:
+            return {"hash": "error", "inbounds": []}
+
+    def get_metrics(self):
+        """仪表盘基础指标采集"""
+        net_1 = psutil.net_io_counters()
+        time.sleep(0.5)
+        net_2 = psutil.net_io_counters()
+        return {
+            "cpu": int(psutil.cpu_percent()),
+            "mem": int(psutil.virtual_memory().percent),
+            "disk": int(psutil.disk_usage('/').percent),
+            "net_up": round((net_2.bytes_sent - net_1.bytes_sent) / 1024 / 1024, 2),
+            "net_down": round((net_2.bytes_recv - net_1.bytes_recv) / 1024 / 1024, 2),
+            "sys_ver": f"{platform.system()} {platform.release()}",
+            "sb_ver": subprocess.getoutput(f"{SB_PATH} version | head -n 1 | awk '{{print $3}}'") or "N/A"
+        }
+
+    async def main_loop(self):
+        while True:
+            try:
+                async with websockets.connect(MASTER, ping_interval=20, ping_timeout=20) as ws:
+                    while True:
+                        state = self.get_config_state()
+                        # 构建基础心跳包
+                        payload = {
+                            "type": "heartbeat",
+                            "token": TOKEN,
+                            "hostname": self.hostname,
+                            "metrics": self.get_metrics(),
+                            "config_hash": state['hash']
+                        }
+                        
+                        # Hybrid 逻辑：如果哈希变了，上报全量清单给主控
+                        if state['hash'] != self.last_config_hash:
+                            payload['type'] = "report_full"
+                            payload['inbounds'] = state['inbounds']
+                            self.last_config_hash = state['hash']
+                        
+                        await ws.send(json.dumps(payload))
+
+                        # 监听主控指令 (原子同步/Shell 执行)
+                        try:
+                            msg = await asyncio.wait_for(ws.recv(), timeout=5)
+                            task = json.loads(msg)
+                            
+                            if task['type'] == 'exec_cmd':
+                                res = subprocess.getoutput(task['cmd'])
+                                await ws.send(json.dumps({"type": "cmd_res", "id": task['id'], "data": res}))
+                                
+                            elif task['type'] == 'sync_config':
+                                with open(SB_CONF, 'w', encoding='utf-8') as f:
+                                    json.dump(task['config'], f, indent=4)
+                                if os.system(f"{SB_PATH} check -c {SB_CONF}") == 0:
+                                    os.system("systemctl restart sing-box")
+                                    await ws.send(json.dumps({"type": "msg", "res": "Sync OK"}))
+                                else:
+                                    await ws.send(json.dumps({"type": "msg", "res": "Config Error"}))
+                        except asyncio.TimeoutError:
+                            continue
+            except:
+                await asyncio.sleep(10)
+
+if __name__ == "__main__":
+    servant = ServantCore()
+    asyncio.run(servant.main_loop())
 EOF
-    sed -i "s|REPLACE_URL|$FINAL_URL|; s/REPLACE_TOKEN/$M_TOKEN/" "$M_ROOT/agent/agent.py"
+
+    # 动态注入配置
+    sed -i "s|REPLACE_URL|$FINAL_URL|; s|REPLACE_TOKEN|$M_TOKEN|" "$M_ROOT/agent/agent.py"
+    
+    # 部署并启动服务
     _deploy_service "multiy-agent" "$M_ROOT/agent/agent.py"
-    echo -e "${GREEN}✅ 被控端已上线。${PLAIN}"; pause_back
+    echo -e "${GREEN}✅ 旗舰版被控已上线 (支持状态对齐与 Hybrid 同步)${PLAIN}"; pause_back
 }
-
-_deploy_service() {
-    local NAME=$1; local EXEC=$2
-    cat > "/etc/systemd/system/${NAME}.service" << EOF
-[Unit]
-Description=${NAME} Flagship Service
-After=network.target
-[Service]
-ExecStart=/usr/bin/python3 ${EXEC}
-Restart=always
-WorkingDirectory=$(dirname ${EXEC})
-Environment=PYTHONUNBUFFERED=1
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload; systemctl enable "${NAME}"; systemctl restart "${NAME}"
-}
-
 # --- [ 4. 链路诊断中心 ] ---
 smart_diagnostic() {
     clear; echo -e "${SKYBLUE}🔍 旗舰诊断中心 (原生协议探测)${PLAIN}"
