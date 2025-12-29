@@ -239,9 +239,13 @@ def index():
 def api_state():
     return jsonify({
         "agents": AGENTS, 
-        "config": {"token": TOKEN, "ip4": env.get('M_HOST'), "ip6": "::"}
+        "master": get_master_metrics(),  # 之前讨论的自监控函数
+        "config": {
+            "token": TOKEN, 
+            "ip4": env.get('M_HOST'), 
+            "user": env.get('M_USER')
+        }
     })
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST' and request.form.get('u') == env.get('M_USER') and request.form.get('p') == env.get('M_PASS'):
