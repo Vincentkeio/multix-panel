@@ -154,33 +154,51 @@ EOF
 # --- [ 后端核心逻辑：支持本地热分离 UI ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
-import asyncio, websockets, json, os, time, subprocess
-# 核心：必须包含 send_from_directory
-from flask import Flask, render_template_string, session, redirect, request, jsonify, send_from_directory
+import asyncio, websockets, json, os, time, subprocess, psutil, platform
+from flask import Flask, session, redirect, request, jsonify, send_from_directory
 from werkzeug.serving import make_server
 
+app = Flask(__name__)
+M_ROOT = "/opt/multiy_mvp"
+STATIC_DIR = f"{M_ROOT}/master/static"
+
+# --- [ 基础配置加载 ] ---
 def load_env():
     c = {}
-    path = '/opt/multiy_mvp/.env'
+    path = f"{M_ROOT}/.env"
     if os.path.exists(path):
         with open(path, 'r', encoding='utf-8') as f:
             for l in f:
-                if '=' in l: k, v = l.strip().split('=', 1); c[k] = v.strip("'\"")
+                if '=' in l:
+                    k, v = l.strip().split('=', 1)
+                    c[k] = v.strip("'\"")
     return c
 
-app = Flask(__name__)
 env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
 app.secret_key = TOKEN
-
 AGENTS = {}
 WS_CLIENTS = {}
 
-# --- [ 静态资源路由：确保在 app 定义之后，逻辑运行之前 ] ---
-@app.route('/static/<path:filename>')
-def multiy_static_service(filename): # 函数名改了
-    return send_from_directory('/opt/multiy_mvp/master/static', filename)
+# --- [ 核心：主控自监控采集 ] ---
+def get_master_metrics():
+    try:
+        n1 = psutil.net_io_counters()
+        time.sleep(0.1)
+        n2 = psutil.net_io_counters()
+        return {
+            "cpu": int(psutil.cpu_percent()),
+            "mem": int(psutil.virtual_memory().percent),
+            "disk": int(psutil.disk_usage('/').percent),
+            "net_up": round((n2.bytes_sent - n1.bytes_sent) / 1024 / 1024, 2),
+            "net_down": round((n2.bytes_recv - n1.bytes_recv) / 1024 / 1024, 2),
+            "sys_ver": f"{platform.system()} {platform.release()}",
+            "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"
+        }
+    except:
+        return {"cpu":0, "mem":0, "disk":0, "net_up":0, "net_down":0, "sys_ver":"N/A", "sb_ver":"N/A"}
 
+# --- [ WebSocket 处理器 ] ---
 async def ws_handler(ws):
     addr = ws.remote_address[0]
     sid = str(id(ws))
@@ -192,72 +210,89 @@ async def ws_handler(ws):
             
             if data.get('type') in ['heartbeat', 'report_full']:
                 if sid not in AGENTS:
-                    # 初始化所有新字段的默认值
                     AGENTS[sid] = {
-                        "ip": addr, "status": "online", "is_dirty": False,
-                        "physical_nodes": [], "draft_nodes": [], 
-                        "metrics": {
-                            "cpu":0, "mem":0, "disk":0,
-                            "net_up":0, "net_down":0,
-                            "total_up":0, "total_down":0,
-                            "sys_ver":"N/A", "sb_ver":"N/A"
-                        }
+                        "ip": addr, "status": "online", "alias": "", "order": 0,
+                        "metrics": {}, "physical_nodes": [], "draft_nodes": [], "is_dirty": False
                     }
                 
-                # 核心：将 Agent 发来的全量指标存入 AGENTS
                 m = data.get('metrics', {})
                 AGENTS[sid].update({
-                    "hostname": data.get('hostname', '未知节点'),
-                    "metrics": {
-                        "cpu": m.get('cpu', 0),
-                        "mem": m.get('mem', 0),
-                        "disk": m.get('disk', 0), # 默认值 0
-                        "net_up": m.get('net_up', 0),
-                        "net_down": m.get('net_down', 0),
-                        "total_up": m.get('total_up', 0),
-                        "total_down": m.get('total_down', 0),
-                        "sys_ver": m.get('sys_ver', 'N/A'),
-                        "sb_ver": m.get('sb_ver', 'N/A')
-                    },
-                    "last_seen": time.time(), "status": "online"
+                    "hostname": data.get('hostname', 'Node'),
+                    "node_count": len(data.get('inbounds', []) if data.get('type') == 'report_full' else AGENTS[sid].get('physical_nodes', [])),
+                    "metrics": m,
+                    "last_seen": time.time(),
+                    "status": "online"
                 })
+                
                 if data.get('type') == 'report_full':
                     AGENTS[sid]["physical_nodes"] = data.get('inbounds', [])
-                    if not AGENTS[sid]["is_dirty"]:
+                    if not AGENTS[sid].get("is_dirty"):
                         AGENTS[sid]["draft_nodes"] = data.get('inbounds', [])
+
     except: pass
     finally:
         if sid in AGENTS: AGENTS[sid]["status"] = "offline"
         WS_CLIENTS.pop(sid, None)
-@app.route('/')
-def index():
-    if not session.get('logged'): return redirect('/login')
-    with open("/opt/multiy_mvp/master/index.html", "r", encoding="utf-8") as f:
-        return render_template_string(f.read())
 
+# --- [ API 路由 ] ---
 @app.route('/api/state')
 def api_state():
     return jsonify({
-        "agents": AGENTS, 
-        "master": get_master_metrics(),  # 之前讨论的自监控函数
+        "agents": AGENTS,
+        "master": get_master_metrics(),
         "config": {
-            "token": TOKEN, 
-            "ip4": env.get('M_HOST'), 
-            "user": env.get('M_USER')
+            "token": TOKEN,
+            "ip4": env.get('M_HOST', '127.0.0.1'),
+            "user": env.get('M_USER', 'Admin')
         }
     })
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST' and request.form.get('u') == env.get('M_USER') and request.form.get('p') == env.get('M_PASS'):
-        session['logged'] = True; return redirect('/')
-    # 简易登录页防止逻辑缺失
-    return '''<body style="background:#000;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh"><form method="post"><h2>MULTIY LOGIN</h2><input name="u" placeholder="User"><input name="p" type="password" placeholder="Pass"><button>ENTER</button></form></body>'''
+
+@app.route('/api/manage_agent', methods=['POST'])
+def manage_agent():
+    data = request.json
+    sid, action = data.get('sid'), data.get('action')
+    if sid in AGENTS:
+        if action == 'rename': AGENTS[sid]['alias'] = data.get('name')
+        if action == 'delete':
+            AGENTS.pop(sid); WS_CLIENTS.pop(sid, None)
+        return jsonify({"res": "ok"})
+    return jsonify({"res": "error"}), 404
+
+@app.route('/api/save_draft', methods=['POST'])
+def save_draft():
+    data = request.json
+    sid = data.get('sid')
+    if sid in AGENTS:
+        AGENTS[sid]["draft_nodes"] = data.get('nodes', [])
+        AGENTS[sid]["is_dirty"] = True
+        return jsonify({"res": "ok"})
+    return jsonify({"res": "error"}), 404
+
+@app.route('/api/sync_push', methods=['POST'])
+async def sync_push():
+    data = request.json
+    sid = data.get('sid')
+    if sid in AGENTS and sid in WS_CLIENTS:
+        new_config = {"inbounds": AGENTS[sid]["draft_nodes"], "outbounds": [{"type": "direct", "tag": "direct"}]}
+        try:
+            await WS_CLIENTS[sid].send(json.dumps({"type": "sync_config", "config": new_config}))
+            AGENTS[sid]["is_dirty"] = False
+            return jsonify({"res": "ok"})
+        except: return jsonify({"res": "ws_error"}), 500
+    return jsonify({"res": "offline"}), 404
+
+# --- [ 静态资源与启动 ] ---
+@app.route('/static/<path:filename>')
+def static_files(filename):
+    return send_from_directory(STATIC_DIR, filename)
 
 async def main():
-    # 同时启动 WS 和 Web
+    # 启动 WebSocket (端口 9339)
     ws_server = await websockets.serve(ws_handler, "::", 9339)
-    srv = make_server('::', int(env.get('M_PORT', 7575)), app)
-    await asyncio.gather(asyncio.to_thread(srv.serve_forever), asyncio.Future())
+    # 启动 Flask (端口 7575)
+    srv = make_server('::', 7575, app)
+    print("MULTIX PRO Master Started.")
+    await asyncio.to_thread(srv.serve_forever)
 
 if __name__ == "__main__":
     asyncio.run(main())
