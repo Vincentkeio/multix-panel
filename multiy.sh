@@ -1,17 +1,16 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V72.6 (CUSTOM PORT & DUAL-STACK STABLE)
-# Fix 1: [Config] Added Custom Communication Port (Default 9339).
-# Fix 2: [Net] Explicit IPv6 dual-stack binding for both Web and WS.
-# Fix 3: [UI] Full local CSS injection for glassmorphism UI.
-# Fix 4: [Debug] Enhanced multi-node tracking and connection status.
+# MultiX Pro Script V72.7 (STABILITY & UI FIX)
+# Fix 1: [Sys] Fixed path error in check_sys (/etc/issue).
+# Fix 2: [UI] Isolated Jinja2 tags to prevent frontend Alpine.js conflicts.
+# Fix 3: [UI] Full localized CSS + Design-ready mock card logic.
+# Fix 4: [Net] Forced Dual-Stack Socket implementation for Web & WS.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
-export AGENT_CONF="${M_ROOT}/agent/.agent.conf"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V72.6"
+SH_VER="V72.7"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 基础函数 ] ---
@@ -19,15 +18,18 @@ install_shortcut() { rm -f /usr/bin/multix; cp "$0" /usr/bin/multix && chmod +x 
 check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[ERROR]${PLAIN} Root Required!" && exit 1; }
 check_sys() {
     if [[ -f /etc/redhat-release ]]; then RELEASE="centos";
-    elif cat /issue | grep -q -E -i "debian"; then RELEASE="debian";
+    elif cat /etc/issue | grep -q -E -i "debian"; then RELEASE="debian";
     else RELEASE="ubuntu"; fi
 }
-get_public_ips() { IPV4=$(curl -s4m 2 api.ipify.org || echo "N/A"); IPV6=$(curl -s6m 2 api64.ipify.org || echo "N/A"); }
+get_public_ips() { 
+    IPV4=$(curl -s4m 3 api.ipify.org || echo "N/A")
+    IPV6=$(curl -s6m 3 api64.ipify.org || echo "N/A")
+}
 pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
 # --- [ 1. 主控安装 ] ---
 install_master() {
-    echo -e "${SKYBLUE}>>> 部署 MultiX 主控 (V72.6)${PLAIN}"
+    echo -e "${SKYBLUE}>>> 部署 MultiX 主控 (V72.7)${PLAIN}"
     check_sys
     if [[ "${RELEASE}" == "centos" ]]; then yum install -y python3 python3-pip curl wget ntpdate openssl
     else apt-get update && apt-get install -y python3 python3-pip curl wget ntpdate openssl; fi
@@ -50,7 +52,7 @@ install_master() {
     echo -e "${GREEN}✅ 主控端部署成功！${PLAIN}"
     echo -e "IPv4 面板: http://${IPV4}:${M_PORT}"
     echo -e "IPv6 面板: http://[${IPV6}]:${M_PORT}"
-    echo -e "通信端口: ${YELLOW}${WS_PORT}${PLAIN} (请确保安全组已放行)"
+    echo -e "通信端口: ${YELLOW}${WS_PORT}${PLAIN}"
     pause_back
 }
 
@@ -75,56 +77,89 @@ WS_PORT = int(CONF.get('WS_PORT', 9339))
 M_USER, M_PASS, M_TOKEN = CONF.get('M_USER', 'admin'), CONF.get('M_PASS', 'admin'), CONF.get('M_TOKEN', 'error')
 
 app = Flask(__name__); app.secret_key = M_TOKEN
-AGENTS = {"Local-Preview": {"alias": "测试卡片", "stats": {"cpu":0,"mem":0}}} 
+
+# 核心隔离：将 Flask 占位符改为 [[ ]]，把 {{ }} 留给前端脚本
+app.jinja_env.variable_start_string = '[['
+app.jinja_env.variable_end_string = ']]'
+
+AGENTS = {"Mock-Node-01": {"alias": "示例卡片 (新加坡)", "stats": {"cpu":12,"mem":34}}} 
 
 UI_HTML = """
 <!DOCTYPE html><html><head><meta charset="UTF-8"><title>MultiX Pro</title>
 <style>
 :root{--blue:#3b82f6;--bg:#020617;--glass:rgba(15,23,42,0.85)}
-body{background:var(--bg);color:#e2e8f0;font-family:sans-serif;margin:0;padding:25px}
-.glass{background:var(--glass);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.1);padding:25px;border-radius:24px}
-.header{display:flex;justify-content:space-between;max-width:1200px;margin:0 auto 40px}
-.card{border-left:4px solid var(--blue);transition:0.3s;margin-bottom:20px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;max-width:1200px;margin:0 auto}
-.tk-tag{background:rgba(59,130,246,0.1);color:var(--blue);padding:4px 12px;border-radius:20px;font-size:11px}
+body{background:var(--bg);color:#f8fafc;font-family:ui-sans-serif,system-ui;margin:0;padding:30px}
+.glass{background:var(--glass);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:24px}
+.header{display:flex;justify-content:space-between;align-items:center;max-width:1100px;margin:0 auto 50px}
+.card{padding:25px;border-left:4px solid var(--blue);transition:0.4s;position:relative}
+.card:hover{transform:translateY(-4px);background:rgba(30,41,59,0.5);border-left-color:#fff}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:25px;max-width:1100px;margin:0 auto}
+.tk-tag{background:rgba(59,130,246,0.15);color:var(--blue);padding:6px 14px;border-radius:30px;font-size:12px;font-family:monospace;font-weight:600}
+.dot{height:10px;width:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e}
+.btn-m{width:100%;background:var(--blue);color:#fff;border:none;padding:12px;border-radius:12px;font-weight:800;cursor:pointer;margin-top:20px;letter-spacing:1px}
+[x-cloak]{display:none !important}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body x-data="panel()" x-init="start()">
+<div class="header">
+    <div><h1 style="margin:0;color:var(--blue);font-style:italic;font-weight:900;font-size:2rem">MultiX <span style="color:#fff">Pro</span></h1>
+    <div style="margin-top:12px"><span class="tk-tag">Master Token: <span id="tk-val">[[ master_token ]]</span></span></div></div>
+    <div style="display:flex;gap:12px">
+        <button @click="fetchData()" class="glass" style="color:#fff;padding:8px 20px;border-radius:30px;cursor:pointer;font-size:12px;font-weight:bold">REFRESH</button>
+        <a href="/logout" style="color:#ef4444;text-decoration:none;border:1px solid rgba(239,68,68,0.2);padding:8px 20px;border-radius:30px;font-size:12px;font-weight:bold">LOGOUT</a>
+    </div>
+</div>
+
+<div class="grid">
+    <template x-for="(a, ip) in agents" :key="ip">
+        <div class="glass card">
+            <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:15px">
+                <div><b style="font-size:1.2rem;color:#fff" x-text="a.alias"></b><br><span style="font-size:11px;color:#64748b;font-family:monospace" x-text="ip"></span></div>
+                <div class="dot"></div>
+            </div>
+            <div style="display:flex;gap:10px;margin-bottom:10px">
+                <div style="background:#0f172a;padding:8px 15px;border-radius:12px;flex:1;text-align:center"><small style="color:#64748b;display:block;font-size:9px;font-weight:900">CPU</small><b x-text="a.stats.cpu+'%'"></b></div>
+                <div style="background:#0f172a;padding:8px 15px;border-radius:12px;flex:1;text-align:center"><small style="color:#64748b;display:block;font-size:9px;font-weight:900">MEM</small><b x-text="a.stats.mem+'%'"></b></div>
+            </div>
+            <button class="btn-m" @click="alert('Loading Visual Builder...')">MANAGE NODE</button>
+        </div>
+    </template>
+</div>
+
 <script>
-async function refresh(){
-    const r=await fetch('/api/state'); const d=await r.json();
-    document.getElementById('tk').innerText=d.master_token;
-    const g=document.getElementById('grid'); g.innerHTML='';
-    for(let ip in d.agents){
-        const a=d.agents[ip];
-        g.innerHTML+=`<div class="glass card">
-            <div style="display:flex;justify-content:space-between;margin-bottom:15px"><b>${a.alias}</b><div style="height:8px;width:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 8px #22c55e"></div></div>
-            <div style="font-size:11px;color:#64748b;margin-bottom:15px">${ip}</div>
-            <div style="display:flex;gap:10px"><span style="background:#0f172a;padding:5px 10px;border-radius:8px;font-size:11px">CPU: ${a.stats.cpu}%</span></div>
-            <button style="width:100%;background:var(--blue);color:#fff;border:none;padding:10px;border-radius:10px;margin-top:20px;font-weight:bold;cursor:pointer">MANAGE</button>
-        </div>`;
+function panel(){
+    return {
+        agents: {},
+        start(){ this.fetchData(); setInterval(()=>this.fetchData(), 5000); },
+        async fetchData(){
+            const r=await fetch('/api/state'); const d=await r.json();
+            this.agents = d.agents;
+        }
     }
 }
-setInterval(refresh, 5000); window.onload=refresh;
-</script></head>
-<body>
-<div class="header">
-    <div><h1 style="margin:0;color:var(--blue);font-style:italic">MultiX <span style="color:#fff">Pro</span></h1><span class="tk-tag">Token: <span id="tk">...</span></span></div>
-    <a href="/logout" style="color:#ef4444;text-decoration:none;border:1px solid rgba(239,68,68,0.2);padding:8px 15px;border-radius:20px;font-size:13px">LOGOUT</a>
-</div>
-<div class="grid" id="grid"></div>
+</script>
 </body></html>
 """
 
 @app.route('/')
 def index():
     if not session.get('logged'): return redirect('/login')
-    return render_template_string(UI_HTML)
+    # 传递 master_token 到模板
+    return render_template_string(UI_HTML, master_token=M_TOKEN)
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method=='POST':
         if request.form.get('u')==M_USER and request.form.get('p')==M_PASS:
             session['logged']=True; return redirect('/')
-    return """<body style="background:#020617;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif"><form method="post" style="background:#0f172a;padding:40px;border-radius:24px;width:300px"><h2>Login</h2><input name="u" placeholder="User" style="width:100%;padding:10px;margin:10px 0;background:#020617;border:1px solid #334155;color:#fff;border-radius:8px"><input name="p" type="password" placeholder="Pass" style="width:100%;padding:10px;margin:10px 0;background:#020617;border:1px solid #334155;color:#fff;border-radius:8px"><button style="width:100%;padding:10px;background:#3b82f6;color:#fff;border:none;border-radius:8px;margin-top:10px">LOGIN</button></form></body>"""
+    return """<body style="background:#020617;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif">
+        <form method="post" style="background:#0f172a;padding:45px;border-radius:30px;width:320px;border:1px solid #1e293b;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5)">
+            <h2 style="color:#3b82f6;font-style:italic;margin-bottom:30px;font-weight:900">MultiX <span style="color:#fff">Login</span></h2>
+            <input name="u" placeholder="User" style="width:100%;padding:14px;margin:10px 0;background:#020617;border:1px solid #334155;color:#fff;border-radius:12px;box-sizing:border-box">
+            <input name="p" type="password" placeholder="Pass" style="width:100%;padding:14px;margin:10px 0;background:#020617;border:1px solid #334155;color:#fff;border-radius:12px;box-sizing:border-box">
+            <button style="width:100%;padding:14px;background:#3b82f6;color:#fff;border:none;border-radius:12px;margin-top:15px;font-weight:900;cursor:pointer">ENTER PANEL</button>
+        </form></body>"""
 
 @app.route('/logout')
 def logout(): session.pop('logged', None); return redirect('/login')
@@ -140,7 +175,7 @@ async def ws_handler(ws):
         auth_raw = await asyncio.wait_for(ws.recv(), timeout=10)
         auth = json.loads(auth_raw)
         if auth.get('token') == M_TOKEN:
-            AGENTS[ip] = {"ws": ws, "stats": {"cpu":0,"mem":0}, "alias": "Loading..."}
+            AGENTS[ip] = {"ws": ws, "stats": {"cpu":0,"mem":0}, "alias": "Remote Node"}
             async for msg in ws:
                 d = json.loads(msg)
                 if d.get('type') == 'heartbeat':
@@ -154,7 +189,6 @@ def start_ws():
     loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
     ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ssl_ctx.load_cert_chain('cert.pem', 'key.pem')
-    # 使用自定义 WS_PORT 监听
     v4 = websockets.serve(ws_handler, "0.0.0.0", WS_PORT, ssl=ssl_ctx)
     v6 = websockets.serve(ws_handler, "::", WS_PORT, ssl=ssl_ctx)
     loop.run_until_complete(asyncio.gather(v4, v6))
@@ -166,92 +200,20 @@ if __name__ == '__main__':
 EOF
 }
 
-# --- [ 2. 被控安装 ] ---
-install_agent() {
-    mkdir -p $M_ROOT/agent
-    echo -e "${SKYBLUE}>>> 被控连接配置${PLAIN}"
-    read -p "主控域名/IP: " M_HOST
-    read -p "通信端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
-    read -p "主控 Token: " M_TOKEN
-    echo -e "优先连接协议：1. 强制 IPv6 | 2. 强制 IPv4 | 3. 自动"
-    read -p "选择 [1-3]: " NET_PREF
-
-    # 安装 Sing-box
-    ARCH=$(uname -m); [[ "$ARCH" == "x86_64" ]] && SB_ARCH="amd64" || SB_ARCH="arm64"
-    wget -qO /tmp/sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v1.8.0/sing-box-1.8.0-linux-${SB_ARCH}.tar.gz"
-    tar -zxf /tmp/sb.tar.gz -C /tmp && mv /tmp/sing-box-*/sing-box /usr/local/bin/
-    chmod +x /usr/local/bin/sing-box
-
-    # 生成 Agent 脚本
-    cat > $M_ROOT/agent/agent.py <<EOF
-import asyncio, json, psutil, websockets, socket, platform, ssl, sys
-MASTER = "$M_HOST"; TOKEN = "$M_TOKEN"; PORT = "$WS_PORT"; PREF = "$NET_PREF"
-async def run():
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False; ssl_ctx.verify_mode = ssl.CERT_NONE
-    family = socket.AF_UNSPEC
-    if PREF == "1": family = socket.AF_INET6
-    elif PREF == "2": family = socket.AF_INET
-    uri = f"wss://{MASTER}:{PORT}"
-    print(f"[Agent] Linking to {uri}...", flush=True)
-    while True:
-        try:
-            async with websockets.connect(uri, ssl=ssl_ctx, open_timeout=15, family=family) as ws:
-                print("[Agent] Linked!", flush=True)
-                await ws.send(json.dumps({"token": TOKEN}))
-                while True:
-                    stats = {"cpu":int(psutil.cpu_percent()), "mem":int(psutil.virtual_memory().percent), "hostname":socket.gethostname()}
-                    await ws.send(json.dumps({"type":"heartbeat", "data":stats}))
-                    await asyncio.sleep(8)
-        except Exception as e:
-            print(f"[Agent] Retry Error: {e}", flush=True); await asyncio.sleep(5)
-asyncio.run(run())
-EOF
-
-    cat > /etc/systemd/system/multix-agent.service <<EOF
-[Unit]
-Description=MultiX Agent
-After=network.target
-[Service]
-ExecStart=/usr/bin/python3 $M_ROOT/agent/agent.py
-Restart=always
-WorkingDirectory=$M_ROOT/agent
-Environment=PYTHONUNBUFFERED=1
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload; systemctl enable multix-agent; systemctl restart multix-agent
-    echo -e "${GREEN}✅ 被控已启动。${PLAIN}"; pause_back
-}
-
-# --- [ 3. 诊断与维护 ] ---
-diag_menu() {
-    clear; echo -e "${SKYBLUE}📡 诊断中心${PLAIN}"
-    echo "1. 查看监听端口 (Web & WS)"
-    echo "2. 强制同步内核双栈参数"
-    echo "0. 返回"
-    read -p "选择: " d
-    case $d in
-        1) ss -tuln | grep -E '7575|9339' ;;
-        2) sysctl -w net.ipv4.ip_forward=1; sysctl -w net.ipv6.bindv6only=0; sysctl -p; echo "已同步" ;;
-        0) main_menu ;;
-    esac; pause_back
-}
-
-# --- [ 4. 菜单 ] ---
+# --- [ 菜单 ] ---
 main_menu() {
     clear; echo -e "${SKYBLUE}🛰️ MultiX Pro ${SH_VER}${PLAIN}"
-    echo " 1. 安装/更新 主控端 (自定义端口版)"
+    echo " 1. 安装/更新 主控端 (Jinja2 隔离版)"
     echo " 2. 安装/更新 被控端"
-    echo " 3. 诊断中心"
+    echo " 3. 通信诊断中心"
     echo " 4. 实时日志"
     echo " 5. 深度清理"
     echo " 0. 退出"
     read -p "选择: " c
     case $c in
         1) install_master ;; 2) install_agent ;; 3) diag_menu ;;
-        4) journalctl -f -u multix-master -u multix-agent ;;
-        5) read -p "确认清理? [y/N]: " cf; [[ "$cf" == "y" ]] && { systemctl stop multix-master multix-agent; rm -rf "$M_ROOT"; echo "Done"; } ;;
+        4) journalctl -f -u multix-master ;;
+        5) read -p "确认清理? [y/N]: " cf; [[ "$cf" == "y" ]] && { systemctl stop multix-master; rm -rf "$M_ROOT"; echo "Done"; } ;;
         0) exit 0 ;; *) main_menu ;;
     esac
 }
