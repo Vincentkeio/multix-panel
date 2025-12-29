@@ -1,16 +1,17 @@
 #!/bin/bash
 
 # ==============================================================================
-# Multiy Pro Script V73.1 (SYSTEMD PATH FIX & UI PREVIEW)
-# Fix 1: [Systemd] Forced service path to /lib/systemd/system/ for Debian/Ubuntu.
-# Fix 2: [Net] Dual-Stack WebSocket binding on port 9339 (Physical 2-Thread).
-# Fix 3: [UI] Built-in "Mock Card" to verify frontend rendering immediately.
-# Fix 4: [Log] Added systemd status check after installation.
+# Multiy Pro Script V73.5 (CREDENTIAL CENTER & SYSTEMD FIX)
+# Fix 1: [Systemd] Forced service installation for Debian 12 compatibility.
+# Fix 2: [UI] Re-added Credential & Config Center for instant management.
+# Fix 3: [Net] Enhanced Dual-Stack WSS with custom port logic.
+# Fix 4: [Protocol] Forced IPv6 option for NAT Agents.
 # ==============================================================================
 
 export M_ROOT="/opt/multiy_mvp"
+export AGENT_CONF="${M_ROOT}/agent/.agent.conf"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V73.1"
+SH_VER="V73.5"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 基础工具 ] ---
@@ -24,9 +25,8 @@ pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s 
 
 # --- [ 1. 主控安装 ] ---
 install_master() {
-    echo -e "${SKYBLUE}>>> 正在部署 Multiy 主控 (V73.1)...${PLAIN}"
+    echo -e "${SKYBLUE}>>> 部署 Multiy 主控 (V73.5)${PLAIN}"
     get_public_ips
-    # 安装依赖
     apt-get update && apt-get install -y python3 python3-pip curl wget ntpdate openssl
     pip3 install "Flask<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1
     
@@ -39,37 +39,33 @@ install_master() {
     read -p "管理密码 [admin]: " M_PASS; M_PASS=${M_PASS:-admin}
     M_TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
     
-    echo "M_TOKEN='$M_TOKEN'" > $M_ROOT/.env
-    echo "M_PORT='$M_PORT'" >> $M_ROOT/.env
-    echo "WS_PORT='$WS_PORT'" >> $M_ROOT/.env
-    echo "M_USER='$M_USER'" >> $M_ROOT/.env
-    echo "M_PASS='$M_PASS'" >> $M_ROOT/.env
+    echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nWS_PORT='$WS_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
 
     _write_master_app_py
 
-    # 修复 Systemd 路径：强制写入 /lib/systemd/system/
-    cat > /lib/systemd/system/multiy-master.service <<EOF
-[Unit]
+    # 路径修复：向两个标准路径写入
+    SERVICE_CONF="[Unit]
 Description=Multiy Master Server
 After=network.target
+
 [Service]
 ExecStart=/usr/bin/python3 $M_ROOT/master/app.py
 Restart=always
 WorkingDirectory=$M_ROOT/master
 Environment=PYTHONUNBUFFERED=1
+
 [Install]
-WantedBy=multi-user.target
-EOF
+WantedBy=multi-user.target"
+
+    echo "$SERVICE_CONF" > /etc/systemd/system/multiy-master.service
+    echo "$SERVICE_CONF" > /lib/systemd/system/multiy-master.service
 
     systemctl daemon-reload
     systemctl enable multiy-master
     systemctl restart multiy-master
     
     echo -e "${GREEN}✅ Multiy 主控部署成功！${PLAIN}"
-    echo -e "IPv4: http://${IPV4}:${M_PORT}"
-    echo -e "IPv6: http://[${IPV6}]:${M_PORT}"
-    echo -e "Token: ${YELLOW}${M_TOKEN}${PLAIN}"
-    pause_back
+    credential_center
 }
 
 _write_master_app_py() {
@@ -94,8 +90,7 @@ M_USER, M_PASS, M_TOKEN = CONF.get('M_USER', 'admin'), CONF.get('M_PASS', 'admin
 app = Flask(__name__); app.secret_key = M_TOKEN
 app.jinja_env.variable_start_string, app.jinja_env.variable_end_string = '[[', ']]'
 
-# 默认包含一个 Mock 卡片用于验证 UI 渲染
-AGENTS = {"Mock-GIA-Node": {"alias": "示例-新加坡GIA", "stats": {"cpu":15,"mem":25}, "is_mock": True}}
+AGENTS = {"Mock-Node": {"alias": "示例-新加坡", "stats": {"cpu":12,"mem":25}}}
 
 UI_HTML = """
 <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Multiy Pro</title>
@@ -105,33 +100,32 @@ body{background:var(--bg);color:#f8fafc;font-family:sans-serif;margin:0;padding:
 .glass{background:var(--glass);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);border-radius:24px}
 .header{display:flex;justify-content:space-between;max-width:1100px;margin:0 auto 40px}
 .card{padding:25px;border-left:4px solid var(--blue);transition:0.3s;margin-bottom:20px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;max-width:1100px;margin:0 auto}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px;max-width:1100px;margin:0 auto}
 .btn-m{width:100%;background:var(--blue);color:#fff;border:none;padding:12px;border-radius:12px;font-weight:bold;cursor:pointer;margin-top:15px}
-.badge{background:rgba(59,130,246,0.15);color:var(--blue);padding:6px 14px;border-radius:30px;font-size:11px;font-family:monospace}
+.badge{background:rgba(59,130,246,0.15);color:var(--blue);padding:6px 14px;border-radius:30px;font-size:11px}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 </head>
 <body x-data="panel()" x-init="start()">
 <div class="header">
-    <div><h1 style="color:var(--blue);font-style:italic;margin:0;font-weight:900">Multiy <span style="color:#fff">Pro</span></h1>
-    <div style="margin-top:10px"><span class="badge">Token: <span id="tk">[[ master_token ]]</span></span></div></div>
+    <div><h1 style="color:var(--blue);font-style:italic;margin:0;font-weight:900">Multiy <span style="color:#fff">Pro</span></h1><div style="margin-top:10px"><span class="badge">Master Token: [[ master_token ]]</span></div></div>
     <div style="display:flex;gap:12px">
-        <button @click="fetchData()" class="glass" style="color:#fff;padding:8px 15px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:bold">REFRESH</button>
-        <a href="/logout" style="color:#ef4444;text-decoration:none;border:1px solid rgba(239,68,68,0.2);padding:8px 15px;border-radius:20px;font-size:12px;font-weight:bold">LOGOUT</a>
+        <button @click="fetchData()" class="glass" style="color:#fff;padding:8px 15px;border-radius:20px;cursor:pointer;font-size:12px">REFRESH</button>
+        <a href="/logout" style="color:#ef4444;text-decoration:none;border:1px solid rgba(239,68,68,0.2);padding:8px 15px;border-radius:20px;font-size:12px">LOGOUT</a>
     </div>
 </div>
-<div class="grid" id="grid">
+<div class="grid">
     <template x-for="(a, ip) in agents" :key="ip">
         <div class="glass card">
             <div style="display:flex;justify-content:space-between">
-                <div><b style="font-size:1.1rem" x-text="a.alias"></b><br><small style="color:#64748b;font-family:monospace" x-text="ip"></small></div>
+                <div><b style="font-size:1.1rem" x-text="a.alias"></b><br><small style="color:#64748b" x-text="ip"></small></div>
                 <div style="height:10px;width:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e"></div>
             </div>
             <div style="display:flex;gap:10px;margin:20px 0">
-                <div style="background:#0f172a;padding:10px;border-radius:12px;flex:1;text-align:center"><small style="color:#64748b;display:block;font-size:9px">CPU</small><b x-text="a.stats.cpu+'%'"></b></div>
-                <div style="background:#0f172a;padding:10px;border-radius:12px;flex:1;text-align:center"><small style="color:#64748b;display:block;font-size:9px">MEM</small><b x-text="a.stats.mem+'%'"></b></div>
+                <div style="background:#0f172a;padding:10px;border-radius:12px;flex:1;text-align:center"><small style="display:block;font-size:9px">CPU</small><b x-text="a.stats.cpu+'%'"></b></div>
+                <div style="background:#0f172a;padding:10px;border-radius:12px;flex:1;text-align:center"><small style="display:block;font-size:9px">MEM</small><b x-text="a.stats.mem+'%'"></b></div>
             </div>
-            <button class="btn-m" @click="alert('Manage Sing-box Module Loading...')">MANAGE NODE</button>
+            <button class="btn-m" @click="alert('Module building...')">MANAGE NODE</button>
         </div>
     </template>
 </div>
@@ -152,10 +146,10 @@ def login():
             session['logged']=True; return redirect('/')
     return """<body style="background:#020617;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif">
     <form method="post" style="background:rgba(255,255,255,0.03);backdrop-filter:blur(20px);padding:50px;border-radius:30px;border:1px solid rgba(255,255,255,0.1);width:320px;text-align:center">
-        <h2 style="color:#3b82f6;font-style:italic;font-weight:900;margin-bottom:30px">Multiy <span style="color:#fff">Pro</span></h2>
-        <input name="u" placeholder="Admin" style="width:100%;padding:14px;margin:12px 0;background:rgba(0,0,0,0.4);border:1px solid #333;color:#fff;border-radius:12px">
+        <h2 style="color:#3b82f6;font-weight:900">Multiy <span style="color:#fff">Login</span></h2>
+        <input name="u" placeholder="Admin" style="width:100%;padding:14px;margin:10px 0;background:rgba(0,0,0,0.4);border:1px solid #333;color:#fff;border-radius:12px">
         <input name="p" type="password" placeholder="Pass" style="width:100%;padding:14px;margin:12px 0;background:rgba(0,0,0,0.4);border:1px solid #333;color:#fff;border-radius:12px">
-        <button style="width:100%;padding:15px;background:#3b82f6;color:#fff;border:none;border-radius:12px;font-weight:bold;cursor:pointer;margin-top:20px">LOGIN</button>
+        <button style="width:100%;padding:15px;background:#3b82f6;color:#fff;border:none;border-radius:12px;font-weight:bold;cursor:pointer;margin-top:20px">ENTER SYSTEM</button>
     </form></body>"""
 
 @app.route('/api/state')
@@ -182,7 +176,7 @@ async def ws_handler(ws):
 def start_ws():
     loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
     ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ssl_ctx.load_cert_chain('cert.pem', 'key.pem')
-    # 物理双协议栈绑定
+    # 物理双栈监听
     v4 = websockets.serve(ws_handler, "0.0.0.0", WS_PORT, ssl=ssl_ctx)
     v6 = websockets.serve(ws_handler, "::", WS_PORT, ssl=ssl_ctx)
     loop.run_until_complete(asyncio.gather(v4, v6))
@@ -196,7 +190,7 @@ EOF
 
 # --- [ 2. 被控安装 ] ---
 install_agent() {
-    echo -e "${SKYBLUE}>>> 部署 Multiy 被控 (V73.1)${PLAIN}"
+    echo -e "${SKYBLUE}>>> 部署 Multiy 被控 (V73.5)${PLAIN}"
     mkdir -p $M_ROOT/agent
     read -p "主控域名/IP: " M_HOST
     read -p "通信端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
@@ -231,7 +225,7 @@ async def run():
                     await ws.send(json.dumps({"type":"heartbeat", "data":stats}))
                     await asyncio.sleep(8)
         except Exception as e:
-            print(f"[Agent] Connection Failed: {e}", flush=True); await asyncio.sleep(5)
+            print(f"[Agent] Error: {e}", flush=True); await asyncio.sleep(5)
 asyncio.run(run())
 EOF
 
@@ -247,18 +241,62 @@ Environment=PYTHONUNBUFFERED=1
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload
-    systemctl enable multiy-agent
-    systemctl restart multiy-agent
-    echo -e "${GREEN}✅ 被控部署完成！使用 journalctl -u multiy-agent -f 查看状态。${PLAIN}"
+    systemctl daemon-reload; systemctl enable multiy-agent; systemctl restart multiy-agent
+    echo -e "${GREEN}✅ 被控部署完成！使用菜单 3 查看连通日志。${PLAIN}"
     pause_back
 }
 
-# --- [ 3. 连接监控 ] ---
+# --- [ 5. 凭据与配置中心 ] ---
+credential_center() {
+    clear; echo -e "${SKYBLUE}🔐 Multiy 凭据与配置中心${PLAIN}"
+    if [ -f $M_ROOT/.env ]; then
+        source $M_ROOT/.env
+        get_public_ips
+        echo -e "------------------------------------------------"
+        echo -e "${YELLOW}[访问信息]${PLAIN}"
+        echo -e "IPv4 地址: ${GREEN}http://${IPV4}:${M_PORT}${PLAIN}"
+        echo -e "IPv6 地址: ${GREEN}http://[${IPV6}]:${M_PORT}${PLAIN}"
+        echo -e "管理用户: ${GREEN}${M_USER}${PLAIN}"
+        echo -e "管理密码: ${GREEN}${M_PASS}${PLAIN}"
+        echo -e "------------------------------------------------"
+        echo -e "${YELLOW}[通信配置]${PLAIN}"
+        echo -e "通信端口: ${SKYBLUE}${WS_PORT}${PLAIN}"
+        echo -e "主控令牌: ${YELLOW}${M_TOKEN}${PLAIN}"
+        echo -e "------------------------------------------------"
+    else
+        echo -e "${RED}[错误]${PLAIN} 未检测到主控配置文件"
+    fi
+    echo " 1. 修改 访问/通信端口"
+    echo " 2. 修改 管理员账号/密码"
+    echo " 3. 修改 通信令牌 (Token)"
+    echo " 0. 返回"
+    read -p "选择: " opt
+    case $opt in
+        1)
+            read -p "新面板端口 [$M_PORT]: " n_mp; M_PORT=${n_mp:-$M_PORT}
+            read -p "新通信端口 [$WS_PORT]: " n_wp; WS_PORT=${n_wp:-$WS_PORT}
+            sed -i "s/M_PORT='.*'/M_PORT='$M_PORT'/" $M_ROOT/.env
+            sed -i "s/WS_PORT='.*'/WS_PORT='$WS_PORT'/" $M_ROOT/.env
+            systemctl restart multiy-master; echo "已同步并重启服务"; credential_center ;;
+        2)
+            read -p "新用户名 [$M_USER]: " n_mu; M_USER=${n_mu:-$M_USER}
+            read -p "新密码 [$M_PASS]: " n_pa; M_PASS=${n_pa:-$M_PASS}
+            sed -i "s/M_USER='.*'/M_USER='$M_USER'/" $M_ROOT/.env
+            sed -i "s/M_PASS='.*'/M_PASS='$M_PASS'/" $M_ROOT/.env
+            systemctl restart multiy-master; echo "已更新"; credential_center ;;
+        3)
+            read -p "新Token (留空随机): " n_tk; n_tk=${n_tk:-$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)}
+            sed -i "s/M_TOKEN='.*'/M_TOKEN='$n_tk'/" $M_ROOT/.env
+            systemctl restart multiy-master; echo "已更新，被控需同步重装"; credential_center ;;
+        0) main_menu ;;
+    esac
+}
+
+# --- [ 3. 连接状态监控 ] ---
 status_monitor() {
     clear; echo -e "${SKYBLUE}📡 连接监控中心${PLAIN}"
-    echo -e "1. [主控] 端口监听状态 (Web & WS)"
-    echo -e "2. [被控] 当前连接日志 (V4/V6)"
+    echo -e "1. [主控] 端口监听状态 (ss -tuln)"
+    echo -e "2. [被控] 当前连接路径 (V4/V6)"
     echo -e "3. [主控] 实时连接日志"
     echo -e "0. 返回"
     read -p "选择: " m
@@ -276,12 +314,14 @@ main_menu() {
     echo " 2. 安装/更新 Multiy 被控 (NAT 优先)"
     echo " 3. 连接监控中心 (状态 & 路径)"
     echo " 4. 深度清理组件"
+    echo " 5. 凭据与配置中心 (修改/查看)"
     echo " 0. 退出"
     read -p "选择: " c
     case $c in
         1) install_master ;; 2) install_agent ;; 
         3) status_monitor ;;
         4) read -p "确认清理? [y/N]: " cf; [[ "$cf" == "y" ]] && { systemctl stop multiy-master multiy-agent 2>/dev/null; rm -rf "$M_ROOT"; echo "Done"; } ;;
+        5) credential_center ;;
         0) exit 0 ;; *) main_menu ;;
     esac
 }
