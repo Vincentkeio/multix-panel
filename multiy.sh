@@ -134,13 +134,13 @@ EOF
     systemctl restart "${name}"
 }
 
-# --- [ 2. 主控安装：旗舰异步合一版 ] ---
 # --- [ 2. 主控安装：旗舰异步模块化版 ] ---
+# --- [ 2. 主控安装：修正下载校验版 ] ---
 install_master() {
-    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (全异步模块化架构)${PLAIN}"
+    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (路径严谨版)${PLAIN}"
     apt-get install -y python3-pip
     
-    # 强制创建标准目录结构
+    # 1. 物理目录强制初始化
     mkdir -p "$M_ROOT/master/static"
     mkdir -p "$M_ROOT/master/templates/modals"
 
@@ -165,36 +165,45 @@ EOF
     # 2. 生成后端核心 (app.py)
     _generate_master_py
 
-    # 3. 从 GitHub 同步模块化 UI 资源
+    # 3. 从 GitHub 同步 UI 资源
     local RAW_URL="https://raw.githubusercontent.com/Vincentkeio/multix-panel/main/ui"
     local V_CACHE="?v=$(date +%s)"
-    echo -e "${YELLOW}>>> 正在同步云端模块化 UI 资源...${PLAIN}"
+    echo -e "${YELLOW}>>> 正在同步云端 UI 资源...${PLAIN}"
     
-    # 下载 HTML 模板
-    curl -sL -o "$M_ROOT/master/templates/index.html" "$RAW_URL/templates/index.html$V_CACHE"
-    curl -sL -o "$M_ROOT/master/templates/main_nodes.html" "$RAW_URL/templates/main_nodes.html$V_CACHE"
+    # 【核心修复】：增加下载函数，强制校验文件大小
+    _download_ui() {
+        local file_path=$1
+        local target_path=$2
+        echo -ne "  🔹 正在同步 ${file_path} ... "
+        # 使用 -L 跟随重定向，确保下载原始代码
+        curl -sL -o "${target_path}" "${RAW_URL}/${file_path}${V_CACHE}"
+        
+        # 校验：如果文件小于 100 字节，说明下到了 404 文本
+        if [ ! -s "${target_path}" ] || [ $(stat -c%s "${target_path}") -lt 100 ]; then
+            echo -e "${RED}[失败]${PLAIN}"
+            echo -e "${RED}错误：文件内容异常，请确认 GitHub 路径：${RAW_URL}/${file_path}${PLAIN}"
+            exit 1
+        else
+            echo -e "${GREEN}[OK]${PLAIN}"
+        fi
+    }
+
+    # 执行精准下载（确保你的 GitHub 仓库 ui 文件夹下有 templates 和 static 子文件夹）
+    _download_ui "templates/index.html" "$M_ROOT/master/templates/index.html"
+    _download_ui "templates/main_nodes.html" "$M_ROOT/master/templates/main_nodes.html"
+    _download_ui "templates/modals/admin_modal.html" "$M_ROOT/master/templates/modals/admin_modal.html"
+    _download_ui "templates/modals/drawer.html" "$M_ROOT/master/templates/modals/drawer.html"
+    _download_ui "templates/modals/login_modal.html" "$M_ROOT/master/templates/modals/login_modal.html"
     
-    # 下载弹窗碎片
-    curl -sL -o "$M_ROOT/master/templates/modals/admin_modal.html" "$RAW_URL/templates/modals/admin_modal.html$V_CACHE"
-    curl -sL -o "$M_ROOT/master/templates/modals/drawer.html" "$RAW_URL/templates/modals/drawer.html$V_CACHE"
-    curl -sL -o "$M_ROOT/master/templates/modals/login_modal.html" "$RAW_URL/templates/modals/login_modal.html$V_CACHE"
-
-    # 下载静态资源
-    curl -sL -o "$M_ROOT/master/static/tailwind.js" "$RAW_URL/static/tailwind.js$V_CACHE"
-    curl -sL -o "$M_ROOT/master/static/alpine.js" "$RAW_URL/static/alpine.js$V_CACHE"
-    curl -sL -o "$M_ROOT/master/static/dashboard.js" "$RAW_URL/static/dashboard.js$V_CACHE"
-    curl -sL -o "$M_ROOT/master/static/custom.css" "$RAW_URL/static/custom.css$V_CACHE"
-
-    if [ ! -s "$M_ROOT/master/templates/index.html" ]; then
-        echo -e "${RED}❌ 致命错误: 无法获取 UI 文件，请检查网络。${PLAIN}"
-        exit 1
-    fi
+    _download_ui "static/tailwind.js" "$M_ROOT/master/static/tailwind.js"
+    _download_ui "static/alpine.js" "$M_ROOT/master/static/alpine.js"
+    _download_ui "static/dashboard.js" "$M_ROOT/master/static/dashboard.js"
+    _download_ui "static/custom.css" "$M_ROOT/master/static/custom.css"
 
     # 4. 部署并启动服务
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
-
 # --- [ 后端核心逻辑：深度校准 404 修复版 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
