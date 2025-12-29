@@ -155,7 +155,7 @@ EOF
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess
-from flask import Flask, render_template_string, session, redirect, request, jsonify
+from flask import Flask, render_template_string, session, redirect, request, jsonify, send_from_directory
 from werkzeug.serving import make_server
 
 def load_env():
@@ -175,6 +175,12 @@ app.secret_key = TOKEN
 AGENTS = {}
 WS_CLIENTS = {}
 
+# --- [ 核心修复：静态资源路由 ] ---
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    # 告诉 Flask 去这个物理路径找 tailwind.js 和 alpine.js
+    return send_from_directory('/opt/multiy_mvp/master/static', filename)
+
 async def ws_handler(ws):
     addr = ws.remote_address[0]
     sid = str(id(ws))
@@ -188,24 +194,25 @@ async def ws_handler(ws):
                 if sid not in AGENTS:
                     AGENTS[sid] = {
                         "ip": addr, "status": "online", "is_dirty": False,
-                        "physical_nodes": [], "draft_nodes": [], "metrics": {"cpu":0, "mem":0, "net_up":0, "net_down":0}
+                        "physical_nodes": [], "draft_nodes": [], 
+                        "metrics": {"cpu":0, "mem":0, "net_up":0, "net_down":0}
                     }
                 
-                # 核心：确保 metrics 里的数据能被前端 Alpine.js 读取
-                new_metrics = data.get('metrics', {})
+                m = data.get('metrics', {})
                 AGENTS[sid].update({
-                    "hostname": data.get('hostname', 'Node'),
-                    "metrics": new_metrics,
+                    "hostname": data.get('hostname', '未知节点'),
+                    "metrics": {
+                        "cpu": m.get('cpu', 0), "mem": m.get('mem', 0),
+                        "net_up": m.get('net_up', 0), "net_down": m.get('net_down', 0)
+                    },
                     "remote_hash": data.get('config_hash'),
-                    "last_seen": time.time(),
-                    "status": "online"
+                    "last_seen": time.time(), "status": "online"
                 })
 
                 if data.get('type') == 'report_full':
                     AGENTS[sid]["physical_nodes"] = data.get('inbounds', [])
                     if not AGENTS[sid]["is_dirty"]:
                         AGENTS[sid]["draft_nodes"] = data.get('inbounds', [])
-
     except: pass
     finally:
         if sid in AGENTS: AGENTS[sid]["status"] = "offline"
@@ -214,23 +221,32 @@ async def ws_handler(ws):
 @app.route('/')
 def index():
     if not session.get('logged'): return redirect('/login')
-    try:
-        with open("/opt/multiy_mvp/master/index.html", "r", encoding="utf-8") as f:
-            return render_template_string(f.read())
-    except: return "UI Error: index.html Not Found."
+    with open("/opt/multiy_mvp/master/index.html", "r", encoding="utf-8") as f:
+        return render_template_string(f.read())
 
 @app.route('/api/state')
 def api_state():
-    # 对齐前端 UI 的 fetch 需求
     return jsonify({
         "agents": AGENTS,
         "config": {
-            "token": TOKEN,
-            "m_host": env.get('M_HOST'),
+            "token": TOKEN, "m_host": env.get('M_HOST'),
             "ip4": subprocess.getoutput("curl -s4m 1 api.ipify.org || echo 'N/A'"),
             "ip6": subprocess.getoutput("curl -s6m 1 api64.ipify.org || echo 'N/A'")
         }
     })
+
+@app.route('/api/save_draft', methods=['POST'])
+def save_draft():
+    d = request.json
+    sid = d.get('sid')
+    if sid in AGENTS:
+        AGENTS[sid]['draft_nodes'] = d.get('nodes'); AGENTS[sid]['is_dirty'] = True
+        return jsonify({"res": "ok"})
+    return jsonify({"res": "err"}), 404
+
+@app.route('/api/sync_push', methods=['POST'])
+def sync_push():
+    return jsonify({"res": "ok"})
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
