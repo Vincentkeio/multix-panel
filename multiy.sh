@@ -136,9 +136,8 @@ EOF
 
 # --- [ 2. 主控安装：旗舰异步合一版 ] ---
 install_master() {
-    apt-get install -y python3-pip
     clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (全异步合一架构)${PLAIN}"
-    env_cleaner
+    apt-get install -y python3-pip
     mkdir -p "$M_ROOT/master"
 
     echo -e "\n${YELLOW}--- 交互式设置 (回车使用默认值) ---${PLAIN}"
