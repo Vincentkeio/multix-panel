@@ -226,9 +226,7 @@ if __name__ == "__main__":
 EOF
 }
 
-# --- [修复：将原来的裸露 Python 代码包裹在备用生成函数中，防止语法错误] ---
-_generate_master_py_standalone() {
-cat > "$M_ROOT/master/app_standalone.py" << 'EOF'
+
 # [WebSocket 核心逻辑]
 async def ws_handler(ws):
     addr = ws.remote_address[0]
