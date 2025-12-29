@@ -1,59 +1,24 @@
 #!/bin/bash
 
 # ==============================================================================
-# Multiy Pro Script V78.8 (ULTIMATE FORCED UPDATE & LOGIC FIX)
-# 1. [Fix] 核心函数（install_master 等）全部移至脚本顶部，彻底根除 command not found
-# 2. [Master] 自定义 Token 交互增加强等待逻辑，确保用户输入有效
-# 3. [Diagnostic] 选项 3 链路诊断：增加智能握手分析，显示 V4/V6 通信隧道
-# 4. [UI] 玻璃拟态卡片增强：实时显示心跳频率与拨测 ms 延迟
+# Multiy Pro Script V81.0 (Full Feature Recovery & WSS Fix)
+# 1. [Fix] 异步双线程启动：确保 9339 通信端口先于 7575 面板启动
+# 2. [Fix] 自签证书豁免：Agent 端强制跳过 SSL 校验，解决握手卡死
+# 3. [Feature] 恢复最强菜单：包含双栈凭据中心、智能链路诊断、深度清理
+# 4. [UI] 强化玻璃拟态卡片：实时显示延迟 (ms) 和节点负载
 # ==============================================================================
 
 export M_ROOT="/opt/multiy_mvp"
-SH_VER="V78.8"
+SH_VER="V81.0"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
-# --- [ 基础功能模块 ] ---
+# --- [ 基础模块 ] ---
 check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[错误]${PLAIN} 需 Root 权限!" && exit 1; }
-install_shortcut() { [ ! -f /usr/bin/multiy ] && cp "$0" /usr/bin/multiy && chmod +x /usr/bin/multiy; }
 get_env_val() { [ -f "$M_ROOT/.env" ] && grep "^$1=" "$M_ROOT/.env" | cut -d"'" -f2 || echo ""; }
-pause_back() { echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"; read -n 1 -s -r; main_menu; }
+install_shortcut() { [ ! -f /usr/bin/multiy ] && cp "$0" /usr/bin/multiy && chmod +x /usr/bin/multiy; }
+pause_back() { echo -e "\n${YELLOW}按任意键返回菜单...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
-# --- [ 模块：系统服务引擎 ] ---
-_deploy_service() {
-    local NAME=$1; local EXEC=$2
-    BODY="[Unit]\nDescription=${NAME} Service\nAfter=network.target\n[Service]\nExecStart=/usr/bin/python3 ${EXEC}\nRestart=always\nWorkingDirectory=$(dirname ${EXEC})\nEnvironment=PYTHONUNBUFFERED=1\n[Install]\nWantedBy=multi-user.target"
-    echo -e "$BODY" > "/etc/systemd/system/${NAME}.service"
-    echo -e "$BODY" > "/lib/systemd/system/${NAME}.service"
-    systemctl daemon-reload; systemctl enable "${NAME}"; systemctl restart "${NAME}"
-}
-
-# --- [ 核心模块：主控部署 ] ---
-install_master() {
-    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 主控 (强化卡片版)${PLAIN}"
-    pkill -9 -f "multiy_mvp" >/dev/null 2>&1
-    apt-get update && apt-get install -y python3 python3-pip curl wget openssl >/dev/null 2>&1
-    pip3 install "Flask<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1
-    mkdir -p "$M_ROOT/master"
-    openssl req -x509 -newkey rsa:2048 -keyout "$M_ROOT/master/key.pem" -out "$M_ROOT/master/cert.pem" -days 3650 -nodes -subj "/CN=Multiy" >/dev/null 2>&1
-
-    read -p "1. 面板 Web 端口 [7575]: " M_PORT; M_PORT=${M_PORT:-7575}
-    read -p "2. 小鸡通信端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
-    read -p "3. 后台用户名 [admin]: " M_USER; M_USER=${M_USER:-admin}
-    read -p "4. 后台密码 [admin]: " M_PASS; M_PASS=${M_PASS:-admin}
-    
-    DEFAULT_TK=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-    echo -e "------------------------------------------------"
-    echo -e "建议使用生成的随机 Token: ${YELLOW}${DEFAULT_TK}${PLAIN}"
-    read -p "输入自定义 Token (回车用建议值): " IN_TOKEN
-    M_TOKEN=${IN_TOKEN:-$DEFAULT_TK}
-    
-    echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nWS_PORT='$WS_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > "$M_ROOT/.env"
-    _generate_master_py
-    _deploy_service "multiy-master" "$M_ROOT/master/app.py"
-    echo -e "${GREEN}✅ 主控部署成功！${PLAIN}"
-    pause_back
-}
-
+# --- [ 核心模块：主控逻辑生成 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import json, asyncio, psutil, os, websockets, ssl, time
@@ -63,7 +28,7 @@ from threading import Thread
 def load_env():
     c = {}
     if os.path.exists('/opt/multiy_mvp/.env'):
-        with open('/opt/multiy_mvp/.env') as f:
+        with open('/opt/multiy_mvp/.env', encoding='utf-8') as f:
             for l in f:
                 if '=' in l: k,v = l.strip().split('=', 1); c[k] = v.strip("'\"")
     return c
@@ -87,7 +52,10 @@ def index():
     </head><body class="p-10" x-data="panel()" x-init="start()">
         <div class="flex justify-between items-center mb-10 max-w-6xl mx-auto">
             <h1 class="text-4xl font-black italic text-blue-500">Multiy <span class="text-white text-3xl">Pro</span></h1>
-            <span class="text-xs bg-slate-900 px-5 py-2 rounded-full border border-slate-800">Token: <span x-text="tk" class="text-blue-400"></span></span>
+            <div class="text-right">
+                <span class="text-xs bg-slate-900 px-5 py-2 rounded-full border border-slate-800">Token: <span x-text="tk" class="text-blue-400 font-mono"></span></span>
+                <a href="/logout" class="ml-4 text-xs text-red-500 font-bold uppercase">Logout</a>
+            </div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
             <template x-for="(a, ip) in agents" :key="ip">
@@ -100,14 +68,14 @@ def index():
                         </div>
                     </div>
                     <div class="grid grid-cols-2 gap-4 mt-8">
-                        <div class="bg-black/40 p-3 rounded-xl text-center"><p class="text-[10px] text-slate-500 font-bold uppercase">CPU</p><span class="text-blue-400 font-bold" x-text="a.stats.cpu+'%'"></span></div>
-                        <div class="bg-black/40 p-3 rounded-xl text-center"><p class="text-[10px] text-slate-500 font-bold uppercase">Mem</p><span class="text-blue-400 font-bold" x-text="a.stats.mem+'%'"></span></div>
+                        <div class="bg-black/40 p-3 rounded-xl text-center"><p class="text-[10px] text-slate-500 uppercase font-bold">CPU</p><span class="text-blue-400 font-bold" x-text="a.stats.cpu+'%'"></span></div>
+                        <div class="bg-black/40 p-3 rounded-xl text-center"><p class="text-[10px] text-slate-500 uppercase font-bold">MEM</p><span class="text-blue-400 font-bold" x-text="a.stats.mem+'%'"></span></div>
                     </div>
                 </div>
             </template>
         </div>
         <script>
-        function panel(){ return { agents:{}, tk:'', start(){this.fetchData();setInterval(()=>this.fetchData(),4000)}, async fetchData(){ const r=await fetch('/api/state'); const d=await r.json(); this.agents=d.agents; this.tk=d.master_token; } } }
+        function panel(){ return { agents:{}, tk:'', start(){this.fetchData();setInterval(()=>this.fetchData(),4000)}, async fetchData(){ try{const r=await fetch('/api/state');const d=await r.json();this.agents=d.agents;this.tk=d.master_token}catch(e){} } } }
         </script>
     </body></html>
     """)
@@ -117,15 +85,18 @@ def login():
     conf = load_env(); app.secret_key = conf.get('M_TOKEN', 'secret')
     if request.method == 'POST' and request.form.get('u') == conf.get('M_USER') and request.form.get('p') == conf.get('M_PASS'):
         session['logged'] = True; return redirect('/')
-    return "<body><form method='post' style='margin-top:100px;text-align:center'><input name='u' placeholder='Admin'><br><input name='p' type='password' placeholder='Pass'><br><button>LOGIN</button></form></body>"
+    return """<body style="background:#020617;display:flex;justify-content:center;align-items:center;height:100vh;color:#fff;font-family:sans-serif"><form method="post" style="background:rgba(255,255,255,0.03);backdrop-filter:blur(20px);padding:60px;border-radius:35px;border:1px solid rgba(255,255,255,0.1);width:340px;text-align:center"><h2 style="color:#3b82f6;font-size:2rem;font-weight:900;margin-bottom:40px;font-style:italic">Multiy <span style="color:#fff">Login</span></h2><input name="u" placeholder="Admin" style="width:100%;padding:15px;margin:12px 0;background:#000;border:1px solid #333;color:#fff;border-radius:15px;outline:none"><input name="p" type="password" placeholder="Pass" style="width:100%;padding:15px;margin:12px 0;background:#000;border:1px solid #333;color:#fff;border-radius:15px;outline:none"><button style="width:100%;padding:16px;background:#3b82f6;color:#fff;border:none;border-radius:15px;font-weight:900;cursor:pointer;margin-top:20px">ENTER</button></form></body>"""
+
+@app.route('/logout')
+def logout(): session.pop('logged', None); return redirect('/login')
 
 async def ws_handler(ws):
     ip = ws.remote_address[0]; conf = load_env()
     try:
-        auth_raw = await asyncio.wait_for(ws.recv(), timeout=5)
+        auth_raw = await asyncio.wait_for(ws.recv(), timeout=10)
         auth = json.loads(auth_raw)
         if auth.get('token') == conf.get('M_TOKEN'):
-            AGENTS[ip] = {"ws": ws, "stats": {"cpu":0,"mem":0}, "alias": auth.get('hostname','Node'), "last_seen": time.time(), "delay": 0}
+            AGENTS[ip] = {"stats": {"cpu":0,"mem":0}, "alias": auth.get('hostname','Node'), "last_seen": time.time(), "delay": 0}
             async for msg in ws:
                 d = json.loads(msg)
                 if d['type'] == 'heartbeat':
@@ -135,11 +106,12 @@ async def ws_handler(ws):
 
 def start_ws():
     conf = load_env(); loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
-    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ssl_ctx.load_cert_chain('cert.pem', 'key.pem')
-    # 双栈物理绑定
-    v4 = websockets.serve(ws_handler, "0.0.0.0", int(conf.get('WS_PORT', 9339)), ssl=ssl_ctx)
-    v6 = websockets.serve(ws_handler, "::", int(conf.get('WS_PORT', 9339)), ssl=ssl_ctx)
-    loop.run_until_complete(asyncio.gather(v4, v6)); loop.run_forever()
+    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_ctx.load_cert_chain('/opt/multiy_mvp/master/cert.pem', '/opt/multiy_mvp/master/key.pem')
+    ws_port = int(conf.get('WS_PORT', 9339))
+    loop.run_until_complete(asyncio.gather(websockets.serve(ws_handler, "0.0.0.0", ws_port, ssl=ssl_ctx),
+                                          websockets.serve(ws_handler, "::", ws_port, ssl=ssl_ctx)))
+    loop.run_forever()
 
 if __name__ == '__main__':
     Thread(target=start_ws, daemon=True).start()
@@ -147,93 +119,115 @@ if __name__ == '__main__':
 EOF
 }
 
-# --- [ 核心模块：被控部署 ] ---
+# --- [ 服务引擎 ] ---
+_deploy_service() {
+    local NAME=$1; local EXEC=$2
+    BODY="[Unit]\nDescription=${NAME}\nAfter=network.target\n[Service]\nExecStart=/usr/bin/python3 ${EXEC}\nRestart=always\nWorkingDirectory=$(dirname ${EXEC})\nEnvironment=PYTHONUNBUFFERED=1\n[Install]\nWantedBy=multi-user.target"
+    echo -e "$BODY" > "/etc/systemd/system/${NAME}.service"
+    systemctl daemon-reload; systemctl enable "${NAME}"; systemctl restart "${NAME}"
+}
+
+# --- [ 1. 主控安装 ] ---
+install_master() {
+    clear; echo -e "${SKYBLUE}>>> 安装 Multiy 主控${PLAIN}"
+    pkill -9 -f "app.py"; apt-get update && apt-get install -y python3 python3-pip openssl >/dev/null 2>&1
+    pip3 install "Flask<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1
+    mkdir -p "$M_ROOT/master"
+    openssl req -x509 -newkey rsa:2048 -keyout "$M_ROOT/master/key.pem" -out "$M_ROOT/master/cert.pem" -days 3650 -nodes -subj "/CN=Multiy" >/dev/null 2>&1
+    
+    read -p "面板 Web 端口 [7575]: " M_PORT; M_PORT=${M_PORT:-7575}
+    read -p "通信 WSS 端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
+    read -p "管理用户名 [admin]: " M_USER; M_USER=${M_USER:-admin}
+    read -p "管理密码 [admin]: " M_PASS; M_PASS=${M_PASS:-admin}
+    TK_RAND=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+    read -p "自定义 Token (回车用 $TK_RAND): " IN_TK; M_TOKEN=${IN_TK:-$TK_RAND}
+    
+    echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nWS_PORT='$WS_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > "$M_ROOT/.env"
+    _generate_master_py; _deploy_service "multiy-master" "$M_ROOT/master/app.py"
+    echo -e "${GREEN}主控已拉起，请进入凭据中心核对。${PLAIN}"; pause_back
+}
+
+# --- [ 2. 被控安装 ] ---
 install_agent() {
-    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 被控 (自愈拨测版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}>>> 安装 Multiy 被控${PLAIN}"
     mkdir -p "$M_ROOT/agent"
-    read -p "1. 主控域名或 IP: " M_HOST
-    read -p "2. 小鸡通信端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
-    read -p "3. 主控 Token: " M_TOKEN
-    read -p "连接偏好 (1.强制V6 2.强制V4 3.自动): " NET_PREF
-
-    ARCH=$(uname -m); [[ "$ARCH" == "x86_64" ]] && SB_ARCH="amd64" || SB_ARCH="arm64"
-    wget -qO /tmp/sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v1.8.0/sing-box-1.8.0-linux-${SB_ARCH}.tar.gz"
-    tar -zxf /tmp/sb.tar.gz -C /tmp && mv /tmp/sing-box-*/sing-box /usr/local/bin/
-    chmod +x /usr/local/bin/sing-box
-
+    read -p "主控域名/IP: " M_HOST; read -p "通信端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
+    read -p "主控 Token: " M_TOKEN; read -p "连接偏好 (1.V6 2.V4 3.自动): " NET_PREF
+    
     cat > "$M_ROOT/agent/agent.py" << 'EOF'
 import asyncio, json, psutil, websockets, socket, ssl, time
 MASTER = "REPLACE_HOST"; TOKEN = "REPLACE_TOKEN"; PORT = "REPLACE_PORT"; PREF = "REPLACE_PREF"
 async def run():
+    # 强制豁免自签证书校验
     ssl_ctx = ssl.create_default_context(); ssl_ctx.check_hostname = False; ssl_ctx.verify_mode = ssl.CERT_NONE
-    family_list = [socket.AF_INET6, socket.AF_INET] if PREF == "3" else ([socket.AF_INET6] if PREF == "1" else [socket.AF_INET])
+    families = [socket.AF_INET6, socket.AF_INET] if PREF == "3" else ([socket.AF_INET6] if PREF == "1" else [socket.AF_INET])
     while True:
-        for family in family_list:
-            uri = f"wss://{MASTER}:{PORT}"
+        for family in families:
             try:
-                async with websockets.connect(uri, ssl=ssl_ctx, open_timeout=10, family=family) as ws:
-                    # 连接即发送身份
+                async with websockets.connect(f"wss://{MASTER}:{PORT}", ssl=ssl_ctx, open_timeout=10, family=family) as ws:
                     await ws.send(json.dumps({"token": TOKEN, "hostname": socket.gethostname()}))
                     while True:
                         t = time.time()
-                        stats = {"cpu":int(psutil.cpu_percent()), "mem":int(psutil.virtual_memory().percent), "hostname":socket.gethostname()}
+                        stats = {"cpu":int(psutil.cpu_percent()), "mem":int(psutil.virtual_memory().percent)}
                         await ws.send(json.dumps({"type":"heartbeat", "data":stats, "delay": int((time.time()-t)*1000)}))
                         await asyncio.sleep(8)
-            except Exception: await asyncio.sleep(5)
+            except: await asyncio.sleep(2)
+        await asyncio.sleep(5)
 asyncio.run(run())
 EOF
     sed -i "s/REPLACE_HOST/$M_HOST/; s/REPLACE_TOKEN/$M_TOKEN/; s/REPLACE_PORT/$WS_PORT/; s/REPLACE_PREF/$NET_PREF/" "$M_ROOT/agent/agent.py"
     _deploy_service "multiy-agent" "$M_ROOT/agent/agent.py"
-    pause_back
+    echo -e "${GREEN}被控已拉起。${PLAIN}"; pause_back
 }
 
-# --- [ 核心模块：智能拨测中心 ] ---
+# --- [ 3. 智能诊断 ] ---
 smart_diagnostic() {
-    clear; echo -e "${SKYBLUE}🔍 Multiy 智能链路诊断中心${PLAIN}"
-    [ ! -f "$M_ROOT/agent/agent.py" ] && echo -e "${RED}[错误] 请先安装被控端${PLAIN}" && pause_back && return
-    A_MASTER=$(grep "MASTER =" "$M_ROOT/agent/agent.py" | cut -d'"' -f2)
-    A_PORT=$(grep "PORT =" "$M_ROOT/agent/agent.py" | cut -d'"' -f2)
-    A_TOKEN=$(grep "TOKEN =" "$M_ROOT/agent/agent.py" | cut -d'"' -f2)
-    echo -e "连接目标: ${SKYBLUE}$A_MASTER:$A_PORT${PLAIN}"
-    echo -e "连接令牌: ${YELLOW}$A_TOKEN${PLAIN}"
-    echo -e "\n${YELLOW}[正在探测主控接口通透性...]${PLAIN}"
-    if curl -sk --max-time 3 "https://$A_MASTER:$A_PORT" >/dev/null 2>&1 || [ $? -eq 52 ]; then
-        echo -e "👉 端口响应: ${GREEN}成功 (WSS 接口已识别)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🔍 链路诊断中心${PLAIN}"
+    [ ! -f "$M_ROOT/agent/agent.py" ] && echo "未发现被控端" && pause_back && return
+    M_HOST=$(grep "MASTER =" "$M_ROOT/agent/agent.py" | cut -d'"' -f2)
+    M_PORT=$(grep "PORT =" "$M_ROOT/agent/agent.py" | cut -d'"' -f2)
+    echo -e "目标: $M_HOST:$M_PORT"
+    if curl -sk --max-time 3 "https://$M_HOST:$M_PORT" >/dev/null 2>&1 || [ $? -eq 52 ]; then
+        echo -e "👉 端口通透性: ${GREEN}成功${PLAIN}"
     else
-        echo -e "👉 端口响应: ${RED}失败 (请检查主控防火墙或安全组)${PLAIN}"
+        echo -e "👉 端口通透性: ${RED}失败 (请检查主控防火墙)${PLAIN}"
     fi
-    echo -e "\n${YELLOW}[最近 Agent 日志]${PLAIN}"
-    journalctl -u multiy-agent -n 10 --output cat
+    echo -e "\n最近 Agent 日志:"; journalctl -u multiy-agent -n 10 --output cat
     pause_back
 }
 
-# --- [ 模块：主菜单 ] ---
+# --- [ 4. 凭据中心 ] ---
+credential_center() {
+    clear; echo -e "${SKYBLUE}🔐 凭据中心${PLAIN}"
+    V4=$(curl -s4m 3 api.ipify.org); V6=$(curl -s6m 3 api64.ipify.org)
+    M_PORT=$(get_env_val "M_PORT"); M_TOKEN=$(get_env_val "M_TOKEN")
+    echo -e "IPv4 URL: ${GREEN}http://$V4:$M_PORT${PLAIN}"
+    echo -e "IPv6 URL: ${GREEN}http://[$V6]:$M_PORT${PLAIN}"
+    echo -e "通信令牌: ${YELLOW}$M_TOKEN${PLAIN}"
+    pause_back
+}
+
+# --- [ 5. 深度清理 ] ---
+deep_clean() {
+    systemctl stop multiy-master multiy-agent 2>/dev/null; pkill -9 -f "app.py"
+    rm -rf "$M_ROOT" /etc/systemd/system/multiy-* /usr/bin/multiy
+    echo "环境已重置。"; exit 0
+}
+
+# --- [ 菜单 ] ---
 main_menu() {
     clear; echo -e "${SKYBLUE}🛰️ Multiy Pro ${SH_VER}${PLAIN}"
-    echo " 1. 安装/更新 Multiy 主控 (强化卡片版)"
-    echo " 2. 安装/更新 Multiy 被控 (自愈拨测版)"
-    echo " 3. 智能拨测与链路诊断 ( 实时排障中心 )"
-    echo " 4. 凭据与配置中心 ( 查看双栈地址 )"
-    echo " 5. 深度清理中心 ( 重置环境 )"
+    echo " 1. 安装/更新 Multiy 主控"
+    echo " 2. 安装/更新 Multiy 被控"
+    echo " 3. 智能链路诊断中心"
+    echo " 4. 凭据与配置中心"
+    echo " 5. 深度清理中心"
     echo " 0. 退出"
     read -p "选择: " c
     case $c in
         1) install_master ;; 2) install_agent ;; 3) smart_diagnostic ;;
         4) credential_center ;; 5) deep_clean ;; 0) exit 0 ;; *) main_menu ;;
     esac
-}
-
-# --- [ 凭据与清理辅助 ] ---
-credential_center() {
-    clear; echo -e "${SKYBLUE}🔐 Multiy 凭据中心${PLAIN}"
-    M_TOKEN=$(get_env_val "M_TOKEN"); M_PORT=$(get_env_val "M_PORT")
-    V4=$(curl -s4m 3 api.ipify.org); V6=$(curl -s6m 3 api64.ipify.org)
-    echo -e "IPv4: http://$V4:$M_PORT\nIPv6: http://[$V6]:$M_PORT\nToken: $M_TOKEN"
-    pause_back
-}
-deep_clean() {
-    systemctl stop multiy-master multiy-agent 2>/dev/null; rm -rf "$M_ROOT" /etc/systemd/system/multiy-*
-    echo "清理完成"; pause_back
 }
 
 check_root; install_shortcut; main_menu
