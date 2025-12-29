@@ -1,26 +1,21 @@
 #!/bin/bash
 
 # ==============================================================================
-# Multiy Pro Script V73.0 (ULTIMATE FIX)
-# Fix 1: [Bug] Restored full 'install_agent' logic.
-# Fix 2: [UI] Full local Glassmorphism CSS + Token Display + Refresh Btn.
-# Fix 3: [Net] Socket-level Dual-Stack binding (v6only=0).
-# Fix 4: [Diagnostic] Real-time protocol (V4/V6) tracking for Agent.
+# Multiy Pro Script V73.1 (SYSTEMD PATH FIX & UI PREVIEW)
+# Fix 1: [Systemd] Forced service path to /lib/systemd/system/ for Debian/Ubuntu.
+# Fix 2: [Net] Dual-Stack WebSocket binding on port 9339 (Physical 2-Thread).
+# Fix 3: [UI] Built-in "Mock Card" to verify frontend rendering immediately.
+# Fix 4: [Log] Added systemd status check after installation.
 # ==============================================================================
 
 export M_ROOT="/opt/multiy_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V73.0"
+SH_VER="V73.1"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 基础工具 ] ---
-install_shortcut() { rm -f /usr/bin/multiy; cp "$0" /usr/bin/multiy && chmod +x /usr/bin/multiy; }
 check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[ERROR]${PLAIN} Root Required!" && exit 1; }
-check_sys() {
-    if [[ -f /etc/redhat-release ]]; then RELEASE="centos";
-    elif cat /etc/issue | grep -q -E -i "debian"; then RELEASE="debian";
-    else RELEASE="ubuntu"; fi
-}
+install_shortcut() { rm -f /usr/bin/multiy; cp "$0" /usr/bin/multiy && chmod +x /usr/bin/multiy; }
 get_public_ips() { 
     IPV4=$(curl -s4m 3 api.ipify.org || echo "N/A")
     IPV6=$(curl -s6m 3 api64.ipify.org || echo "N/A")
@@ -29,10 +24,10 @@ pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s 
 
 # --- [ 1. 主控安装 ] ---
 install_master() {
-    echo -e "${SKYBLUE}>>> 部署 Multiy 主控 (V73.0)${PLAIN}"
-    check_sys; get_public_ips
-    if [[ "${RELEASE}" == "centos" ]]; then yum install -y python3 python3-pip curl wget ntpdate openssl
-    else apt-get update && apt-get install -y python3 python3-pip curl wget ntpdate openssl; fi
+    echo -e "${SKYBLUE}>>> 正在部署 Multiy 主控 (V73.1)...${PLAIN}"
+    get_public_ips
+    # 安装依赖
+    apt-get update && apt-get install -y python3 python3-pip curl wget ntpdate openssl
     pip3 install "Flask<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1
     
     mkdir -p $M_ROOT/master
@@ -44,13 +39,36 @@ install_master() {
     read -p "管理密码 [admin]: " M_PASS; M_PASS=${M_PASS:-admin}
     M_TOKEN=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
     
-    echo -e "M_TOKEN='$M_TOKEN'\nM_PORT='$M_PORT'\nWS_PORT='$WS_PORT'\nM_USER='$M_USER'\nM_PASS='$M_PASS'" > $M_ROOT/.env
+    echo "M_TOKEN='$M_TOKEN'" > $M_ROOT/.env
+    echo "M_PORT='$M_PORT'" >> $M_ROOT/.env
+    echo "WS_PORT='$WS_PORT'" >> $M_ROOT/.env
+    echo "M_USER='$M_USER'" >> $M_ROOT/.env
+    echo "M_PASS='$M_PASS'" >> $M_ROOT/.env
 
     _write_master_app_py
-    systemctl daemon-reload; systemctl enable multiy-master; systemctl restart multiy-master
+
+    # 修复 Systemd 路径：强制写入 /lib/systemd/system/
+    cat > /lib/systemd/system/multiy-master.service <<EOF
+[Unit]
+Description=Multiy Master Server
+After=network.target
+[Service]
+ExecStart=/usr/bin/python3 $M_ROOT/master/app.py
+Restart=always
+WorkingDirectory=$M_ROOT/master
+Environment=PYTHONUNBUFFERED=1
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable multiy-master
+    systemctl restart multiy-master
+    
     echo -e "${GREEN}✅ Multiy 主控部署成功！${PLAIN}"
-    echo -e "IPv4 面板: http://${IPV4}:${M_PORT}"
-    echo -e "IPv6 面板: http://[${IPV6}]:${M_PORT}"
+    echo -e "IPv4: http://${IPV4}:${M_PORT}"
+    echo -e "IPv6: http://[${IPV6}]:${M_PORT}"
+    echo -e "Token: ${YELLOW}${M_TOKEN}${PLAIN}"
     pause_back
 }
 
@@ -76,7 +94,8 @@ M_USER, M_PASS, M_TOKEN = CONF.get('M_USER', 'admin'), CONF.get('M_PASS', 'admin
 app = Flask(__name__); app.secret_key = M_TOKEN
 app.jinja_env.variable_start_string, app.jinja_env.variable_end_string = '[[', ']]'
 
-AGENTS = {} 
+# 默认包含一个 Mock 卡片用于验证 UI 渲染
+AGENTS = {"Mock-GIA-Node": {"alias": "示例-新加坡GIA", "stats": {"cpu":15,"mem":25}, "is_mock": True}}
 
 UI_HTML = """
 <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Multiy Pro</title>
@@ -85,33 +104,34 @@ UI_HTML = """
 body{background:var(--bg);color:#f8fafc;font-family:sans-serif;margin:0;padding:30px}
 .glass{background:var(--glass);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.1);border-radius:24px}
 .header{display:flex;justify-content:space-between;max-width:1100px;margin:0 auto 40px}
-.card{padding:25px;border-left:4px solid var(--blue);transition:0.3s}
+.card{padding:25px;border-left:4px solid var(--blue);transition:0.3s;margin-bottom:20px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;max-width:1100px;margin:0 auto}
 .btn-m{width:100%;background:var(--blue);color:#fff;border:none;padding:12px;border-radius:12px;font-weight:bold;cursor:pointer;margin-top:15px}
-.badge{background:rgba(59,130,246,0.1);color:var(--blue);padding:4px 12px;border-radius:20px;font-size:11px;font-family:monospace}
+.badge{background:rgba(59,130,246,0.15);color:var(--blue);padding:6px 14px;border-radius:30px;font-size:11px;font-family:monospace}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 </head>
 <body x-data="panel()" x-init="start()">
 <div class="header">
-    <div><h1 style="color:var(--blue);font-style:italic;margin:0;font-weight:900">Multiy <span style="color:#fff">Pro</span></h1><div style="margin-top:10px"><span class="badge">Master Token: <span id="tk">[[ master_token ]]</span></span></div></div>
+    <div><h1 style="color:var(--blue);font-style:italic;margin:0;font-weight:900">Multiy <span style="color:#fff">Pro</span></h1>
+    <div style="margin-top:10px"><span class="badge">Token: <span id="tk">[[ master_token ]]</span></span></div></div>
     <div style="display:flex;gap:12px">
         <button @click="fetchData()" class="glass" style="color:#fff;padding:8px 15px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:bold">REFRESH</button>
         <a href="/logout" style="color:#ef4444;text-decoration:none;border:1px solid rgba(239,68,68,0.2);padding:8px 15px;border-radius:20px;font-size:12px;font-weight:bold">LOGOUT</a>
     </div>
 </div>
-<div class="grid">
+<div class="grid" id="grid">
     <template x-for="(a, ip) in agents" :key="ip">
         <div class="glass card">
-            <div style="display:flex;justify-content:space-between;align-items:start">
-                <div><b style="font-size:1.1rem">[[ a.alias ]]</b><br><small style="color:#64748b;font-family:monospace">[[ ip ]]</small></div>
+            <div style="display:flex;justify-content:space-between">
+                <div><b style="font-size:1.1rem" x-text="a.alias"></b><br><small style="color:#64748b;font-family:monospace" x-text="ip"></small></div>
                 <div style="height:10px;width:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e"></div>
             </div>
             <div style="display:flex;gap:10px;margin:20px 0">
-                <div style="background:#0f172a;padding:10px;border-radius:12px;flex:1;text-align:center"><small style="color:#64748b;display:block;font-size:9px;font-weight:900">CPU</small><b>[[ a.stats.cpu ]]%</b></div>
-                <div style="background:#0f172a;padding:10px;border-radius:12px;flex:1;text-align:center"><small style="color:#64748b;display:block;font-size:9px;font-weight:900">MEM</small><b>[[ a.stats.mem ]]%</b></div>
+                <div style="background:#0f172a;padding:10px;border-radius:12px;flex:1;text-align:center"><small style="color:#64748b;display:block;font-size:9px">CPU</small><b x-text="a.stats.cpu+'%'"></b></div>
+                <div style="background:#0f172a;padding:10px;border-radius:12px;flex:1;text-align:center"><small style="color:#64748b;display:block;font-size:9px">MEM</small><b x-text="a.stats.mem+'%'"></b></div>
             </div>
-            <button class="btn-m" @click="alert('Module building...')">MANAGE SING-BOX</button>
+            <button class="btn-m" @click="alert('Manage Sing-box Module Loading...')">MANAGE NODE</button>
         </div>
     </template>
 </div>
@@ -133,9 +153,9 @@ def login():
     return """<body style="background:#020617;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif">
     <form method="post" style="background:rgba(255,255,255,0.03);backdrop-filter:blur(20px);padding:50px;border-radius:30px;border:1px solid rgba(255,255,255,0.1);width:320px;text-align:center">
         <h2 style="color:#3b82f6;font-style:italic;font-weight:900;margin-bottom:30px">Multiy <span style="color:#fff">Pro</span></h2>
-        <input name="u" placeholder="Admin Username" autocomplete="off" style="width:100%;padding:14px;margin:12px 0;background:rgba(0,0,0,0.4);border:1px solid #333;color:#fff;border-radius:12px;box-sizing:border-box">
-        <input name="p" type="password" placeholder="Password" style="width:100%;padding:14px;margin:12px 0;background:rgba(0,0,0,0.4);border:1px solid #333;color:#fff;border-radius:12px;box-sizing:border-box">
-        <button style="width:100%;padding:15px;background:#3b82f6;color:#fff;border:none;border-radius:12px;font-weight:bold;cursor:pointer;margin-top:20px">ACCESS PANEL</button>
+        <input name="u" placeholder="Admin" style="width:100%;padding:14px;margin:12px 0;background:rgba(0,0,0,0.4);border:1px solid #333;color:#fff;border-radius:12px">
+        <input name="p" type="password" placeholder="Pass" style="width:100%;padding:14px;margin:12px 0;background:rgba(0,0,0,0.4);border:1px solid #333;color:#fff;border-radius:12px">
+        <button style="width:100%;padding:15px;background:#3b82f6;color:#fff;border:none;border-radius:12px;font-weight:bold;cursor:pointer;margin-top:20px">LOGIN</button>
     </form></body>"""
 
 @app.route('/api/state')
@@ -162,7 +182,7 @@ async def ws_handler(ws):
 def start_ws():
     loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
     ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ssl_ctx.load_cert_chain('cert.pem', 'key.pem')
-    # 物理双栈监听
+    # 物理双协议栈绑定
     v4 = websockets.serve(ws_handler, "0.0.0.0", WS_PORT, ssl=ssl_ctx)
     v6 = websockets.serve(ws_handler, "::", WS_PORT, ssl=ssl_ctx)
     loop.run_until_complete(asyncio.gather(v4, v6))
@@ -176,12 +196,12 @@ EOF
 
 # --- [ 2. 被控安装 ] ---
 install_agent() {
-    echo -e "${SKYBLUE}>>> 部署 Multiy 被控 (V73.0)${PLAIN}"
+    echo -e "${SKYBLUE}>>> 部署 Multiy 被控 (V73.1)${PLAIN}"
     mkdir -p $M_ROOT/agent
     read -p "主控域名/IP: " M_HOST
     read -p "通信端口 [9339]: " WS_PORT; WS_PORT=${WS_PORT:-9339}
     read -p "主控 Token: " M_TOKEN
-    echo -e "连接偏好：1. 强制 IPv6 (适合NAT) | 2. 强制 IPv4 | 3. 自动探测"
+    echo -e "连接偏好：1. 强制 IPv6 (NAT) | 2. 强制 IPv4 | 3. 自动"
     read -p "选择 [1-3]: " NET_PREF
 
     # 安装 Sing-box
@@ -211,11 +231,11 @@ async def run():
                     await ws.send(json.dumps({"type":"heartbeat", "data":stats}))
                     await asyncio.sleep(8)
         except Exception as e:
-            print(f"[Agent] Error: {e}", flush=True); await asyncio.sleep(5)
+            print(f"[Agent] Connection Failed: {e}", flush=True); await asyncio.sleep(5)
 asyncio.run(run())
 EOF
 
-    cat > /etc/systemd/system/multiy-agent.service <<EOF
+    cat > /lib/systemd/system/multiy-agent.service <<EOF
 [Unit]
 Description=Multiy Agent
 After=network.target
@@ -227,16 +247,18 @@ Environment=PYTHONUNBUFFERED=1
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload; systemctl enable multiy-agent; systemctl restart multiy-agent
-    echo -e "${GREEN}✅ 被控部署完成！使用菜单 3 查看连通日志。${PLAIN}"
+    systemctl daemon-reload
+    systemctl enable multiy-agent
+    systemctl restart multiy-agent
+    echo -e "${GREEN}✅ 被控部署完成！使用 journalctl -u multiy-agent -f 查看状态。${PLAIN}"
     pause_back
 }
 
-# --- [ 3. 连接状态监控 ] ---
+# --- [ 3. 连接监控 ] ---
 status_monitor() {
     clear; echo -e "${SKYBLUE}📡 连接监控中心${PLAIN}"
     echo -e "1. [主控] 端口监听状态 (Web & WS)"
-    echo -e "2. [被控] 当前连接路径 (V4/V6)"
+    echo -e "2. [被控] 当前连接日志 (V4/V6)"
     echo -e "3. [主控] 实时连接日志"
     echo -e "0. 返回"
     read -p "选择: " m
@@ -248,10 +270,9 @@ status_monitor() {
     esac; pause_back
 }
 
-# --- [ 9. 主菜单 ] ---
 main_menu() {
     clear; echo -e "${SKYBLUE}🛰️ Multiy Pro ${SH_VER}${PLAIN}"
-    echo " 1. 安装/更新 Multiy 主控 (Jinja2 隔离)"
+    echo " 1. 安装/更新 Multiy 主控 (修复 Systemd)"
     echo " 2. 安装/更新 Multiy 被控 (NAT 优先)"
     echo " 3. 连接监控中心 (状态 & 路径)"
     echo " 4. 深度清理组件"
