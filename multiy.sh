@@ -639,7 +639,7 @@ smart_diagnostic() {
 }
 
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ Multiy Pro ${SH_VER}${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ Multiy Pro Beta${SH_VER}${PLAIN}"
     echo " 1. 安装/物理自愈主控 (旗舰合一版)"
     echo " 2. 安装/更新被控 (原生双栈隧道)"
     echo " 3. 实时凭据与监听看板"
