@@ -15,7 +15,7 @@ env_cleaner() {
     echo -e "${YELLOW}>>> 正在执行环境物理级大扫除...${PLAIN}"
     systemctl stop multiy-master multiy-agent 2>/dev/null
     pkill -9 python3 2>/dev/null
-    apt-get install -y python3-pip
+
     # 彻底卸载冲突库
     python3 -m pip uninstall -y python-socketio eventlet python-engineio websockets flask 2>/dev/null
     # 安装旗舰版所需三件套
@@ -76,6 +76,7 @@ credential_center() {
 }
 
 # --- [ 2. 主控安装 (找回全部功能) ] ---
+apt-get install -y python3-pip
 install_master() {
     clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (全异步合一架构)${PLAIN}"
     env_cleaner
@@ -488,8 +489,9 @@ if __name__ == "__main__":
 EOF
 }
 
-# --- [ 3. 被控端安装 (找回自愈功能) ] ---
+
 # --- [ 3. 被控端安装 (全能仆人旗舰版) ] ---
+apt-get install -y python3-pip
 install_agent() {
     clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰被控 (Hybrid 状态对齐版)${PLAIN}"
     mkdir -p "$M_ROOT/agent"
