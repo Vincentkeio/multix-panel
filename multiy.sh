@@ -86,7 +86,7 @@ credential_center() {
         local port=$1
         local proto=$2 # tcp 或 tcp6
         if [ "$proto" == "tcp" ]; then
-            netstat -lnpt | grep -q "0.0.0.0:$port " && echo -e "${GREEN}● IPv4 OK${PLAIN}" || echo -e "${RED}○ IPv4 OFF${PLAIN}"
+            netstat -lnpt | grep -q ":::$port " && echo -e "${GREEN}● IPv4 OK${PLAIN}" || echo -e "${RED}○ IPv4 OFF${PLAIN}"
         else
             netstat -lnpt | grep -q ":::$port " && echo -e "${GREEN}● IPv6 OK${PLAIN}" || echo -e "${RED}○ IPv6 OFF${PLAIN}"
         fi
@@ -350,8 +350,8 @@ async def ws_handler(ws):
 
 async def main():
     # 启动双服务
-    await websockets.serve(ws_handler, "0.0.0.0", 9339)
-    srv = make_server('0.0.0.0', 7575, app)
+    await websockets.serve(ws_handler, "::", 9339)
+    srv = make_server('::', 7575, app)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(">>> Multiy Pro Master Active.")
     while True: await asyncio.sleep(1)
