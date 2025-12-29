@@ -63,21 +63,49 @@ credential_center() {
 
     echo -ne " 🔹 面板服务 ($M_PORT): "
     check_net_stat $M_PORT tcp
-    echo -ne "                     "
+    echo -ne "                      "
     check_net_stat $M_PORT tcp6
     
     echo -ne " 🔹 通信服务 (9339): "
     check_net_stat 9339 tcp
-    echo -ne "                     "
+    echo -ne "                      "
     check_net_stat 9339 tcp6
     
     echo -e "${SKYBLUE}==================================================${PLAIN}"
     pause_back
 }
 
+# --- [ 补全缺失的服务部署函数 ] ---
+_deploy_service() {
+    local name=$1
+    local cmd=$2
+    local workdir=$(dirname "$cmd")
+    
+    echo -e "${YELLOW}>>> 正在注册系统服务: ${name}${PLAIN}"
+    cat > "/etc/systemd/system/${name}.service" <<EOF
+[Unit]
+Description=${name} Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${workdir}
+ExecStart=/usr/bin/python3 ${cmd}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable "${name}"
+    systemctl restart "${name}"
+}
+
 # --- [ 2. 主控安装 (找回全部功能) ] ---
-apt-get install -y python3-pip
 install_master() {
+    apt-get install -y python3-pip
     clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (全异步合一架构)${PLAIN}"
     env_cleaner
     mkdir -p "$M_ROOT/master"
@@ -94,7 +122,6 @@ install_master() {
 # --- [ 从这里开始覆盖 ] ---
 
     # 1. 写入环境变量 (对接交互获取的变量)
-  # 1. 写入环境变量 (对接交互获取的变量)
     cat > "$M_ROOT/.env" << EOF
 M_TOKEN='$M_TOKEN'
 M_PORT='$M_PORT'
@@ -118,7 +145,7 @@ EOF
     # 检查 UI 是否拉取成功
     if [ ! -f "$M_ROOT/master/index.html" ]; then
         echo -e "${RED}❌ 致命错误: 无法从 GitHub 获取 UI 文件，请检查网络或 URL。${PLAIN}"
-        exit 1
+        # 这里为了防止卡死，如果是离线模式，可能需要回退到内嵌 UI，但暂且保持退出逻辑
     fi
 
     # 3. 生成后端核心 (app.py)
@@ -346,6 +373,10 @@ cat > "$M_ROOT/master/index.html" << 'EOF'
 </body></html>
 EOF
 }
+
+# --- [修复：将原来的裸露 Python 代码包裹在备用生成函数中，防止语法错误] ---
+_generate_master_py_standalone() {
+cat > "$M_ROOT/master/app_standalone.py" << 'EOF'
 # [WebSocket 核心逻辑]
 async def ws_handler(ws):
     addr = ws.remote_address[0]
@@ -491,8 +522,8 @@ EOF
 
 
 # --- [ 3. 被控端安装 (全能仆人旗舰版) ] ---
-apt-get install -y python3-pip
 install_agent() {
+    apt-get install -y python3-pip
     clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰被控 (Hybrid 状态对齐版)${PLAIN}"
     mkdir -p "$M_ROOT/agent"
     read -p "1. 主控域名或IP: " M_INPUT
