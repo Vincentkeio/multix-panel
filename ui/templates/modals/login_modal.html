@@ -6,7 +6,7 @@
      @click.away="showLoginModal = false"
      x-cloak>
     
-    <div class="glass-flat w-full max-w-md p-8 rounded-[2.5rem] border border-white/10 shadow-2xl relative overflow-hidden">
+    <div class="glass-flat w-full max-w-md p-8 rounded-[2.5rem] border border-white/10 shadow-2xl relative overflow-hidden" @click.stop>
         <div class="absolute -top-24 -right-24 w-48 h-48 bg-blue-500/10 rounded-full blur-3xl"></div>
         
         <div class="relative z-10">
@@ -22,15 +22,15 @@
                 <div class="group">
                     <label class="text-[9px] text-slate-500 font-black uppercase mb-2 block ml-2">Username</label>
                     <input type="text" x-model="loginUser" 
-                           class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-blue-500/50 outline-none transition transition-all"
+                           class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-blue-500/50 outline-none transition-all text-white"
                            placeholder="输入管理员账号">
                 </div>
                 <div class="group">
                     <label class="text-[9px] text-slate-500 font-black uppercase mb-2 block ml-2">Password</label>
                     <input type="password" x-model="loginPass" 
-                           class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-blue-500/50 outline-none transition transition-all"
-                           placeholder="输入管理员密码"
-                           @keyup.enter="doLogin()">
+                           @keyup.enter="doLogin()"
+                           class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-blue-500/50 outline-none transition-all text-white"
+                           placeholder="输入管理员密码">
                 </div>
                 
                 <button @click="doLogin()" 
