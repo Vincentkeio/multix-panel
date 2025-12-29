@@ -89,6 +89,9 @@ install_master() {
     TK_RAND=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
     read -p "5. 通信令牌 Token [回车使用: $TK_RAND]: " IN_TK; M_TOKEN=${IN_TK:-$TK_RAND}
 
+# --- [ 从这里开始覆盖 ] ---
+
+    # 1. 写入环境变量 (对接交互获取的变量)
     cat > "$M_ROOT/.env" << EOF
 M_TOKEN='$M_TOKEN'
 M_PORT='$M_PORT'
@@ -97,11 +100,17 @@ M_PASS='$M_PASS'
 M_HOST='$M_HOST'
 EOF
     
+    # 2. 生成后端核心 (app.py)
     _generate_master_py
+    # 3. 生成前端页面 (index.html) - 实现 UI 逻辑分离
+    _generate_master_ui
+    
+    # 4. 部署并启动服务
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
-    echo -e "${GREEN}✅ 部署完成。${PLAIN}"; sleep 2; credential_center
+    echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
 
+# --- [ 后端核心逻辑：处理草稿、同步与指令 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess
@@ -118,11 +127,201 @@ def load_env():
     return c
 
 app = Flask(__name__)
-AGENTS = {}
 env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
 app.secret_key = TOKEN
 
+# 核心内存数据库
+# AGENTS[sid] = { "hostname":..., "metrics":..., "physical_nodes":..., "draft_nodes":..., "is_dirty":... }
+AGENTS = {}
+WS_CLIENTS = {}
+
+async def ws_handler(ws):
+    addr = ws.remote_address[0]
+    sid = str(id(ws))
+    WS_CLIENTS[sid] = ws
+    try:
+        async for msg in ws:
+            data = json.loads(msg)
+            if data.get('token') != TOKEN: continue
+
+            if data.get('type') in ['heartbeat', 'report_full']:
+                if sid not in AGENTS:
+                    AGENTS[sid] = {
+                        "ip": addr, "is_dirty": False, "status": "online",
+                        "physical_nodes": [], "draft_nodes": [], "metrics": {}
+                    }
+                
+                AGENTS[sid].update({
+                    "hostname": data.get('hostname'),
+                    "metrics": data.get('metrics'),
+                    "remote_hash": data.get('config_hash'),
+                    "last_seen": time.time()
+                })
+
+                if data.get('type') == 'report_full':
+                    AGENTS[sid]["physical_nodes"] = data.get('inbounds', [])
+                    if not AGENTS[sid]["is_dirty"]:
+                        AGENTS[sid]["draft_nodes"] = data.get('inbounds', [])
+
+            elif data.get('type') == 'cmd_res':
+                print(f"[CMD] {sid} Res: {data.get('res')}")
+
+    except: pass
+    finally:
+        if sid in AGENTS: AGENTS[sid]["status"] = "offline"
+        WS_CLIENTS.pop(sid, None)
+
+@app.route('/')
+def index():
+    if not session.get('logged'): return redirect('/login')
+    # 热分离：每次访问实时读取本地 HTML 文件
+    try:
+        with open("/opt/multiy_mvp/master/index.html", "r", encoding="utf-8") as f:
+            return render_template_string(f.read())
+    except: return "UI Template Error."
+
+@app.route('/api/state')
+def api_state():
+    return jsonify({"agents": AGENTS, "master": {"token": TOKEN, "host": env.get('M_HOST')}})
+
+@app.route('/api/save_draft', methods=['POST'])
+def save_draft():
+    d = request.json
+    sid = d.get('sid')
+    if sid in AGENTS:
+        AGENTS[sid]['draft_nodes'] = d.get('nodes')
+        AGENTS[sid]['is_dirty'] = True
+        return jsonify({"res": "ok"})
+    return jsonify({"res": "err"}), 404
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST' and request.form.get('u') == env.get('M_USER') and request.form.get('p') == env.get('M_PASS'):
+        session['logged'] = True; return redirect('/')
+    return '''<body style="background:#020617;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif"><form method="post" style="padding:40px;border:1px solid #333;border-radius:20px;background:#0f172a"><h2>MULTIY LOGIN</h2><input name="u" placeholder="User" style="display:block;margin:10px 0;padding:10px;background:#000;color:#fff;border:1px solid #444;width:200px"><input name="p" type="password" placeholder="Pass" style="display:block;margin:10px 0;padding:10px;background:#000;color:#fff;border:1px solid #444;width:200px"><button style="width:100%;padding:10px;background:#3b82f6;color:#fff;border:none;cursor:pointer">ENTER</button></form></body>'''
+
+async def main():
+    ws_server = await websockets.serve(ws_handler, "::", 9339)
+    srv = make_server('::', int(env.get('M_PORT', 7575)), app)
+    await asyncio.gather(asyncio.to_thread(srv.serve_forever), asyncio.Future())
+
+if __name__ == "__main__":
+    asyncio.run(main())
+EOF
+}
+
+# --- [ 前端 UI 设计：极客、简洁、热分离 ] ---
+_generate_master_ui() {
+cat > "$M_ROOT/master/index.html" << 'EOF'
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+<style>
+    body { background: #020617; color: #f8fafc; font-family: 'Inter', sans-serif; }
+    .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
+    .neon-border { box-shadow: 0 0 15px rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.4); }
+</style></head>
+<body class="p-6 md:p-12" x-data="multiy()">
+    <header class="flex justify-between items-center mb-12">
+        <h1 class="text-4xl font-black italic text-blue-500 tracking-tighter cursor-pointer" @click="location.reload()">MULTIY <span class="text-white">PRO</span></h1>
+        <div class="flex gap-4 items-center">
+             <div class="glass px-4 py-1 rounded-lg text-[10px] font-bold text-blue-400">WS: 9339</div>
+        </div>
+    </header>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <template x-for="(n, sid) in agents" :key="sid">
+            <div class="glass p-8 rounded-3xl neon-border relative group transition-all hover:scale-[1.01]">
+                <div class="flex justify-between items-start mb-6">
+                    <div>
+                        <h2 class="text-2xl font-black" x-text="n.hostname"></h2>
+                        <span class="text-[10px] font-mono text-slate-500" x-text="n.ip"></span>
+                    </div>
+                    <div class="status-dot w-2 h-2 rounded-full" :class="n.status=='online'?'bg-green-500 shadow-[0_0_10px_#22c55e]':'bg-red-500'"></div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 mb-8 text-[10px] font-bold uppercase tracking-tighter">
+                    <div class="bg-black/40 p-3 rounded-2xl border border-white/5">
+                        <p class="text-slate-500 mb-1 italic">Resources</p>
+                        <p class="text-blue-400">CPU <span class="text-white" x-text="n.metrics.cpu"></span>% / MEM <span class="text-white" x-text="n.metrics.mem"></span>%</p>
+                    </div>
+                    <div class="bg-black/40 p-3 rounded-2xl border border-white/5 text-right">
+                        <p class="text-slate-500 mb-1 italic">Network</p>
+                        <p class="text-blue-400">↑<span class="text-white" x-text="n.metrics.net_up"></span> ↓<span class="text-white" x-text="n.metrics.net_down"></span></p>
+                    </div>
+                </div>
+
+                <div class="flex gap-3">
+                    <button @click="openNodes(sid)" class="flex-1 bg-blue-600/10 hover:bg-blue-600 py-3 rounded-xl text-[10px] font-black uppercase transition-all tracking-widest">
+                        <i class="ri-list-settings-line mr-1"></i> 节点清单
+                    </button>
+                    <div x-show="n.is_dirty" class="absolute -top-2 -right-2 bg-yellow-500 text-black text-[9px] font-black px-2 py-1 rounded-lg shadow-lg">PENDING</div>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <div x-show="drawer" class="fixed inset-0 z-50 flex justify-end" x-transition>
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="drawer=false"></div>
+        <div class="relative w-full max-w-xl bg-[#020617] h-full border-l border-white/10 p-10 shadow-2xl overflow-y-auto">
+             <div class="flex justify-between items-center mb-10">
+                <h2 class="text-2xl font-black uppercase italic tracking-widest text-blue-500">Node Explorer</h2>
+                <button @click="drawer=false" class="text-2xl"><i class="ri-close-fill"></i></button>
+             </div>
+             
+             <div class="mb-10 p-6 bg-white/5 rounded-2xl border border-white/5">
+                <p class="text-[10px] font-bold text-slate-500 uppercase mb-2">Target Host</p>
+                <div class="text-xl font-black" x-text="curNode.hostname"></div>
+                <div class="text-xs text-blue-400 font-mono" x-text="curNode.ip"></div>
+             </div>
+
+             <div class="space-y-4">
+                 <template x-for="node in curNode.physical_nodes">
+                     <div class="glass p-5 rounded-2xl border-l-4 border-blue-500 flex justify-between items-center group hover:bg-white/5 transition-all">
+                         <div>
+                            <div class="text-sm font-black" x-text="node.tag"></div>
+                            <div class="text-[9px] text-slate-500 font-bold uppercase" x-text="node.type || 'Inbound'"></div>
+                         </div>
+                         <div class="flex gap-4 items-center">
+                            <span class="text-xs font-mono text-blue-400" x-text="node.port"></span>
+                            <button class="text-slate-600 hover:text-white transition-colors"><i class="ri-edit-line text-lg"></i></button>
+                         </div>
+                     </div>
+                 </template>
+             </div>
+        </div>
+    </div>
+
+    <script>
+        function multiy() {
+            return {
+                agents: {}, drawer: false, curNode: {},
+                init() {
+                    this.fetch();
+                    setInterval(() => this.fetch(), 2000);
+                },
+                async fetch() {
+                    try {
+                        const r = await fetch('/api/state');
+                        const d = await r.json();
+                        this.agents = d.agents;
+                        if(this.drawer && this.curNode) {
+                            this.curNode = this.agents[Object.keys(this.agents).find(k => this.agents[k].ip === this.curNode.ip)];
+                        }
+                    } catch(e) {}
+                },
+                openNodes(sid) {
+                    this.curNode = this.agents[sid];
+                    this.drawer = true;
+                }
+            }
+        }
+    </script>
+</body></html>
+EOF
+}
 # [WebSocket 核心逻辑]
 async def ws_handler(ws):
     addr = ws.remote_address[0]
