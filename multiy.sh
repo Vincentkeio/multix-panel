@@ -230,7 +230,8 @@ async def main():
     await asyncio.gather(asyncio.to_thread(srv.serve_forever), asyncio.Future())
 
 if __name__ == "__main__":
-    asyncio.run(main())EOF
+    asyncio.run(main())
+EOF
 }
 
 # --- [ 前端 UI 设计：极客、简洁、热分离 ] ---
