@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # ==============================================================================
-# MultiX Pro Script V68.3 (APT Auto-Fix & Robust Docker Install)
-# Fix 1: Auto-detect and comment out broken 'bullseye-backports' repo to fix apt.
-# Fix 2: Added fallback to Aliyun Docker mirror if official script fails.
-# Fix 3: UI Node Manager fully optimized.
+# MultiX Pro Script V68.4 (Full Docker Stack)
+# Fix 1: Auto-install 3X-UI (Docker Version) if not present.
+# Fix 2: Ensure Agent waits for 3X-UI DB initialization.
+# Fix 3: Unified Docker workflow for both Panel and Agent.
 # ==============================================================================
 
 export M_ROOT="/opt/multix_mvp"
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-SH_VER="V68.3"
+SH_VER="V68.4"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 0. 快捷命令 ] ---
@@ -32,32 +32,22 @@ get_public_ips() {
 }
 pause_back() { echo -e "\n${YELLOW}按任意键返回...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
-# --- [ 2. 环境修复 (含 APT 强力修复) ] ---
+# --- [ 2. 环境修复 (APT自动修复) ] ---
 fix_dual_stack() {
     if grep -q "net.ipv6.bindv6only" /etc/sysctl.conf; then sed -i 's/net.ipv6.bindv6only.*/net.ipv6.bindv6only = 0/' /etc/sysctl.conf
     else echo "net.ipv6.bindv6only = 0" >> /etc/sysctl.conf; fi
     sysctl -p >/dev/null 2>&1
 }
 
-# V68.3 新增: 自动修复损坏的 apt 源
 fix_apt_sources() {
     echo -e "${YELLOW}[INFO]${PLAIN} 正在检查并修复系统源..."
-    
-    # 尝试更新，如果失败则执行修复
     if ! apt-get update -y >/dev/null 2>&1; then
         echo -e "${RED}[WARN]${PLAIN} 系统源更新失败，尝试自动修复..."
-        
-        # 修复1: 允许 Release Info 变更 (Debian 常见问题)
         apt-get update --allow-releaseinfo-change >/dev/null 2>&1
-        
-        # 修复2: 屏蔽损坏的 bullseye-backports (导致 404 的元凶)
         if grep -q "bullseye-backports" /etc/apt/sources.list; then
-            echo -e "${YELLOW}[FIX]${PLAIN} 发现损坏的 backports 源，已自动屏蔽..."
             sed -i '/bullseye-backports/s/^/#/' /etc/apt/sources.list
             sed -i '/bullseye-backports/s/^/#/' /etc/apt/sources.list.d/*.list 2>/dev/null
         fi
-        
-        # 再次尝试更新
         apt-get update -y
     else
         echo -e "${GREEN}[INFO]${PLAIN} 系统源正常"
@@ -78,15 +68,13 @@ install_dependencies() {
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" --break-system-packages >/dev/null 2>&1 || \
     pip3 install "Flask<3.0.0" "Werkzeug<3.0.0" "websockets" "psutil" >/dev/null 2>&1
     
-    # Docker 安装逻辑增强 (V68.3)
+    # Docker 安装逻辑
     if ! command -v docker &> /dev/null; then
         echo -e "${YELLOW}[INFO]${PLAIN} 正在安装 Docker..."
-        # 尝试官方脚本
         if ! curl -fsSL https://get.docker.com | bash; then
             echo -e "${RED}[WARN]${PLAIN} 官方 Docker 安装失败，尝试阿里云镜像..."
             curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
         fi
-        
         systemctl enable docker
         systemctl start docker
     fi
@@ -103,7 +91,9 @@ deep_cleanup() {
     rm -f /etc/systemd/system/multix-master.service /usr/lib/systemd/system/multix-master.service
     systemctl daemon-reload
     
-    docker stop multix-agent 2>/dev/null; docker rm -f multix-agent 2>/dev/null
+    # 清理 Agent 和 3X-UI 容器
+    docker stop multix-agent 3x-ui 2>/dev/null
+    docker rm -f multix-agent 3x-ui 2>/dev/null
     docker rmi $(docker images | grep "multix-agent" | awk '{print $3}') 2>/dev/null
     
     pkill -9 -f "master/app.py"; pkill -9 -f "agent/agent.py"
@@ -572,18 +562,17 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload; systemctl enable multix-master; systemctl restart multix-master
     get_public_ips
-    echo -e "${GREEN}✅ 主控端部署成功 (V68.3)${PLAIN}"
+    echo -e "${GREEN}✅ 主控端部署成功 (V68.4)${PLAIN}"
     echo -e "   入口: http://[${IPV6}]:${M_PORT}"
     echo -e "   入口: http://${IPV4}:${M_PORT}"
     echo -e "   Token: ${YELLOW}$M_TOKEN${PLAIN}"
     pause_back
 }
 
-# --- [ 7. 被控安装 (V68.3 强力修复) ] ---
+# --- [ 7. 被控安装 (V68.4 全栈Docker版) ] ---
 install_agent() {
     install_dependencies; 
     
-    # 强制 Docker 检查
     if ! command -v docker &> /dev/null; then
         echo -e "${RED}[FATAL] Docker 安装失败。请手动执行: curl -fsSL https://get.docker.com | bash${PLAIN}"
         exit 1
@@ -591,9 +580,39 @@ install_agent() {
     
     mkdir -p $M_ROOT/agent
     
+    # --- V68.4 新增: 自动检测并安装 3X-UI Docker版 ---
     if [ ! -d "/etc/x-ui" ]; then
-        echo -e "${RED}未检测到 3X-UI，建议先安装面板！${PLAIN}"
+        echo -e "${YELLOW}[INFO] 未检测到 3X-UI 配置，正在自动部署 Docker 版...${PLAIN}"
+        mkdir -p /etc/x-ui
+        
+        # 启动 mhsanaei/3x-ui 容器 (使用 host 网络，挂载 /etc/x-ui)
+        # 挂载 /etc/x-ui 是为了让 Agent (也挂载了这个目录) 能共享数据库
+        docker run -d \
+            --name 3x-ui \
+            --restart always \
+            --network host \
+            -v /etc/x-ui:/etc/x-ui \
+            -v /etc/x-ui/bin:/usr/local/x-ui/bin \
+            mhsanaei/3x-ui:latest >/dev/null 2>&1
+            
+        echo -e "${GREEN}[OK] 3X-UI 容器已启动 (等待数据库初始化...)${PLAIN}"
+        
+        # 等待数据库文件生成，否则 Agent 启动会报错
+        for i in {1..10}; do
+            if [ -f "/etc/x-ui/x-ui.db" ]; then break; fi
+            echo -n "."
+            sleep 2
+        done
+        echo ""
+    else
+        echo -e "${GREEN}[INFO] 检测到 3X-UI 配置 (/etc/x-ui)${PLAIN}"
+        # 确保容器运行（如果用户只有文件但没跑容器）
+        if ! docker ps | grep -q "3x-ui"; then
+             echo -e "${YELLOW}[INFO] 3X-UI 容器未运行，尝试启动...${PLAIN}"
+             docker run -d --name 3x-ui --restart always --network host -v /etc/x-ui:/etc/x-ui -v /etc/x-ui/bin:/usr/local/x-ui/bin mhsanaei/3x-ui:latest >/dev/null 2>&1 || docker start 3x-ui
+        fi
     fi
+    # -----------------------------------------------
 
     echo -e "${SKYBLUE}>>> 被控配置${PLAIN}"
     read -p "主控域名/IP: " IN_HOST; read -p "Token: " IN_TOKEN
@@ -683,6 +702,7 @@ async def run():
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=5); task = json.loads(msg)
                         if task.get('action') == 'sync_node':
+                            # 重启 3X-UI 容器以生效配置
                             os.system("docker restart 3x-ui")
                             smart_sync_db(task['data'])
                             os.system("docker restart 3x-ui")
@@ -694,21 +714,22 @@ EOF
     cd $M_ROOT/agent; docker build -t multix-agent-v68 .
     docker rm -f multix-agent 2>/dev/null
     docker run -d --name multix-agent --restart always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /etc/x-ui:/app/db_share -v $M_ROOT/agent:/app multix-agent-v68
-    echo -e "${GREEN}✅ 被控启动完成${PLAIN}"; pause_back
+    echo -e "${GREEN}✅ 被控启动完成 (已集成 Docker版 3X-UI)${PLAIN}"; pause_back
 }
 
 # --- [ 8. 运维工具 ] ---
 sys_tools() {
     while true; do
         clear; echo -e "${SKYBLUE}🧰 运维工具箱${PLAIN}"
-        echo " 1. 安装/重置 3X-UI"
+        echo " 1. 手动安装/重置 3X-UI"
         echo " 2. 重置 3X-UI 账号"
         echo " 3. 清空流量"
         echo " 0. 返回"
         read -p "选择: " t
         case $t in
             1) bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) ;;
-            2) docker exec -it 3x-ui x-ui setting ;;
+            # 适配 Docker 版命令
+            2) docker exec -it 3x-ui ./x-ui setting || docker exec -it 3x-ui x-ui setting ;;
             3) sqlite3 $M_ROOT/agent/db_data/x-ui.db "UPDATE client_traffics SET up=0, down=0;" && echo "已清空" ;;
             0) break ;;
         esac; read -n 1 -s -r -p "继续..."
@@ -717,9 +738,9 @@ sys_tools() {
 
 # --- [ 9. 主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V68.3 APT Fix)${PLAIN}"
+    clear; echo -e "${SKYBLUE}🛰️ MultiX Pro (V68.4 Full Docker Stack)${PLAIN}"
     echo " 1. 安装 主控端"
-    echo " 2. 安装 被控端"
+    echo " 2. 安装 被控端 (自动部署3X-UI)"
     echo " 3. 连通测试"
     echo " 4. 被控重启"
     echo " 5. 深度清理"
