@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env python3
 
 # ==============================================================================
 # MultiX Pro Script V70.2 (Syntax & Syntax Fix)
