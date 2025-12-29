@@ -85,6 +85,7 @@ import asyncio, websockets, json, os, time, subprocess
 from flask import Flask, render_template_string, session, redirect, request, jsonify
 from werkzeug.serving import make_server
 
+# [模块：环境配置]
 def load_env():
     c = {}
     path = '/opt/multiy_mvp/.env'
@@ -100,12 +101,14 @@ env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
 app.secret_key = TOKEN
 
+# [模块：WebSocket 通信核心]
 async def ws_handler(ws):
     addr = ws.remote_address[0]
     sid = str(id(ws))
     try:
         async for msg in ws:
             data = json.loads(msg)
+            # 精准校验 Token
             if data.get('type') == 'auth' and data.get('token') == TOKEN:
                 AGENTS[sid] = {
                     "alias": data.get('hostname', 'Node'), "stats": {"cpu":0,"mem":0},
@@ -118,20 +121,93 @@ async def ws_handler(ws):
     finally:
         if sid in AGENTS: del AGENTS[sid]
 
+# [模块：API 路由]
 @app.route('/api/state')
 def api_state():
-    now = time.time()
-    for sid in list(AGENTS.keys()):
-        if now - AGENTS[sid]['last_seen'] > 30: del AGENTS[sid]
     return jsonify({"agents": AGENTS})
 
-@app.route('/api/info')
-def api_info():
-    e = load_env()
-    ip4 = subprocess.getoutput("curl -s4m 1 api.ipify.org || echo 'N/A'")
-    ip6 = subprocess.getoutput("curl -s6m 1 api64.ipify.org || echo 'N/A'")
-    return jsonify({"token": e.get('M_TOKEN'), "ip4": ip4, "ip6": ip6, "m_port": e.get('M_PORT')})
+# [模块：UI 渲染] (支持 Lucide 图标与高级样式)
+INDEX_HTML = """
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+    body { background: #020617; color: #fff; }
+    .glass { background: rgba(255,255,255,0.01); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); border-radius: 2rem; }
+    .card-active { border-color: rgba(59,130,246,0.5); box-shadow: 0 0 20px rgba(59,130,246,0.1); }
+</style></head>
+<body class="p-8 md:p-12" x-data="panel()" x-init="init()">
+    <div class="max-w-7xl mx-auto">
+        <header class="flex justify-between items-center mb-16">
+            <h1 class="text-5xl font-black italic text-blue-600">MULTIY <span class="text-white text-3xl font-light">PRO</span></h1>
+            <div class="glass px-6 py-2 flex items-center gap-3">
+                <span class="text-[10px] font-bold text-blue-400">NODE CLUSTER</span>
+                <span class="text-lg font-black" x-text="Object.keys(agents).length"></span>
+            </div>
+        </header>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <template x-for="(n, sid) in agents" :key="sid">
+                <div class="glass p-10 card-active transition-all">
+                    <div class="flex justify-between items-start mb-8">
+                        <div>
+                            <h2 class="text-2xl font-bold" x-text="n.alias"></h2>
+                            <code class="text-blue-500 text-[10px]" x-text="n.ip"></code>
+                        </div>
+                        <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_#22c55e]"></div>
+                    </div>
+                    <div class="space-y-6">
+                        <div>
+                            <div class="flex justify-between text-[10px] font-bold mb-2 text-slate-400"><span>CPU</span><span x-text="n.stats.cpu+'%'"></span></div>
+                            <div class="h-1 w-full bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-blue-500 transition-all duration-1000" :style="'width:'+n.stats.cpu+'%'"></div></div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-[10px] font-bold mb-2 text-slate-400"><span>MEM</span><span x-text="n.stats.mem+'%'"></span></div>
+                            <div class="h-1 w-full bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500 transition-all duration-1000" :style="'width:'+n.stats.mem+'%'"></div></div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+    <script>
+        function panel(){ return { 
+            agents:{}, 
+            init(){ 
+                console.log("Panel Initialized");
+                setInterval(async ()=>{
+                    try {
+                        const r=await fetch('/api/state');
+                        this.agents=(await r.json()).agents;
+                    } catch(e) { console.error("API Error:", e); }
+                }, 2000) 
+            } 
+        }}
+    </script>
+</body></html>
+"""
 
+@app.route('/')
+def index():
+    if not session.get('logged'): return redirect('/login')
+    return render_template_string(INDEX_HTML)
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST' and request.form.get('u') == env.get('M_USER') and request.form.get('p') == env.get('M_PASS'):
+        session['logged'] = True; return redirect('/')
+    return render_template_string('''<body style="background:#020617;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;"><form method="post" style="background:rgba(255,255,255,0.02);padding:50px;border-radius:30px;border:1px solid rgba(255,255,255,0.1);width:320px;text-align:center"><h2 style="color:#3b82f6;font-size:2rem;font-weight:900;margin-bottom:30px">MULTIY PRO</h2><input name="u" placeholder="Admin" style="width:100%;padding:15px;margin:10px 0;background:#000;border:1px solid #333;color:#fff;border-radius:12px"><input name="p" type="password" placeholder="Pass" style="width:100%;padding:15px;margin:10px 0;background:#000;border:1px solid #333;color:#fff;border-radius:12px"><button style="width:100%;padding:15px;background:#3b82f6;color:#fff;border:none;border-radius:12px;margin-top:20px;font-weight:900;cursor:pointer">LOGIN</button></form></body>''')
+
+# [模块：异步运行器]
+async def main():
+    ws_server = await websockets.serve(ws_handler, "::", 9339)
+    srv = make_server('::', int(env.get('M_PORT', 7575)), app)
+    print(f">>> Multiy Flagship Running...")
+    await asyncio.gather(asyncio.to_thread(srv.serve_forever), asyncio.Future())
+
+if __name__ == "__main__":
+    asyncio.run(main())
+EOF
+}
 # --- [ UI 找回：玻璃拟态旗舰仪表盘 ] ---
 INDEX_HTML = """
 <!DOCTYPE html><html><head><meta charset="UTF-8">
@@ -280,10 +356,23 @@ EOF
 smart_diagnostic() {
     clear; echo -e "${SKYBLUE}🔍 旗舰诊断中心 (原生协议探测)${PLAIN}"
     if [ -f "$M_ROOT/agent/agent.py" ]; then
+        # 从代码中提取当前运行的凭据
         A_URL=$(grep "MASTER =" "$M_ROOT/agent/agent.py" | cut -d'"' -f2)
-        echo -e " 🔹 探测 URL: ${SKYBLUE}$A_URL${PLAIN}"
+        A_TK=$(grep "TOKEN =" "$M_ROOT/agent/agent.py" | cut -d'"' -f2)
+        
+        echo -e "${GREEN}[ 当前 Agent 运行凭据 ]${PLAIN}"
+        echo -e " 🔹 接入地址: ${SKYBLUE}$A_URL${PLAIN}"
+        echo -e " 🔹 通信令牌: ${YELLOW}$A_TK${PLAIN}"
+        echo -e "------------------------------------------------"
+        
+        # 物理探测逻辑
         python3 -c "import websockets, asyncio; asyncio.run(websockets.connect('$A_URL', timeout=5))" >/dev/null 2>&1
-        [ $? -eq 0 ] || [ $? -eq 1 ] && echo -e " 👉 状态: ${GREEN}物理链路 OK${PLAIN}" || echo -e " 👉 状态: ${RED}链路 FAIL${PLAIN}"
+        if [ $? -eq 0 ] || [ $? -eq 1 ]; then
+             echo -e " 👉 状态: ${GREEN}物理链路 OK${PLAIN} (端口已开放)"
+             echo -e "${YELLOW}[提示]${PLAIN} 如果面板仍无数据，请检查上面显示的令牌是否与主控一致。"
+        else
+             echo -e " 👉 状态: ${RED}链路 FAIL${PLAIN} (主控 9339 端口不可达)"
+        fi
     else
         echo -e "${RED}[错误]${PLAIN} 未发现 Agent 记录。"
     fi
