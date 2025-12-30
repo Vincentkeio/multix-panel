@@ -1,6 +1,6 @@
 /**
- * HubX Panel Ver 1.0 (Build 202512) 核心控制引擎
- * 功能：响应式状态管理、双栈监控、动态 i18n、配置同步自愈
+ * Hub-Next Panel Ver 1.0 (Build 202512) 核心控制引擎
+ * 功能：响应式状态管理、双栈监控、演示节点自愈、节点排序下发
  */
 
 function multix() {
@@ -14,25 +14,25 @@ function multix() {
         searchQuery: '',
         
         // --- [ 2. 国际化语言包 (i18n) ] ---
-        // HubX Panel 品牌名在各语种中保持一致
+        // Hub-Next Panel 品牌名在各语种中保持一致
         i18n: {
             zh: { 
                 login: "登录", logout: "注销", guest: "访客身份", identity: "当前身份", 
                 control: "管理中心", node_manage: "节点管理列表", sys: "主控机状态", 
                 search: "搜索节点名称、IP或别名...", total: "总计", online: "在线",
                 unlock: "解除管理限制", back: "返回访客模式", virtual: "演示节点",
-                restarting: "系统正在重启，请稍后刷新页面...", sync_ok: "同步成功！请使用新凭据重新登录。",
-                export_success: "节点配置备份已生成并开始下载。",
-                copy_ok: "已复制到剪贴板"
+                restarting: "系统正在重启，请稍后刷新页面...", sync_ok: "同步成功！系统将重启。",
+                export_success: "备份导出成功！", copy_ok: "已复制到剪贴板",
+                demo_notice: "演示小鸡 (请添加真实节点)"
             },
             en: { 
                 login: "Login", logout: "Logout", guest: "Guest Mode", identity: "Identity Status", 
                 control: "Control Center", node_manage: "Node Management", sys: "Master Status", 
                 search: "Search by Name, IP or Alias...", total: "Total", online: "Online",
                 unlock: "Unlock Console", back: "Back to Guest", virtual: "Demo Node",
-                restarting: "System restarting, please refresh later...", sync_ok: "Success! Please login with new credentials.",
-                export_success: "Node backup generated and downloading.",
-                copy_ok: "Copied to clipboard"
+                restarting: "System restarting, please refresh later...", sync_ok: "Success! Restarting.",
+                export_success: "Backup Exported!", copy_ok: "Copied to clipboard",
+                demo_notice: "Demo Instance (Add Real Nodes)"
             }
         },
         t(key) { return this.i18n[this.lang][key] || key; },
@@ -44,12 +44,12 @@ function multix() {
         // --- [ 3. 核心数据容器 ] ---
         master: { cpu: 0, mem: 0, disk: 0, sys_ver: 'Loading...', sb_ver: 'N/A' },
         agents: {},
-        config: { user: 'GUEST', token: '', host: '', port: 7575, ws_port: 9339 },
+        config: { user: 'GUEST', token: '', ip4: '', port: 7575, ws_port: 9339 },
         
         // --- [ 4. 弹窗控制变量 ] ---
         showLoginModal: false,
         adminModal: false,
-        showSettings: false, // 安全凭据弹窗控制
+        showSettings: false, 
         nodeModal: false,
         subModal: false,
         
@@ -68,7 +68,6 @@ function multix() {
                 this.token = savedToken;
             }
             await this.fetchState();
-            // 每5秒拉取一次最新硬件指标
             setInterval(() => this.fetchState(), 5000); 
         },
 
@@ -83,12 +82,11 @@ function multix() {
                 this.agents = data.agents || {};
                 this.config = data.config || this.config;
                 
-                // 仅在首次拉取成功后初始化安全设置表单
                 if (this.isLoggedIn && !this.tempUser) {
                     this.initAdminForm();
                 }
             } catch (e) { 
-                console.error("HubX Sync Error:", e); 
+                console.error("Hub-Next Sync Error:", e); 
             } finally { 
                 this.isRefreshing = false; 
             }
@@ -97,17 +95,54 @@ function multix() {
         initAdminForm() {
             this.tempUser = this.config.user;
             this.tempToken = this.config.token;
-            this.tempHost = this.config.ip4; // 对应后端 M_HOST
+            this.tempHost = this.config.ip4;
             this.tempPort = this.config.port;
             this.tempWsPort = this.config.ws_port;
             this.tempPass = ""; 
         },
 
-        // --- [ 8. 物理配置同步逻辑 (安全凭据修改) ] ---
+        // --- [ 8. 演示节点自动注入逻辑 ] ---
+        get allAgents() {
+            const list = this.agents || {};
+            // 如果节点数量为 0，自动生成持久化风格的演示节点
+            if (Object.keys(list).length === 0) {
+                return {
+                    "virtual-demo-001": {
+                        hostname: "Hub-Next-DEMO",
+                        alias: this.t('demo_notice'),
+                        order: 1,
+                        status: "online",
+                        is_demo: true,
+                        metrics: { cpu: 12, mem: 24, load: "0.15", net_out: "0B/s", net_in: "0B/s", latency: "28" }
+                    }
+                };
+            }
+            return list;
+        },
+
+        // --- [ 9. 排序与搜索逻辑 ] ---
+        get sortedAgents() {
+            return Object.fromEntries(
+                Object.entries(this.allAgents).sort(([, a], [, b]) => (a.order || 999) - (b.order || 999))
+            );
+        },
+
+        get filteredAgents() {
+            const q = this.searchQuery.toLowerCase();
+            const filtered = Object.entries(this.allAgents).filter(([sid, a]) => {
+                const matchSearch = (a.alias || "").toLowerCase().includes(q) || 
+                                   a.hostname.toLowerCase().includes(q) || 
+                                   sid.includes(q);
+                return matchSearch && !a.hidden;
+            });
+            return Object.fromEntries(filtered.sort(([, a], [, b]) => (a.order || 999) - (b.order || 999)));
+        },
+
+        // --- [ 10. 物理配置同步逻辑 ] ---
         async confirmUpdateAdmin() {
             const msg = this.lang === 'zh' 
-                ? "确认同步新配置？HubX Panel 将物理重启服务，主面板将即时同步新域名与端口。" 
-                : "Sync new config? HubX Panel will restart and update domain/port immediately.";
+                ? "确认同步新配置？Hub-Next Panel 将物理重启服务。" 
+                : "Sync new config? Hub-Next Panel will restart.";
             
             if(!confirm(msg)) return;
 
@@ -123,21 +158,14 @@ function multix() {
             try {
                 const res = await fetch('/api/update_admin', {
                     method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Authorization': this.token 
-                    },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': this.token },
                     body: JSON.stringify(payload)
                 });
                 
                 if (res.ok) {
-                    alert(this.t('restarting'));
+                    alert(this.t('sync_ok'));
                     localStorage.removeItem('m_token');
-                    // 动态计算重定向：如果修改了域名或端口，自动跳转
-                    const protocol = window.location.protocol;
-                    const host = payload.host.includes(':') ? `[${payload.host}]` : payload.host;
-                    const newUrl = `${protocol}//${host}:${payload.port}`;
-                    
+                    const newUrl = `${window.location.protocol}//${payload.host}:${payload.port}`;
                     setTimeout(() => { window.location.href = newUrl; }, 1500);
                 }
             } catch (e) {
@@ -146,39 +174,7 @@ function multix() {
             }
         },
 
-        // --- [ 9. 超级导出：节点备份逻辑 ] ---
-        exportGlobalNodes() {
-            const backup = {
-                brand: "HubX Panel",
-                version: "1.0",
-                timestamp: new Date().toISOString(),
-                agents: this.agents
-            };
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup, null, 4));
-            const dlAnchorElem = document.createElement('a');
-            dlAnchorElem.setAttribute("href", dataStr);
-            dlAnchorElem.setAttribute("download", `HubX_Backup_${new Date().getTime()}.json`);
-            dlAnchorElem.click();
-            alert(this.t('export_success'));
-        },
-
-        // --- [ 10. 节点搜索与排序逻辑 ] ---
-        get sortedAgents() {
-            return Object.fromEntries(
-                Object.entries(this.agents).sort(([, a], [, b]) => (a.order || 999) - (b.order || 999))
-            );
-        },
-
-        get filteredAgents() {
-            let list = Object.entries(this.agents);
-            const q = this.searchQuery.toLowerCase();
-            let filtered = list.filter(([sid, a]) => {
-                const searchStr = `${sid} ${a.alias || ''} ${a.hostname}`.toLowerCase();
-                return searchStr.includes(q) && !a.hidden;
-            });
-            return Object.fromEntries(filtered.sort(([, a], [, b]) => (a.order || 999) - (b.order || 999)));
-        },
-
+        // --- [ 11. 节点管理：增删、隐藏、排序 ] ---
         async manageAgent(sid, action, value = null) {
             try {
                 const res = await fetch('/api/manage_agent', {
@@ -190,10 +186,20 @@ function multix() {
                     body: JSON.stringify({ sid, action, value })
                 });
                 if (res.ok) await this.fetchState();
-            } catch (e) { console.error("Agent Management Failed"); }
+            } catch (e) { console.error("Operation Failed"); }
         },
 
-        // --- [ 11. 鉴权与辅助工具 ] ---
+        // --- [ 12. 鉴权与辅助工具 ] ---
+        exportGlobalNodes() {
+            const backup = { brand: "Hub-Next", version: "1.0", agents: this.agents };
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup, null, 4));
+            const dlAnchorElem = document.createElement('a');
+            dlAnchorElem.setAttribute("href", dataStr);
+            dlAnchorElem.setAttribute("download", `Hub-Next_Backup_${new Date().getTime()}.json`);
+            dlAnchorElem.click();
+            alert(this.t('export_success'));
+        },
+
         async login() {
             if (!this.loginForm.user || !this.loginForm.pass) return;
             try {
