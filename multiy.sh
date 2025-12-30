@@ -495,17 +495,18 @@ def update_admin():
             f.write(f"M_WS_PORT='{new_ws_port}'\n")
             f.write(f"M_HOST='{new_host}'\n")
 
-        # 2. 异步执行：防火墙自愈 + 服务重启 (物理对齐修复点)
+# 2. 异步执行：防火墙自愈 + 服务重启
         def maintenance_task():
             import time
-            time.sleep(1)
-            # 严格 12 空格缩进对齐
+            time.sleep(1) 
+            
+            # --- [ 防火墙自动放行逻辑 ] ---
             for p in [new_port, new_ws_port]:
                 os.system(f"ufw allow {p}/tcp > /dev/null 2>&1")
                 os.system(f"iptables -I INPUT -p tcp --dport {p} -j ACCEPT > /dev/null 2>&1")
-            # 修正后的位置，确保前缀 12 个空格
+            
+            # 物理重启主控服务 (确保前面有 12 个空格)
             os.system("systemctl restart hub-next-panel")
-
         threading.Thread(target=maintenance_task).start()
         return jsonify({"status": "success", "msg": "Config updated."})
     
