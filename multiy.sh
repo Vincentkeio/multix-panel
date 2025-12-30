@@ -96,30 +96,34 @@ credential_center() {
         if [ "$family" == "v4" ]; then
             # 只要 IPv4 栈有监听，或者 IPv6 栈处于双栈合一 (::) 模式，v4 就算 OK
             if [ "$has_v4" == "yes" ] || ss -lnpt | grep -q ":::$port"; then
-                echo -e "${GREEN}● IPv4 OK${PLAIN}"
+                echo -ne "${GREEN}● IPv4 OK${PLAIN}"
             else
-                echo -e "${RED}○ IPv4 OFF${PLAIN}"
+                echo -ne "${RED}○ IPv4 OFF${PLAIN}"
             fi
         else
             # 显式检查 IPv6 协议栈是否有监听
             if [ "$has_v6" == "yes" ]; then
-                echo -e "${GREEN}● IPv6 OK${PLAIN}"
+                echo -ne "${GREEN}● IPv6 OK${PLAIN}"
             else
-                echo -e "${RED}○ IPv6 OFF${PLAIN}"
+                echo -ne "${RED}○ IPv6 OFF${PLAIN}"
             fi
         fi
     }
 
+    # 定义通信端口变量（对齐主控逻辑）
+    WS_PORT=${M_WS_PORT:-9339}
+
     echo -ne " 🔹 面板服务 ($M_PORT): "
     check_net_stat "$M_PORT" "v4"
-    echo -ne "                      "
+    echo -ne "  "
     check_net_stat "$M_PORT" "v6"
+    echo ""
     
-    echo -ne " 🔹 通信服务 (9339): "
-    check_net_stat "9339" "v4"
-    echo -ne "                      "
-    check_net_stat "9339" "v6"
-    
+    echo -ne " 🔹 通信服务 ($WS_PORT): "
+    check_net_stat "$WS_PORT" "v4"
+    echo -ne "  "
+    check_net_stat "$WS_PORT" "v6"
+    echo ""
     echo -e "${SKYBLUE}==================================================${PLAIN}"
     
     # --- [ 深度自诊逻辑 ] ---
