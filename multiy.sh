@@ -789,22 +789,78 @@ smart_diagnostic() {
     fi
     pause_back
 }
+# --- [ 0. Hub-Next Panel 旗舰版主菜单 ] ---
 main_menu() {
-    clear; echo -e "${SKYBLUE}🛰️ Multiy Pro Beta ${SH_VER}${PLAIN}"
-    echo " 1. 安装/更新主控 (不执行强制清理)"
-    echo " 2. 安装/更新被控 (不执行强制清理)"
-    echo " 3. 实时凭据与监听看板"
-    echo " 4. 链路智能诊断中心"
-    echo " 5. 深度清理中心 (物理抹除旧进程/端口/环境)"
-    echo " 0. 退出"
-    read -p "选择: " c
-    case $c in 
-        1) install_master ;;  # 直接进入安装，不再调用 env_cleaner
-        2) install_agent ;;   # 直接进入安装
-        3) credential_center ;;
-        4) smart_diagnostic ;;
-        5) env_cleaner; rm -rf "$M_ROOT"; rm -f /etc/systemd/system/multiy-*; echo "清理完成"; exit ;; 
-        0) exit ;; 
-    esac
+    while true; do
+        clear
+        # 实时检测主控物理运行状态
+        local m_stat="${RED}○ OFFLINE (未运行)${PLAIN}"
+        if [ -f "$M_ROOT/.env" ]; then
+            if systemctl is-active --quiet hub-next-panel 2>/dev/null || systemctl is-active --quiet multiy-master 2>/dev/null; then
+                m_stat="${GREEN}● ONLINE (核心在线)${PLAIN}"
+            fi
+        fi
+
+        echo -e "${SKYBLUE}==================================================${PLAIN}"
+        echo -e "      🛰️  ${SKYBLUE}Hub-Next Panel${PLAIN} ${WHITE}Ver 1.0 (Build 202512)${PLAIN}"
+        echo -e "      系统状态: $m_stat  |  架构: $(uname -m)"
+        echo -e "${SKYBLUE}==================================================${PLAIN}"
+        
+        echo -e " ${BLUE}[1]${PLAIN} ${WHITE}安装/更新系统主控 (保留配置升级)${PLAIN}"
+        echo -e " ${BLUE}[2]${PLAIN} ${WHITE}部署/同步集群被控 (Agent 节点接入)${PLAIN}"
+        echo -e " ${BLUE}[3]${PLAIN} ${GREEN}凭据管理中心 (看板/实时修改/自愈)${PLAIN}"
+        echo -e " ${BLUE}[4]${PLAIN} ${WHITE}链路智能诊断中心 (全链路拨测中心)${PLAIN}"
+        echo -e " ${BLUE}[5]${PLAIN} ${RED}深度清理中心 (物理抹除进程/环境)${PLAIN}"
+        echo -e " ${BLUE}[0]${PLAIN} 退出管理脚本"
+        echo -e "${SKYBLUE}==================================================${PLAIN}"
+        
+        # 动态显示快速访问地址
+        if [ -f "$M_ROOT/.env" ]; then
+            source "$M_ROOT/.env"
+            local ip=$(curl -s4m 2 api.ipify.org || echo "本机IP")
+            echo -e "${GRAY} ⚡ 快速入口: http://$ip:$M_PORT ${PLAIN}"
+        fi
+        
+        echo -ne "\n${SKYBLUE}请选择操作编号: ${PLAIN}"
+        read -r c
+
+        case $c in
+            1) 
+                install_master 
+                ;;
+            2) 
+                install_agent 
+                ;;
+            3) 
+                # 调用升级后的看板修改一体化函数
+                credential_center 
+                ;;
+            4) 
+                smart_diagnostic 
+                ;;
+            5) 
+                echo -e "${RED}！！！警告：此操作将物理抹除所有环境与配置 ！！！${PLAIN}"
+                read -p "确认清理？(y/n): " confirm
+                if [ "$confirm" == "y" ]; then
+                    env_cleaner
+                    rm -rf "$M_ROOT"
+                    rm -f /etc/systemd/system/hub-next-*
+                    rm -f /etc/systemd/system/multiy-*
+                    systemctl daemon-reload
+                    echo -e "${GREEN}物理清理完成。${PLAIN}"
+                    sleep 2
+                    exit 0
+                fi
+                ;;
+            0) 
+                echo -e "${SKYBLUE}感谢使用 Hub-Next Panel。${PLAIN}"
+                exit 0 
+                ;;
+            *) 
+                echo -e "${RED}输入错误，请输入 0-5 之间的数字${PLAIN}"
+                sleep 1
+                ;;
+        esac
+    done
 }
 check_root; install_shortcut; main_menu
