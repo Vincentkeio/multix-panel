@@ -1,10 +1,47 @@
-
+/* MULTIX PRO 核心美化样式 */
 [x-cloak] { display: none !important; }
-body { background-color: #020617; color: #f8fafc; scroll-behavior: smooth; }
-.glass { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
-.glass-flat { background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255,255,255,0.03); }
-.neon-border { border: 1px solid rgba(59, 130, 246, 0.4); box-shadow: 0 0 15px rgba(59, 130, 246, 0.1); }
-.animate-spin-slow { animation: spin 3s linear infinite; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-.custom-scrollbar::-webkit-scrollbar { width: 4px; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+
+:root {
+    --glass: rgba(255, 255, 255, 0.02);
+    --border: rgba(255, 255, 255, 0.05);
+}
+
+body {
+    background: #050505;
+    color: #fff;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* 高级毛玻璃效果 */
+.glass-flat {
+    background: var(--glass);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+}
+
+/* 顺滑滚动条 */
+.custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+}
+
+/* 状态动画 */
+@keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+.animate-soft {
+    animation: pulse-soft 2s infinite;
+}
+
+/* 隐藏状态样式 */
+.node-hidden {
+    opacity: 0.4;
+    filter: grayscale(0.8);
+    border-style: dashed !important;
+}
