@@ -89,11 +89,106 @@
     <div class="max-w-7xl mx-auto px-10 my-8 opacity-20"><hr class="border-white/10"></div>
 
     <main class="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {% include 'main_nodes.html' %}
+        <template x-for="(n, sid) in sortedAgents" :key="sid">
+            <div x-show="!n.hidden || isLoggedIn" 
+                 @click="isLoggedIn ? openNodeModal(n) : null"
+                 :class="[n.hidden ? 'opacity-50 grayscale border-amber-500/30' : 'border-white/5', isLoggedIn ? 'cursor-pointer hover:border-blue-500/50' : '']"
+                 class="glass-flat rounded-3xl p-5 border transition-all relative group">
+                
+                <template x-if="n.hidden && isLoggedIn">
+                    <div class="absolute -top-2 -right-2 bg-amber-500 text-white text-[8px] px-2 py-1 rounded-lg shadow-lg z-10 font-black uppercase flex items-center gap-1">
+                        <i class="ri-eye-off-fill"></i> 隐藏中
+                    </div>
+                </template>
+
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-3">
+                        <div :class="n.status === 'online' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-600'" class="w-2 h-2 rounded-full"></div>
+                        <div>
+                            <h3 class="text-sm font-bold text-white truncate w-32" x-text="n.alias || n.hostname"></h3>
+                            <p class="text-[8px] text-slate-500 font-mono uppercase" x-text="sid.substring(0,8)"></p>
+                        </div>
+                    </div>
+                    <template x-if="n.is_demo">
+                        <span class="text-[8px] px-1.5 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded uppercase font-black">Demo</span>
+                    </template>
+                </div>
+
+                <div class="grid grid-cols-2 gap-x-4 gap-y-3">
+                    <div class="space-y-1">
+                        <div class="flex justify-between text-[8px] uppercase font-black text-slate-500">
+                            <span>CPU</span><span class="text-white" x-text="(n.metrics.cpu || 0) + '%'"></span>
+                        </div>
+                        <div class="h-1 bg-white/5 rounded-full overflow-hidden">
+                            <div class="h-full bg-blue-500 transition-all duration-500" :style="'width:' + (n.metrics.cpu || 0) + '%'"></div>
+                        </div>
+                    </div>
+                    <div class="space-y-1">
+                        <div class="flex justify-between text-[8px] uppercase font-black text-slate-500">
+                            <span>MEM</span><span class="text-white" x-text="(n.metrics.mem || 0) + '%'"></span>
+                        </div>
+                        <div class="h-1 bg-white/5 rounded-full overflow-hidden">
+                            <div class="h-full bg-purple-500 transition-all duration-500" :style="'width:' + (n.metrics.mem || 0) + '%'"></div>
+                        </div>
+                    </div>
+                    <div class="pt-2 border-t border-white/5">
+                        <p class="text-[8px] text-slate-600 uppercase font-black mb-0.5">Disk</p>
+                        <p class="text-xs text-white font-bold" x-text="(n.metrics.disk || 0) + '%'"></p>
+                    </div>
+                    <div class="pt-2 border-t border-white/5 text-right">
+                        <p class="text-[8px] text-slate-600 uppercase font-black mb-0.5">Network (U/D)</p>
+                        <p class="text-[10px] text-blue-400 font-bold" x-text="(n.metrics.net_up || 0) + ' / ' + (n.metrics.net_down || 0) + 'M'"></p>
+                    </div>
+                </div>
+            </div>
+        </template>
     </main>
 
+    <div x-show="nodeModal" class="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md" x-transition x-cloak>
+        <div class="glass-flat w-full max-w-4xl rounded-[2.5rem] border border-white/10 shadow-2xl flex flex-col max-h-[90vh]">
+            <div class="px-8 py-6 border-b border-white/5 flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <i class="ri-node-tree text-blue-500 text-2xl"></i>
+                    <h2 class="text-xl font-bold text-white" x-text="(currentNode?.alias || currentNode?.hostname) + ' 节点配置'"></h2>
+                </div>
+                <button @click="nodeModal = false" class="p-2 text-slate-400 hover:text-white transition"><i class="ri-close-line text-2xl"></i></button>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-8 space-y-4 custom-scrollbar">
+                <div class="flex justify-between items-center mb-4">
+                    <span class="text-[10px] text-slate-500 font-black uppercase tracking-widest">Sing-box Inbound Nodes</span>
+                    <button @click="addNewInbound()" class="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-[9px] font-black uppercase rounded-xl shadow-lg transition-all">+ 新增节点</button>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3">
+                    <template x-for="(inbound, index) in currentNodeInbounds" :key="index">
+                        <div class="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5 hover:border-blue-500/30 transition-all">
+                            <div class="flex items-center gap-4">
+                                <div class="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-400 font-bold" x-text="inbound.type ? inbound.type.substring(0,1).toUpperCase() : 'P'"></div>
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-sm font-bold text-white" x-text="inbound.tag || '未命名节点'"></span>
+                                        <span class="text-[9px] px-1.5 py-0.5 bg-white/10 text-slate-400 rounded uppercase font-black" x-text="inbound.type || 'Inbound'"></span>
+                                    </div>
+                                    <p class="text-[10px] text-slate-500" x-text="'Port: ' + (inbound.listen_port || inbound.port || '自动')"></p>
+                                </div>
+                            </div>
+                            <div class="flex gap-1">
+                                <button @click="editInbound(inbound, index)" class="p-2 text-slate-500 hover:text-blue-400"><i class="ri-edit-2-line"></i></button>
+                                <button @click="deleteInbound(index)" class="p-2 text-slate-500 hover:text-red-500"><i class="ri-delete-bin-line"></i></button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <div class="px-8 py-5 border-t border-white/5 bg-black/20 text-right">
+                <button @click="syncConfigToAgent()" class="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white text-xs font-black uppercase rounded-2xl shadow-xl active:scale-95 transition-all">保存并同步至小鸡</button>
+            </div>
+        </div>
+    </div>
+
     {% include 'modals/login_modal.html' %}
-    {% include 'modals/drawer.html' %}
     {% include 'modals/admin_modal.html' %}
 
     <script src="static/dashboard.js"></script>
