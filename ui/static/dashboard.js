@@ -1,5 +1,5 @@
 /**
- * Multiy Pro 旗舰版核心逻辑控制中心 - 深度增强版
+ * Multiy Pro 旗舰版核心逻辑控制中心 - 深度增强旗舰版
  */
 function multix() {
     return {
@@ -12,13 +12,27 @@ function multix() {
         
         // --- [ 国际化语言包 ] ---
         i18n: {
-            zh: { login: "登录", logout: "注销", guest: "访客", identity: "身份状态", control: "管理中心", nodes: "节点列表", sys: "主控状态", search: "搜索节点名称...", total: "总计", online: "在线" },
-            en: { login: "Login", logout: "Logout", guest: "Guest", identity: "Identity", control: "Control Center", nodes: "Nodes", sys: "Master Status", search: "Search nodes...", total: "Total", online: "Online" }
+            zh: { 
+                login: "登录", logout: "注销", guest: "访客身份", identity: "身份状态", 
+                control: "管理中心", nodes: "集群节点", sys: "主控状态", 
+                search: "搜索节点名称、IP或别名...", total: "总计", online: "在线",
+                unlock: "解除管理限制", back: "返回访客模式", virtual: "演示节点"
+            },
+            en: { 
+                login: "Login", logout: "Logout", guest: "Guest Mode", identity: "Identity", 
+                control: "Control Center", nodes: "Cluster Nodes", sys: "Master Status", 
+                search: "Search by Name, IP or Alias...", total: "Total", online: "Online",
+                unlock: "Unlock Console", back: "Back to Guest", virtual: "Demo Node"
+            }
         },
-        t(key) { return this.i18n[this.lang][key]; },
-        switchLang() { this.lang = this.lang === 'zh' ? 'en' : 'zh'; localStorage.setItem('m_lang', this.lang); },
+        t(key) { return this.i18n[this.lang][key] || key; },
+        switchLang() { 
+            this.lang = this.lang === 'zh' ? 'en' : 'zh'; 
+            localStorage.setItem('m_lang', this.lang); 
+        },
 
         // --- [ 2. 数据容器 ] ---
+        // 赋予初始值防止 0% 闪烁
         master: { cpu: 0, mem: 0, disk: 0, sys_ver: '加载中...', sb_ver: 'N/A' },
         agents: {},
         config: { user: 'GUEST', token: '', ip4: '', web_port: 7575 },
@@ -57,15 +71,17 @@ function multix() {
         // --- [ 7. 核心数据同步 ] ---
         async fetchState() {
             try {
-                // 增加时间戳，强制绕过浏览器缓存
+                // 增加随机参数，强制绕过浏览器缓存
                 const res = await fetch(`/api/state?v=${Date.now()}`);
                 if (!res.ok) throw new Error("Backend Offline");
                 const data = await res.json();
                 
+                // 核心赋值，确保数据对象完整性
                 this.master = data.master || this.master;
                 this.agents = data.agents || {};
                 this.config = data.config || this.config;
                 
+                // 自动同步管理表单默认值
                 if (this.isLoggedIn && !this.tempUser) {
                     this.tempUser = this.config.user;
                     this.tempToken = this.config.token;
@@ -86,12 +102,12 @@ function multix() {
 
         get filteredAgents() {
             let list = Object.entries(this.agents);
-            // 场景 A: 空列表注入虚拟小鸡占位
+            // 场景 A: 空列表自动注入虚拟小鸡占位
             if (list.length === 0) {
                 return {
                     "virtual-001": {
                         hostname: "PRO-NODE-DEMO",
-                        alias: "待接入演示节点",
+                        alias: this.t('virtual'),
                         is_demo: true, 
                         order: 1,
                         status: "online",
@@ -99,12 +115,13 @@ function multix() {
                     }
                 };
             }
-            // 场景 B: 搜索过滤
+            // 场景 B: 搜索与隐藏逻辑过滤
             const q = this.searchQuery.toLowerCase();
             let filtered = list.filter(([sid, a]) => {
                 const matchSearch = (a.alias && a.alias.toLowerCase().includes(q)) || 
                                     a.hostname.toLowerCase().includes(q) || 
                                     sid.includes(q);
+                // 访客模式下物理隐藏标记为 hidden 的节点
                 return matchSearch && !a.hidden;
             });
             return Object.fromEntries(filtered.sort(([, a], [, b]) => (a.order || 999) - (b.order || 999)));
@@ -121,7 +138,7 @@ function multix() {
                     body: JSON.stringify({ sid, action, value })
                 });
                 if (res.ok) await this.fetchState();
-            } catch (e) { alert("操作失败"); }
+            } catch (e) { alert("Operation Failed"); }
         },
 
         async saveAlias(sid) {
@@ -161,12 +178,15 @@ function multix() {
         },
 
         copyToClipboard(text) {
-            navigator.clipboard.writeText(text).then(() => alert("已复制到剪贴板"));
+            navigator.clipboard.writeText(text).then(() => alert(this.lang === 'zh' ? "已复制到剪贴板" : "Copied to clipboard"));
         },
 
-        // --- [ 10. 认证管理：解决点击不响应 ] ---
+        // --- [ 10. 认证管理：解决点击不响应关键 ] ---
         async login() {
-            if (!this.loginForm.user || !this.loginForm.pass) return;
+            if (!this.loginForm.user || !this.loginForm.pass) {
+                alert(this.lang === 'zh' ? "请完整输入账号密码" : "Please enter credentials");
+                return;
+            }
             try {
                 const res = await fetch('/api/login', {
                     method: 'POST',
@@ -178,14 +198,18 @@ function multix() {
                     localStorage.setItem('m_token', data.token);
                     this.isLoggedIn = true;
                     this.showLoginModal = false;
-                    await this.fetchState();
+                    // 登录后强制刷新页面以同步全局组件状态
                     window.location.reload(); 
-                } else { alert("凭据错误 Auth Failed"); }
-            } catch (e) { alert("服务器异常 Server Error"); }
+                } else { 
+                    alert(this.lang === 'zh' ? "凭据认证失败" : "Auth Failed"); 
+                }
+            } catch (e) { 
+                alert("Server Connection Error"); 
+            }
         },
 
         logout() {
-            if (confirm("确定注销？ Logout?")) {
+            if (confirm(this.lang === 'zh' ? "确定注销登录？" : "Logout?")) {
                 localStorage.removeItem('m_token');
                 window.location.reload();
             }
