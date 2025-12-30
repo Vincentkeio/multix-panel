@@ -377,7 +377,6 @@ _download_ui() {
     
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
-# --- [ 后端核心逻辑：旗舰全功能固化版 - 集成凭据与端口同步 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess, psutil, platform, random, threading, socket, base64
@@ -442,7 +441,7 @@ def login():
     except:
         return jsonify({"status": "error"}), 500
 
-# --- [ 2. 状态路由：支持主控硬件与配置同步 ] ---
+# --- [ 2. 状态路由 ] ---
 @app.route('/api/state')
 def get_state():
     db = load_db()
@@ -472,27 +471,22 @@ def get_state():
         }
     })
 
-# --- [ 核心修复：添加凭据物理更新、域名同步与防火墙自愈 API ] ---
+# --- [ 3. 核心修复：修复缩进与防火墙逻辑 ] ---
 @app.route('/api/update_admin', methods=['POST'])
 def update_admin():
     try:
-        # 获取前端传来的 JSON 数据
         d = request.get_json()
-        
-        # 严格校验当前访问令牌
         if request.headers.get('Authorization') != TOKEN:
             return jsonify({"status": "fail", "msg": "Unauthorized"}), 403
 
-        # 提取新参数并确保类型正确
         new_user = d.get('user')
         new_pass = d.get('pass')
         new_token = d.get('token')
-        new_host = d.get('host')           # 新增：主控域名/公网IP
-        new_port = str(d.get('port'))      # 面板 Web 端口
-        new_ws_port = str(d.get('ws_port')) # 通信 WebSocket 端口
+        new_host = d.get('host')
+        new_port = str(d.get('port'))
+        new_ws_port = str(d.get('ws_port'))
 
-        # 1. 物理写入 .env 文件确保持久化
-        # 注意：此处必须写入 new_host 而不是读取旧的 env.get('M_HOST')
+        # 1. 持久化写入
         with open(ENV_PATH, 'w', encoding='utf-8') as f:
             f.write(f"M_USER='{new_user}'\n")
             f.write(f"M_PASS='{new_pass}'\n")
@@ -501,38 +495,30 @@ def update_admin():
             f.write(f"M_WS_PORT='{new_ws_port}'\n")
             f.write(f"M_HOST='{new_host}'\n")
 
-        # 2. 异步执行：防火墙自愈 + 服务重启
+        # 2. 异步执行：防火墙自愈 + 服务重启 (物理对齐修复点)
         def maintenance_task():
             import time
-            time.sleep(1) # 留出时间让 API 返回响应给前端
-            
-            # --- [ 防火墙自动放行逻辑 ] ---
-            # 循环遍历 Web 端口和 WS 端口，尝试使用多种工具放行
+            time.sleep(1)
+            # 严格 12 空格缩进对齐
             for p in [new_port, new_ws_port]:
-                # 兼容 UFW 防火墙
                 os.system(f"ufw allow {p}/tcp > /dev/null 2>&1")
-                # 兼容 IPTables 防火墙
                 os.system(f"iptables -I INPUT -p tcp --dport {p} -j ACCEPT > /dev/null 2>&1")
-            
-            # 物理重启主控服务以应用新配置
-           os.system("systemctl restart hub-next-panel")
+            # 修正后的位置，确保前缀 12 个空格
+            os.system("systemctl restart hub-next-panel")
 
-        import threading
         threading.Thread(target=maintenance_task).start()
-
-        return jsonify({"status": "success", "msg": "Config updated, firewall port opened."})
+        return jsonify({"status": "success", "msg": "Config updated."})
     
     except Exception as e:
         return jsonify({"status": "error", "msg": str(e)}), 500
         
-# --- [ 4. 节点管理路由 ] ---
+# --- [ 其余路由逻辑 ] ---
 @app.route('/api/manage_agent', methods=['POST'])
 def manage_agent():
     d = request.json
     if request.headers.get('Authorization') != TOKEN: return jsonify({"res":"fail"}), 403
     db = load_db()
     sid, action, val = d.get('sid'), d.get('action'), d.get('value')
-    
     if action == 'alias': db[sid]['alias'] = val
     elif action == 'hide': db[sid]['hidden'] = not db[sid].get('hidden', False)
     elif action == 'reorder': db[sid]['order'] = int(val)
@@ -541,11 +527,9 @@ def manage_agent():
     elif action == 'add_virtual':
         v_id = f"virtual-{random.randint(1000,9999)}"
         db[v_id] = {"hostname": "VIRTUAL-NODE", "alias": "演示节点", "is_demo": True, "order": 99}
-        
     save_db(db)
     return jsonify({"res": "ok"})
 
-# --- [ 5. 静态、订阅与密钥 ] ---
 @app.route('/')
 def serve_index(): return render_template('index.html')
 
@@ -576,11 +560,9 @@ def gen_keys():
         return jsonify({"private_key": out[0].split(': ')[1].strip(), "public_key": out[1].split(': ')[1].strip()})
     except: return jsonify({"private_key": "", "public_key": ""})
 
-# --- [ WebSocket 实时通信 ] ---
 async def ws_handler(ws):
     sid = str(id(ws))
     WS_CLIENTS[sid] = ws
-    node_uuid = None
     try:
         async for m in ws:
             d = json.loads(m)
@@ -596,12 +578,9 @@ async def ws_handler(ws):
 
 async def main():
     curr_env = load_env()
-    web_p = int(curr_env.get('M_PORT', 7575))
-    ws_p = int(curr_env.get('M_WS_PORT', 9339))
-    
+    web_p, ws_p = int(curr_env.get('M_PORT', 7575)), int(curr_env.get('M_WS_PORT', 9339))
     try: await websockets.serve(ws_handler, "::", ws_p, reuse_address=True)
     except: await websockets.serve(ws_handler, "0.0.0.0", ws_p, reuse_address=True)
-    
     def run_web():
         from werkzeug.serving import make_server
         try:
@@ -609,7 +588,6 @@ async def main():
             srv.serve_forever()
         except:
             app.run(host='0.0.0.0', port=web_p, threaded=True, debug=False)
-            
     threading.Thread(target=run_web, daemon=True).start()
     while True: await asyncio.sleep(3600)
 
