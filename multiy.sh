@@ -172,13 +172,16 @@ EOF
     systemctl restart "${name}"
 }
 
-# --- [ 2. 主控安装：旗舰异步模块化版 ] ---
-# --- [ 2. 主控安装：修正下载校验版 ] ---
+# --- [ 2. 主控安装：旗舰加固版 ] ---
 install_master() {
-    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (路径严谨版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (双栈自愈版)${PLAIN}"
     apt-get install -y python3-pip
     
-    # 1. 物理目录强制初始化
+    # 1. 物理环境预优化：强制开启内核双栈监听映射 (修复 IPv4 OFF 问题)
+    echo -e "${YELLOW}>>> 优化系统内核双栈通信参数...${PLAIN}"
+    sysctl -w net.ipv6.bindv6only=0 >/dev/null 2>&1
+
+    # 2. 物理目录强制初始化
     mkdir -p "$M_ROOT/master/static"
     mkdir -p "$M_ROOT/master/templates/modals"
 
