@@ -1,49 +1,66 @@
-<div class="bg-gray-800 rounded-lg px-4 py-3 mb-6 border border-gray-700 shadow-lg">
-    <div class="flex flex-wrap md:flex-nowrap items-center justify-between gap-4">
+<div class="bg-[#0f172a]/60 backdrop-blur-md rounded-3xl px-6 py-4 mb-8 border border-white/5 shadow-2xl">
+    <div class="flex flex-wrap md:flex-nowrap items-center justify-between gap-6">
         
-        <div class="flex items-center space-x-3 shrink-0 border-r border-gray-700 pr-4">
-            <div class="p-2 bg-sky-blue/10 rounded-lg">
-                <i class="fas fa-shield-alt text-sky-blue text-lg"></i>
+        <div class="flex items-center gap-4 shrink-0 border-r border-white/10 pr-6">
+            <div class="w-11 h-11 bg-blue-500/10 rounded-2xl flex items-center justify-center border border-blue-500/20">
+                <i class="ri-shield-flash-line text-blue-400 text-xl"></i>
             </div>
             <div>
-                <h2 class="text-xs font-bold text-gray-400 uppercase tracking-tighter">主控机状态</h2>
-                <div class="text-[10px] text-gray-500 font-mono" x-text="master.sys_ver"></div>
+                <h2 class="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] leading-none mb-1">主控机状态</h2>
+                <div class="text-xs font-black italic tracking-tighter text-white uppercase" x-text="master.sys_ver"></div>
             </div>
         </div>
 
-        <div class="flex flex-1 items-center justify-around min-w-[400px]">
+        <div class="flex flex-1 items-center justify-around min-w-[320px] px-2">
             <template x-for="item in [
-                {label: 'CPU', val: master.cpu, color: 'bg-sky-blue'},
-                {label: 'MEM', val: master.mem, color: 'bg-purple-500'},
-                {label: 'DISK', val: master.disk, color: 'bg-amber-500'}
+                {label: 'CPU', val: master.cpu, color: 'bg-blue-500', icon: 'ri-cpu-line'},
+                {label: 'RAM', val: master.mem, color: 'bg-purple-500', icon: 'ri-database-2-line'},
+                {label: 'DISK', val: master.disk, color: 'bg-amber-500', icon: 'ri-hard-drive-2-line'}
             ]">
-                <div class="flex items-center space-x-2">
-                    <span class="text-[10px] text-gray-500 font-bold" x-text="item.label"></span>
-                    <span class="text-xs font-mono font-bold w-9" x-text="item.val + '%'"></span>
-                    <div class="w-12 bg-gray-900 h-1 rounded-full overflow-hidden hidden lg:block">
-                        <div class="h-full transition-all duration-700" :class="item.color" :style="'width:' + item.val + '%'"></div>
+                <div class="flex items-center gap-3 group">
+                    <i :class="item.icon" class="text-slate-600 group-hover:text-white transition-colors text-sm"></i>
+                    <div class="flex flex-col">
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-[10px] text-slate-500 font-black" x-text="item.label"></span>
+                            <span class="text-sm font-black font-mono text-white" x-text="item.val + '%'"></span>
+                        </div>
+                        <div class="w-16 bg-white/5 h-1 rounded-full mt-1 overflow-hidden hidden lg:block">
+                            <div class="h-full transition-all duration-1000 ease-out" 
+                                 :class="item.color" 
+                                 :style="'width:' + item.val + '%'"></div>
+                        </div>
                     </div>
                 </div>
             </template>
         </div>
 
-        <div class="flex items-center space-x-6 shrink-0 border-l border-gray-700 pl-4">
-            <div class="flex items-center space-x-3">
-                <div class="flex items-center space-x-1">
-                    <div :class="config.ip4 ? 'bg-green-500' : 'bg-red-500'" class="w-1.5 h-1.5 rounded-full shadow-[0_0_5px_rgba(34,197,94,0.4)]"></div>
-                    <span class="text-[10px] font-mono text-gray-500">V4</span>
+        <div class="flex items-center gap-8 shrink-0 border-l border-white/10 pl-6">
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <div :class="config.ip4 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-red-500'" 
+                         class="w-2 h-2 rounded-full transition-all duration-500"></div>
+                    <span class="text-[10px] font-black text-slate-500">V4</span>
                 </div>
-                <div class="flex items-center space-x-1">
-                    <div :class="master.sb_ver ? 'bg-green-500' : 'bg-gray-600'" class="w-1.5 h-1.5 rounded-full"></div>
-                    <span class="text-[10px] font-mono text-gray-500">V6</span>
+                <div class="flex items-center gap-2">
+                    <div :class="master.sb_ver ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-700'" 
+                         class="w-2 h-2 rounded-full"></div>
+                    <span class="text-[10px] font-black text-slate-500">V6</span>
                 </div>
             </div>
-            <div class="flex flex-col items-end">
-                <div class="flex items-center space-x-2">
-                    <span class="text-xs font-mono text-gray-300" x-text="showToken ? config.token : '••••••••••••'"></span>
-                    <i class="fas cursor-pointer text-gray-500 text-xs hover:text-sky-blue" :class="showToken ? 'fa-eye-slash' : 'fa-eye'" @click="showToken = !showToken"></i>
+
+            <div class="flex flex-col items-end gap-1">
+                <div class="flex items-center gap-2 bg-black/20 px-3 py-1.5 rounded-xl border border-white/5">
+                    <span class="text-[11px] font-mono text-blue-400 font-bold tracking-tight" 
+                          x-text="isLoggedIn ? (showToken ? config.token : '••••••••••••') : '********'"></span>
+                    <template x-if="isLoggedIn">
+                        <i class="cursor-pointer text-slate-500 hover:text-white transition-colors text-xs" 
+                           :class="showToken ? 'ri-eye-off-line' : 'ri-eye-line'" 
+                           @click="showToken = !showToken"></i>
+                    </template>
                 </div>
-                <span class="text-[10px] text-gray-500 font-mono">SB: <span class="text-gray-400" x-text="master.sb_ver"></span></span>
+                <div class="text-[9px] text-slate-500 font-black uppercase tracking-widest">
+                    SING-BOX <span class="text-slate-300" x-text="master.sb_ver || 'N/A'"></span>
+                </div>
             </div>
         </div>
     </div>
