@@ -230,13 +230,13 @@ EOF
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
-# --- [ 后端核心逻辑：UUID 身份识别与序号校准版 ] ---
+# --- [ 后端核心逻辑：全量校准与双栈增强版 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess, psutil, platform, random, threading, socket
 from flask import Flask, request, jsonify, send_from_directory, render_template
 
-# 1. 路径强制校准与基础配置
+# 1. 基础配置与路径校准
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 M_ROOT = "/opt/multiy_mvp"
 ENV_PATH = f"{M_ROOT}/.env"
@@ -246,42 +246,27 @@ app = Flask(__name__,
             template_folder=os.path.join(BASE_DIR, 'templates'),
             static_folder=os.path.join(BASE_DIR, 'static'))
 
-# --- [ 数据持久化系统：含 UUID 去重与 Order 校准 ] ---
+# --- [ 数据库管理：UUID 与 Order 自动校准 ] ---
 def load_db():
-    if not os.path.exists(DB_PATH):
-        return {}
+    if not os.path.exists(DB_PATH): return {}
     try:
         with open(DB_PATH, 'r', encoding='utf-8') as f:
             db = json.load(f)
-        
-        # 1. 自动校准逻辑：确保 Order 唯一且连续递增
-        # 按现有 order 排序，若无 order 或为 0 则排在最后
+        # 强制序号连续化且按现有 order 排序
         nodes = list(db.items())
         nodes.sort(key=lambda x: (x[1].get('order') == 0, x[1].get('order', 999)))
-        
         cleaned_db = {}
-        changed = False
-        
         for i, (uid, data) in enumerate(nodes, 1):
-            # 2. 序号唯一性强制分配 (1, 2, 3...)
-            if data.get('order') != i:
-                data['order'] = i
-                changed = True
+            data['order'] = i
             cleaned_db[uid] = data
-            
-        if changed:
-            save_db(cleaned_db)
         return cleaned_db
-    except Exception:
-        return {}
+    except: return {}
 
 def save_db(db_data):
-    """保存数据库，确保写入完整性"""
     with open(DB_PATH, 'w', encoding='utf-8') as f:
         json.dump(db_data, f, indent=4)
 
 def load_env():
-    """环境变量加载器"""
     c = {}
     if os.path.exists(ENV_PATH):
         with open(ENV_PATH, 'r', encoding='utf-8') as f:
@@ -291,300 +276,144 @@ def load_env():
                     c[k] = v.strip("'\"")
     return c
 
-# 核心全局状态变量
 env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
-AGENTS_LIVE = {}  # 键值将使用 Agent 上报的硬件 UUID
-WS_CLIENTS = {}   # 用于 WebSocket 会话管理
+AGENTS_LIVE = {}
+WS_CLIENTS = {}
 
-# --- [ 3. 核心 API 路由 ] ---
-
+# --- [ 核心 API 路由 ] ---
 @app.route('/')
-def serve_index():
+def serve_index(): 
     return render_template('index.html')
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
 
-# 1. 登录验证接口
-@app.route('/api/login', methods=['POST'])
-def api_login():
-    data = request.json
-    curr = load_env() 
-    if data.get('user') == curr.get('M_USER') and data.get('pass') == curr.get('M_PASS'):
-        return jsonify({
-            "status": "success", 
-            "token": curr.get('M_TOKEN'),
-            "user": curr.get('M_USER')
-        })
-    return jsonify({"status": "fail", "msg": "凭据验证失败"}), 401
-
-# --- [ 3. 核心 API 路由：智能状态与管理模块 ] ---
-import socket
-
-def get_public_ip(version=4):
-    """自动获取本机公网 IP (v4 或 v6)"""
-    try:
-        # 使用 Google/Cloudflare DNS 建立测试连接探测出口 IP
-        test_server = "8.8.8.8" if version == 4 else "2606:4700:4700::1111"
-        s = socket.socket(socket.AF_INET if version == 4 else socket.AF_INET6, socket.SOCK_DGRAM)
-        s.settimeout(1)
-        s.connect((test_server, 53))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except:
-        return None
-
 @app.route('/api/state')
 def api_state():
     db = load_db()
     combined = {}
     for sid, config in db.items():
-        # 合并数据库配置与 Agent 实时上报的数据
         live = AGENTS_LIVE.get(sid, {})
         if config.get('is_demo'):
-            # 虚拟小鸡生成模拟数据
-            metrics = {
-                "cpu": random.randint(2, 7), 
-                "mem": random.randint(18, 32), 
-                "disk": random.randint(15, 25),
-                "net_up": round(random.uniform(0.1, 1.2), 1),
-                "net_down": round(random.uniform(0.5, 3.5), 1)
-            }
+            metrics = {"cpu": random.randint(2,8), "mem": random.randint(15,30), "disk": 20, "net_up": 0.5, "net_down": 1.2}
             status = "online"
         else:
             metrics = live.get('metrics', {})
             status = live.get('status', 'offline')
-        
-        # 写入最终列表，包含排序、隐藏等字段
-        combined[sid] = {**config, "metrics": metrics, "status": status}
+        combined[sid] = {**config, "metrics": metrics, "status": status, "sid": sid}
     
-    curr_env = load_env()
-    
-    # 智能地址获取：.env 配置优先 > 物理探测 > 默认值
-    m_ip4 = curr_env.get('M_HOST_V4') or get_public_ip(4) or curr_env.get('M_HOST', '127.0.0.1')
-    m_ip6 = curr_env.get('M_HOST_V6') or get_public_ip(6) or "Not Detected"
-    
+    curr = load_env()
     return jsonify({
-        "agents": combined, 
+        "agents": combined,
         "master": {
             "cpu": int(psutil.cpu_percent()), 
             "mem": int(psutil.virtual_memory().percent), 
             "disk": int(psutil.disk_usage('/').percent),
             "sys_ver": f"{platform.system()} {platform.release()}",
             "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"
-        }, 
-        "config": {
-            "user": curr_env.get('M_USER', 'admin'), 
-            "token": curr_env.get('M_TOKEN'),
-            "ip4": m_ip4, 
-            "ip6": m_ip6,
-            "port": curr_env.get('M_PORT', '7575')
-        }
+        },
+        "config": {"user": curr.get('M_USER'), "token": TOKEN, "ip4": curr.get('M_HOST'), "ip6": "Detected"}
     })
+
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    d = request.json
+    c = load_env()
+    if d.get('user') == c.get('M_USER') and d.get('pass') == c.get('M_PASS'):
+        return jsonify({"status": "success", "token": TOKEN, "user": c.get('M_USER')})
+    return jsonify({"status": "fail"}), 401
 
 @app.route('/api/update_admin', methods=['POST'])
 def update_admin():
-    data = request.json
-    auth_token = request.headers.get('Authorization')
+    d = request.json
+    if request.headers.get('Authorization') != TOKEN: return jsonify({"res":"fail"}), 403
     curr = load_env()
-    if auth_token != curr.get('M_TOKEN'):
-        return jsonify({"res": "fail", "msg": "Unauthorized"}), 403
-    if data.get('user'): curr['M_USER'] = data.get('user')
-    if data.get('pass'): curr['M_PASS'] = data.get('pass')
-    if data.get('token'): curr['M_TOKEN'] = data.get('token')
+    if d.get('user'): curr['M_USER'] = d.get('user')
+    if d.get('pass'): curr['M_PASS'] = d.get('pass')
+    if d.get('token'): curr['M_TOKEN'] = d.get('token')
     with open(ENV_PATH, 'w') as f:
         for k, v in curr.items(): f.write(f"{k}='{v}'\n")
-    global TOKEN
-    TOKEN = curr.get('M_TOKEN', TOKEN)
     return jsonify({"res": "ok"})
-
 
 @app.route('/api/manage_agent', methods=['POST'])
 def api_manage_agent():
-    data = request.json
-    sid = data.get('sid')  # 对应数据库中的 UUID
-    action = data.get('action')
-    auth_token = request.headers.get('Authorization')
-    
-    # 1. 严格权限校验
-    curr_env = load_env()
-    if auth_token != curr_env.get('M_TOKEN'):
-        return jsonify({"res": "fail", "msg": "Unauthorized"}), 403
-
+    d = request.json
+    sid, action = d.get('sid'), d.get('action')
+    if request.headers.get('Authorization') != TOKEN: return jsonify({"res":"fail"}), 403
     db = load_db()
-    
-    # 2. 处理添加虚拟小鸡（不依赖 sid）
     if action == 'add_demo':
-        new_id = f"v_node_{random.randint(1000, 9999)}"
-        db[new_id] = {
-            "hostname": f"Demo-Node-{random.randint(1,99)}", 
-            "is_demo": True, 
-            "order": len(db) + 1,
-            "hidden": False,
-            "alias": ""
-        }
-        save_db(db)
-        return jsonify({"res": "ok", "new_id": new_id})
-
-    # 3. 针对特定小鸡的操作校验
-    if not sid or sid not in db:
-        return jsonify({"res": "fail", "msg": "Node not found"}), 404
-
-    # 4. 执行具体管理动作
-    if action == 'delete':
-        del db[sid]
-        if sid in AGENTS_LIVE: 
-            del AGENTS_LIVE[sid] # 物理断开连接
-            
-    elif action == 'hide':
-        # 切换隐藏状态并返回，供前端图标即时切换
-        db[sid]['hidden'] = not db[sid].get('hidden', False)
-        
-    elif action == 'reorder':
-        db[sid]['order'] = int(data.get('value', 0))
-        
-    elif action == 'alias':
-        # 别名修改，确保为空时显示原 hostname
-        db[sid]['alias'] = data.get('value', '').strip()
-
-    # 5. 持久化并返回成功
+        nid = f"v_{random.randint(100,999)}"
+        db[nid] = {"hostname": f"Demo-{nid}", "is_demo": True, "order": len(db)+1, "hidden": False, "alias": ""}
+    elif sid in db:
+        if action == 'delete': del db[sid]
+        elif action == 'hide': db[sid]['hidden'] = not db[sid].get('hidden', False)
+        elif action == 'alias': db[sid]['alias'] = d.get('value', '').strip()
+        elif action == 'reorder': db[sid]['order'] = int(d.get('value', 0))
     save_db(db)
-    return jsonify({
-        "res": "ok", 
-        "action": action, 
-        "current_state": db.get(sid) # 返回修改后的完整对象供前端同步
-    })
+    return jsonify({"res": "ok"})
+
 @app.route('/api/update_node_config', methods=['POST'])
 def api_update_node_config():
-    """接收前端节点配置，并通过 WS 下发给 Agent"""
-    data = request.json
-    sid = data.get('sid')
-    new_inbounds = data.get('inbounds')
-    auth_token = request.headers.get('Authorization')
-    
-    # 鉴权校验
-    curr_env = load_env()
-    if auth_token != curr_env.get('M_TOKEN'):
-        return jsonify({"res": "fail", "msg": "Unauthorized"}), 403
+    d = request.json
+    sid, inbounds = d.get('sid'), d.get('inbounds')
+    if request.headers.get('Authorization') != TOKEN: return jsonify({"res":"fail"}), 403
+    live = AGENTS_LIVE.get(sid)
+    if live and live.get('session') in WS_CLIENTS:
+        ws = WS_CLIENTS[live['session']]
+        cmd = json.dumps({"action": "update_config", "inbounds": inbounds})
+        asyncio.run_coroutine_threadsafe(ws.send(cmd), asyncio.get_event_loop())
+        return jsonify({"res": "ok"})
+    return jsonify({"res": "fail", "msg": "Agent Offline"})
 
-    # 检查 Agent 在线状态并获取会话
-    live_data = AGENTS_LIVE.get(sid)
-    if not live_data or live_data.get('status') != 'online':
-        return jsonify({"res": "fail", "msg": "Agent Offline"}), 404
-
-    session_id = live_data.get('session')
-    ws = WS_CLIENTS.get(session_id)
-    
-    if ws:
-        try:
-            cmd = json.dumps({"action": "update_config", "inbounds": new_inbounds})
-            # 跨线程下发异步指令
-            asyncio.run_coroutine_threadsafe(ws.send(cmd), asyncio.get_event_loop())
-            return jsonify({"res": "ok", "msg": "Success"})
-        except Exception as e:
-            return jsonify({"res": "fail", "msg": str(e)}), 500
-    
-    return jsonify({"res": "fail", "msg": "Session Not Found"}), 500
-# --- [ 4. 通信逻辑：UUID 硬件指纹识别版 ] ---
+# --- [ 通信逻辑：UUID 硬件指纹识别 ] ---
 async def ws_handler(ws):
-    session_id = str(id(ws)) # 仅用于底层连接管理
-    WS_CLIENTS[session_id] = ws
-    current_node_uuid = None 
-    
+    sid = str(id(ws))
+    WS_CLIENTS[sid] = ws
+    node_uuid = None
     try:
-        async for msg in ws:
-            data = json.loads(msg)
-            # 1. 安全令牌校验
-            if data.get('token') != TOKEN: continue
-            
-            # 2. 提取硬件 UUID (由 Agent 生成并上报)
-            node_uuid = data.get('node_id')
+        async for m in ws:
+            d = json.loads(m)
+            if d.get('token') != TOKEN: continue
+            node_uuid = d.get('node_id')
             if not node_uuid: continue
-            current_node_uuid = node_uuid
-
             db = load_db()
-            # 3. UUID 唯一性校验与自动覆盖
             if node_uuid not in db:
-                # 第一次连接，注册新卡片并分配唯一序号
-                db[node_uuid] = {
-                    "hostname": data.get('hostname', 'Node'), 
-                    "alias": "", 
-                    "order": len(db) + 1, 
-                    "is_demo": False, 
-                    "ip": ws.remote_address[0]
-                }
+                db[node_uuid] = {"hostname": d.get('hostname', 'Node'), "order": len(db)+1, "ip": ws.remote_address[0], "hidden": False, "alias": ""}
                 save_db(db)
-            else:
-                # 已存在的小鸡，仅更新 IP 或 Hostname，不再增加卡片
-                if db[node_uuid].get('ip') != ws.remote_address[0]:
-                    db[node_uuid]['ip'] = ws.remote_address[0]
-                    save_db(db)
-
-            # 4. 更新实时在线状态 (使用 UUID 作为键，实现旧连接自动顶替)
-            AGENTS_LIVE[node_uuid] = {
-                "metrics": data.get('metrics'), 
-                "status": "online", 
-                "last_seen": time.time(),
-                "session": session_id # 记录当前会话
-            }
-            
-    except Exception as e:
-        pass
+            AGENTS_LIVE[node_uuid] = {"metrics": d.get('metrics'), "status": "online", "session": sid, "last_seen": time.time()}
+    except: pass
     finally:
-        # 5. 断开处理：仅在 UUID 匹配时标记离线
-        if current_node_uuid in AGENTS_LIVE:
-            # 检查是否是当前会话断开（防止新连接被旧连接的退出动作误杀）
-            if AGENTS_LIVE[current_node_uuid].get('session') == session_id:
-                AGENTS_LIVE[current_node_uuid]["status"] = "offline"
-        WS_CLIENTS.pop(session_id, None)
+        if node_uuid in AGENTS_LIVE and AGENTS_LIVE[node_uuid].get('session') == sid:
+            AGENTS_LIVE[node_uuid]['status'] = 'offline'
+        WS_CLIENTS.pop(sid, None)
 
 async def main():
-    # 1. 通信服务 (9339) - 监听 [::] 自动处理双栈流量
-    # 启用 reuse_address 确保服务重启时端口能快速释放
-    try:
-        await websockets.serve(ws_handler, "::", 9339, reuse_address=True)
-        print(">>> Communication Server: Dual-Stack Listening on [::]:9339")
-    except Exception as e:
-        # 如果系统不支持 IPv6，则回退到纯 IPv4
-        await websockets.serve(ws_handler, "0.0.0.0", 9339, reuse_address=True)
-        print(f">>> Communication Server: IPv4-Only Listening on 9339 (Err: {e})")
-
-    # 2. 面板服务 (7575) - 使用单一双栈线程
-    def run_flask_dual_stack():
-        try:
-            # 核心：直接监听 '::'。在现代 Linux 中，这一个监听就涵盖了 v4 和 v6
-            # 禁用 debug 模式以防止 werkzeug 在多线程环境下产生冲突
-            app.run(host='::', port=7575, threaded=True, debug=False)
-        except Exception as e:
-            # 如果双栈监听失败，强制回退到纯 IPv4
-            print(f">>> Web Panel: Falling back to IPv4 (Err: {e})")
+    # 启动双栈 WS
+    try: await websockets.serve(ws_handler, "::", 9339, reuse_address=True)
+    except: await websockets.serve(ws_handler, "0.0.0.0", 9339, reuse_address=True)
+    
+    # 启动 Web 面板 (端口 7575)
+    def run_web():
+        from werkzeug.serving import make_server
+        try: 
+            srv = make_server('::', 7575, app, threaded=True)
+            srv.serve_forever()
+        except: 
             app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
-
-    # 启动 Web 线程
-    threading.Thread(target=run_flask_dual_stack, daemon=True).start()
     
-    print(">>> Multiy Pro Master: Web Panel Ready on port 7575")
-    
-    # 维持主循环
-    while True: 
-        await asyncio.sleep(60)
+    threading.Thread(target=run_web, daemon=True).start()
+    while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    # 确保数据库文件存在
-    if not os.path.exists(DB_PATH): 
-        save_db({})
-    
-    # 启动异步 IO 循环
+    if not os.path.exists(DB_PATH): save_db({})
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
-    except Exception as e:
-        print(f"致命错误: {e}")
 EOF
+}
 # --- [ 3. 被控端安装 (全能仆人旗舰版) ] ---
 install_agent() {
     apt-get install -y python3-pip
