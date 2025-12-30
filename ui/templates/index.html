@@ -3,20 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MULTIX PRO | 旗舰级探针面板</title>
+    <title>MULTIX PRO | 诸元探针</title>
     
     <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
     <script src="/static/tailwind.js"></script>
+    
     <script src="/static/dashboard.js"></script>
+    
     <script defer src="/static/alpine.js"></script>
     <script src="/static/qrcode.min.js"></script>
     <link rel="stylesheet" href="/static/custom.css">
     
     <style>
+        /* 防止 Alpine.js 初始化前的原始代码闪现 */
         [x-cloak] { display: none !important; }
+        
         .animate-spin-slow { animation: spin 3s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        /* 优化自适应背景 */
+        
+        /* 旗舰版渐变背景优化 */
+        body {
+            background-color: #020617;
+            position: relative;
+            min-height: 100vh;
+        }
         body::before {
             content: "";
             position: fixed;
@@ -24,11 +34,16 @@
             background: radial-gradient(circle at 50% 50%, #1e293b 0%, #020617 100%);
             z-index: -1;
         }
+        /* 自定义滚动条 */
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
     </style>
 </head>
-<body x-data="multix()" x-init="init()" x-cloak class="antialiased font-sans pb-20 bg-[#020617] text-[#f8fafc] custom-scrollbar overflow-x-hidden">
 
-    <header class="max-w-7xl mx-auto px-6 pt-10 flex justify-between items-center relative z-50">
+<body x-data="multix()" x-init="init()" x-cloak class="antialiased font-sans pb-20 text-[#f8fafc] custom-scrollbar overflow-x-hidden">
+
+    <header class="max-w-7xl mx-auto px-6 pt-10 flex justify-between items-center relative z-[100]">
         <div class="flex items-center gap-3">
             <div class="flex flex-col">
                 <h1 class="text-3xl font-black italic tracking-tighter text-blue-500 leading-none">MULTIX <span class="text-white">PRO</span></h1>
@@ -37,13 +52,16 @@
         </div>
         
         <div class="flex items-center gap-5">
-            <button @click="isRefreshing=true; fetchState()" class="p-2.5 bg-white/5 hover:bg-white/10 rounded-full transition-all group" :class="isRefreshing && 'animate-spin-slow'">
-                <i class="ri-refresh-line text-xl text-slate-400 group-hover:text-white"></i>
+            <button @click="isRefreshing=true; fetchState()" 
+                    class="p-2.5 bg-white/5 hover:bg-white/10 rounded-full transition-all group" 
+                    :class="isRefreshing && 'animate-spin-slow'">
+                <i class="ri-refresh-line text-xl text-slate-400 group-hover:text-white transition-colors"></i>
             </button>
 
             <div @click="isLoggedIn ? adminModal = true : showLoginModal = true" 
                  class="flex items-center gap-3 px-5 py-2.5 bg-white/5 border border-white/10 rounded-[1.5rem] cursor-pointer hover:bg-white/10 hover:border-blue-500/30 transition-all group relative">
-                <div class="w-2 h-2 rounded-full shadow-[0_0_10px]" :class="isLoggedIn ? 'bg-green-500 shadow-green-500/50 animate-pulse' : 'bg-slate-600 shadow-transparent'"></div>
+                <div class="w-2.5 h-2.5 rounded-full shadow-[0_0_10px]" 
+                     :class="isLoggedIn ? 'bg-green-500 shadow-green-500/50 animate-pulse' : 'bg-slate-600 shadow-transparent'"></div>
                 <div class="flex flex-col">
                     <span class="text-[8px] text-slate-500 font-black uppercase tracking-widest leading-none mb-1">Identity Status</span>
                     <span class="text-xs font-black italic tracking-tighter text-white uppercase group-hover:text-blue-400 transition" 
@@ -53,23 +71,27 @@
         </div>
     </header>
 
-    <section class="max-w-7xl mx-auto px-6 mt-10">
-        {% include 'master_status.html' %}
-    </section>
+    <main class="max-w-7xl mx-auto px-6 mt-10 space-y-8 relative z-10">
+        
+        <section class="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {% include 'master_status.html' %}
+        </section>
 
-    <section class="max-w-7xl mx-auto px-6 mt-8">
-        {% include 'action_bar.html' %}
-    </section>
+        <section class="animate-in fade-in slide-in-from-bottom-4 duration-700">
+            {% include 'action_bar.html' %}
+        </section>
 
-    <main class="max-w-7xl mx-auto px-6 mt-10">
-        {% include 'main_nodes.html' %}
+        <section class="animate-in fade-in slide-in-from-bottom-4 duration-1000">
+            {% include 'main_nodes.html' %}
+        </section>
+
     </main>
 
     {% include 'modals_container.html' %}
 
-    <footer class="max-w-7xl mx-auto px-6 mt-20 text-center">
+    <footer class="max-w-7xl mx-auto px-6 mt-24 text-center pb-12 relative z-10">
         <div class="h-px w-full bg-gradient-to-r from-transparent via-white/5 to-transparent mb-8"></div>
-        <p class="text-[9px] font-black text-slate-700 uppercase tracking-[0.5em]">2025 Multiy Pro Cluster System</p>
+        <p class="text-[9px] font-black text-slate-700 uppercase tracking-[0.6em]">2025 Multiy Pro Cluster System</p>
     </footer>
 
 </body>
