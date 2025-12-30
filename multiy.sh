@@ -220,18 +220,18 @@ EOF
     local V_CACHE="?v=$(date +%s)"
     echo -e "${YELLOW}>>> 正在同步云端 UI 资源 (全量自动化清单)...${PLAIN}"
     
-    # 【重构下载函数】：支持自动创建目录并强制校验
-    _download_ui() {
+_download_ui() {
     local file=$1
     local target="$M_ROOT/master/$file"
     
-    # 核心修复：下载前物理强制创建父级目录
+    # 物理修复：在写入文件前，强制创建其所在的父目录路径
     mkdir -p "$(dirname "$target")"
     
     echo -ne "  🔹 正在同步 ${file} ... "
-    # 增加 -L (重定向) 和随机数缓存绕过
+    # 使用 -L 跟踪重定向，并增加随机数绕过 GitHub CDN 缓存
     curl -sL -o "$target" "${RAW_URL}/${file}?v=$(date +%s)"
     
+    # 严格校验：文件必须存在且不为空，且不包含 404 错误文本
     if [ ! -s "$target" ] || grep -q "404: Not Found" "$target"; then
         echo -e "${RED}[失败]${PLAIN}"
         return 1
