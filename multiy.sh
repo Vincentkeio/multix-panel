@@ -664,11 +664,16 @@ class ServantCore:
         except:
             return {"cpu":0,"mem":0,"disk":0,"net_up":0,"net_down":0,"total_up":0,"total_down":0,"sys_ver":"Err","sb_ver":"Err"}
 
-    async def main_loop(self):
+async def main_loop(self):
+        """被控端核心循环：上报状态 + 监听双向指令"""
         while True:
             try:
+                # 建立 WebSocket 连接，增加超时保护
                 async with websockets.connect(MASTER, ping_interval=20, ping_timeout=20) as ws:
+                    print(f"[{time.ctime()}] 已连接至主控: {MASTER}")
+                    
                     while True:
+                        # 1. 采集当前配置状态与硬件指标
                         state = self.get_config_state()
                         payload = {
                             "type": "heartbeat",
@@ -679,37 +684,61 @@ class ServantCore:
                             "config_hash": state['hash']
                         }
                         
+                        # 2. 如果配置发生变化，主动上报完整 inbounds 列表
                         if state['hash'] != self.last_config_hash:
                             payload['type'] = "report_full"
                             payload['inbounds'] = state['inbounds']
                             self.last_config_hash = state['hash']
                         
+                        # 3. 发送数据包
                         await ws.send(json.dumps(payload))
 
+                        # 4. 进入指令监听状态，限时 5 秒防止阻塞心跳
                         try:
                             msg = await asyncio.wait_for(ws.recv(), timeout=5)
                             task = json.loads(msg)
-                            if task['type'] == 'exec_cmd':
-                                res = subprocess.getoutput(task['cmd'])
-                                await ws.send(json.dumps({"type": "cmd_res", "id": task['id'], "data": res}))
-                            elif task['type'] == 'sync_config':
-                                with open(SB_CONF, 'w', encoding='utf-8') as f:
-                                    json.dump(task['config'], f, indent=4)
-                                if os.system(f"{SB_PATH} check -c {SB_CONF}") == 0:
-                                    os.system("systemctl restart sing-box")
-                                    await ws.send(json.dumps({"type": "msg", "res": "Sync OK"}))
-                                else:
-                                    await ws.send(json.dumps({"type": "msg", "res": "Config Error"}))
+                            
+                            # A. 执行远程命令
+                            if task.get('type') == 'exec_cmd' or task.get('action') == 'exec_cmd':
+                                res = subprocess.getoutput(task.get('cmd'))
+                                await ws.send(json.dumps({"type": "cmd_res", "data": res}))
+                            
+                            # B. 精准同步 Inbounds 节点配置
+                            elif task.get('type') == 'update_config' or task.get('action') == 'update_config':
+                                new_inbounds = task.get('inbounds', [])
+                                
+                                if os.path.exists(SB_CONF):
+                                    # 读取本地完整配置
+                                    with open(SB_CONF, 'r', encoding='utf-8') as f:
+                                        full_config = json.load(f)
+                                    
+                                    # 仅替换 inbounds 部分，保留路由和出口设置
+                                    full_config['inbounds'] = new_inbounds
+                                    
+                                    # 写入临时文件校验
+                                    with open(SB_CONF + ".tmp", 'w', encoding='utf-8') as f:
+                                        json.dump(full_config, f, indent=4)
+                                    
+                                    # 校验配置合法性
+                                    if os.system(f"{SB_PATH} check -c {SB_CONF}.tmp") == 0:
+                                        os.replace(SB_CONF + ".tmp", SB_CONF)
+                                        os.system("systemctl restart sing-box")
+                                        await ws.send(json.dumps({"type": "msg", "res": "Sync OK", "hash": self.get_config_state()['hash']}))
+                                    else:
+                                        await ws.send(json.dumps({"type": "msg", "res": "Config Error"}))
+                                        if os.path.exists(SB_CONF + ".tmp"): os.remove(SB_CONF + ".tmp")
+                                        
                         except asyncio.TimeoutError:
+                            # 没收到指令，继续下一个心跳循环
                             continue
-            except:
+            except Exception as e:
+                print(f"[{time.ctime()}] 连接异常: {e}，10秒后重试...")
                 await asyncio.sleep(10)
 
 if __name__ == "__main__":
     servant = ServantCore()
     asyncio.run(servant.main_loop())
 EOF
-
     # 动态注入配置
     sed -i "s|REPLACE_URL|$FINAL_URL|; s|REPLACE_TOKEN|$M_TOKEN|" "$M_ROOT/agent/agent.py"
     
