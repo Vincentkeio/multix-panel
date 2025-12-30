@@ -563,19 +563,43 @@ def gen_keys():
 async def ws_handler(ws):
     sid = str(id(ws))
     WS_CLIENTS[sid] = ws
+    node_uuid = None
     try:
         async for m in ws:
             d = json.loads(m)
+            # 1. 凭据校验（第一道防线）
             if d.get('token') != TOKEN: continue
+            
             node_uuid = d.get('node_id')
+            # 2. 从主控磁盘读取当前数据库状态
             db = load_db()
+            
+            # --- [ 后端 Core 判定逻辑 ] ---
+            # 统计当前库中“未隐藏”的小鸡数量
+            visible_count = sum(1 for node in db.values() if not node.get('hidden', False))
+            
+            # 判定条件：
+            # 只有当此 node_uuid 是新的，且 (数据库为空 OR 数据库中小鸡全部被隐藏) 时，才执行写入
             if node_uuid not in db:
-                db[node_uuid] = {"hostname": d.get('hostname', 'Node'), "order": len(db)+1, "ip": ws.remote_address[0], "hidden": False, "alias": ""}
-                save_db(db)
+                if len(db) == 0 or visible_count == 0:
+                    db[node_uuid] = {
+                        "hostname": d.get('hostname', 'Node'), 
+                        "order": len(db) + 1, 
+                        "ip": ws.remote_address[0], 
+                        "hidden": False, 
+                        "alias": ""
+                    }
+                    # 3. 后端执行物理写入
+                    save_db(db)
+                    print(f"[Core] 判定通过：库为空或已全部隐藏，物理记录新节点 {node_uuid}")
+            
+            # 无论是否写入数据库，只要连接正常，就更新内存中的实时指标用于 UI 展示
             AGENTS_LIVE[node_uuid] = {"metrics": d.get('metrics'), "session": sid}
-    except: pass
-    finally: WS_CLIENTS.pop(sid, None)
-
+            
+    except Exception as e:
+        print(f"[WS Error] {e}")
+    finally:
+        WS_CLIENTS.pop(sid, None)
 async def main():
     curr_env = load_env()
     web_p, ws_p = int(curr_env.get('M_PORT', 7575)), int(curr_env.get('M_WS_PORT', 9339))
