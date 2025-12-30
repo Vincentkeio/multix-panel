@@ -3,43 +3,40 @@
         
         <div class="px-6 py-4 border-b border-white/5 bg-white/2 flex justify-between items-center shrink-0">
             <div class="flex items-center gap-4">
-                <h2 class="text-xl font-black italic tracking-tighter text-white uppercase leading-none">管理 <span class="text-blue-500">中心</span></h2>
+                <h2 class="text-xl font-black italic tracking-tighter text-white uppercase leading-none">
+                    <span x-text="lang === 'zh' ? '管理' : 'ADMIN'"></span> 
+                    <span class="text-blue-500" x-text="lang === 'zh' ? '中心' : 'CENTER'"></span>
+                </h2>
                 
                 <button @click="showSettings = true" 
-                        class="text-[9px] px-3 py-1.5 bg-blue-500/10 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg border border-blue-500/20 transition-all font-black tracking-widest flex items-center gap-2 active:scale-95">
+                        class="text-[9px] px-3 py-1.5 bg-blue-500/10 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg border border-blue-500/20 transition-all font-black tracking-widest flex items-center gap-2">
                     <i class="ri-settings-3-line"></i>
-                    <span>安全凭据与端口修改</span>
+                    <span x-text="lang === 'zh' ? '安全凭据与端口修改' : 'Security & Port Settings'"></span>
                 </button>
             </div>
 
             <div class="flex items-center gap-2">
-                <button @click="logout()" class="p-2 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-xl transition-all">
-                    <i class="ri-logout-circle-r-line"></i>
-                </button>
-                <button @click="adminModal = false" class="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-slate-400 transition">
-                    <i class="ri-close-line text-white"></i>
-                </button>
+                <button @click="logout()" class="p-2 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-xl transition-all"><i class="ri-logout-circle-r-line"></i></button>
+                <button @click="adminModal = false" class="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-slate-400 transition"><i class="ri-close-line text-white"></i></button>
             </div>
         </div>
 
         <div class="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-6">
             <div class="grid grid-cols-2 gap-3">
-                <button @click="adminModal = false; exportGlobalNodes()" class="flex items-center justify-center gap-2.5 py-2.5 px-4 bg-white/5 border border-white/5 rounded-xl hover:bg-blue-600/10 transition-all group">
+                <button @click="exportGlobalNodes()" class="flex items-center justify-center gap-2.5 py-2.5 px-4 bg-white/5 border border-white/5 rounded-xl hover:bg-blue-600/10 transition-all group">
                     <i class="ri-qr-code-line text-lg text-blue-500"></i>
-                    <span class="text-[9px] font-black text-slate-300 uppercase tracking-widest">超级导出 (JSON/QR)</span>
+                    <span class="text-[9px] font-black text-slate-300 uppercase tracking-widest" x-text="lang === 'zh' ? '超级导出 (JSON/QR)' : 'Global Export (JSON/QR)'"></span>
                 </button>
                 <button @click="adminModal = false; subModal = true" class="flex items-center justify-center gap-2.5 py-2.5 px-4 bg-white/5 border border-white/5 rounded-xl hover:bg-emerald-600/10 transition-all group">
                     <i class="ri-rss-line text-lg text-emerald-400"></i>
-                    <span class="text-[9px] font-black text-slate-300 uppercase tracking-widest">一键订阅 (CLASH/V2)</span>
+                    <span class="text-[9px] font-black text-slate-300 uppercase tracking-widest" x-text="lang === 'zh' ? '一键订阅 (CLASH/V2)' : 'One-Tap Sub (CLASH/V2)'"></span>
                 </button>
             </div>
 
             <div class="space-y-3">
                 <div class="flex justify-between items-center px-1">
-                    <h3 class="text-[9px] text-slate-500 font-black uppercase tracking-widest">节点资产清单</h3>
-                    <button @click="manageAgent('virtual-' + Date.now(), 'add_virtual')" class="px-3 py-1 bg-blue-600 text-white text-[8px] font-black uppercase rounded-lg shadow-lg active:scale-95">
-                        + 增加虚拟节点
-                    </button>
+                    <h3 class="text-[9px] text-slate-500 font-black uppercase tracking-widest" x-text="t('node_manage')"></h3>
+                    <button @click="manageAgent('virtual-' + Date.now(), 'add_virtual')" class="px-3 py-1 bg-blue-600 text-white text-[8px] font-black uppercase rounded-lg shadow-lg">+ <span x-text="lang === 'zh' ? '增加虚拟节点' : 'Add Virtual'"></span></button>
                 </div>
 
                 <div class="grid grid-cols-1 gap-1.5">
@@ -50,12 +47,8 @@
                                 <span class="text-xs font-bold text-white tracking-tight" x-text="n.alias || n.hostname"></span>
                             </div>
                             <div class="flex items-center gap-1">
-                                <button @click="manageAgent(sid, 'hide')" class="p-2 rounded-lg hover:bg-white/5">
-                                    <i :class="n.hidden ? 'ri-eye-off-line text-amber-500' : 'ri-eye-line text-slate-500'" class="text-xs"></i>
-                                </button>
-                                <button @click="if(confirm('确定删除？')) manageAgent(sid, 'delete')" class="p-2 text-slate-500 hover:text-red-500 rounded-lg">
-                                    <i class="ri-delete-bin-line text-xs"></i>
-                                </button>
+                                <button @click="manageAgent(sid, 'hide')" class="p-2 rounded-lg hover:bg-white/5"><i :class="n.hidden ? 'ri-eye-off-line text-amber-500' : 'ri-eye-line text-slate-500'" class="text-xs"></i></button>
+                                <button @click="if(confirm(lang === 'zh' ? '确定删除？' : 'Delete?')) manageAgent(sid, 'delete')" class="p-2 text-slate-500 hover:text-red-500 rounded-lg"><i class="ri-delete-bin-line text-xs"></i></button>
                             </div>
                         </div>
                     </template>
@@ -69,48 +62,36 @@
     </div>
 </div>
 
-<div x-show="showSettings" x-transition x-cloak
-     class="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-    <div @click.away="showSettings = false" 
-         class="w-72 bg-[#0a0a0c] border border-white/10 p-5 rounded-[2rem] shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200">
-        
-        <div class="text-center">
-            <h3 class="text-[10px] font-black text-blue-400 uppercase tracking-widest">安全与端口设置</h3>
-            <p class="text-[8px] text-slate-600 mt-1 uppercase font-bold">Ver 1.0 Config System</p>
-        </div>
-        
+<div x-show="showSettings" x-transition x-cloak class="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+    <div @click.away="showSettings = false" class="w-72 bg-[#0a0a0c] border border-white/10 p-5 rounded-[2rem] shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200">
+        <h3 class="text-[10px] font-black text-blue-400 uppercase tracking-widest text-center" x-text="lang === 'zh' ? '安全设置' : 'Security Settings'"></h3>
         <div class="space-y-2.5">
             <div class="flex flex-col gap-1">
-                <label class="text-[7px] text-slate-500 font-black uppercase px-1">管理员账号</label>
-                <input type="text" x-model="tempUser" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-3 text-[11px] text-white outline-none focus:border-blue-500">
+                <label class="text-[7px] text-slate-500 font-black uppercase px-1" x-text="lang === 'zh' ? '管理员账号' : 'Admin User'"></label>
+                <input type="text" x-model="tempUser" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-3 text-[11px] text-white outline-none">
             </div>
             <div class="flex flex-col gap-1">
-                <label class="text-[7px] text-slate-500 font-black uppercase px-1">主控公网域名</label>
-                <input type="text" x-model="tempHost" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-3 text-[11px] text-blue-400 font-medium outline-none focus:border-blue-500">
+                <label class="text-[7px] text-slate-500 font-black uppercase px-1" x-text="lang === 'zh' ? '主控公网域名' : 'Master Host'"></label>
+                <input type="text" x-model="tempHost" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-3 text-[11px] text-blue-400 outline-none">
             </div>
             <div class="flex flex-col gap-1">
-                <label class="text-[7px] text-slate-500 font-black uppercase px-1">通信令牌 (Token)</label>
-                <input type="text" x-model="tempToken" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-3 text-[11px] text-amber-500 font-mono outline-none focus:border-blue-500">
+                <label class="text-[7px] text-slate-500 font-black uppercase px-1" x-text="lang === 'zh' ? '通信令牌' : 'Token'"></label>
+                <input type="text" x-model="tempToken" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-3 text-[11px] text-amber-500 outline-none">
             </div>
             <div class="grid grid-cols-2 gap-2">
                 <div class="flex flex-col gap-1">
-                    <label class="text-[7px] text-slate-500 font-black uppercase px-1">面板端口</label>
+                    <label class="text-[7px] text-slate-500 font-black uppercase px-1">WEB PORT</label>
                     <input type="number" x-model="tempPort" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-2 text-[11px] text-white outline-none">
                 </div>
                 <div class="flex flex-col gap-1">
-                    <label class="text-[7px] text-slate-500 font-black uppercase px-1">WS端口</label>
+                    <label class="text-[7px] text-slate-500 font-black uppercase px-1">WS PORT</label>
                     <input type="number" x-model="tempWsPort" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-2 text-[11px] text-white outline-none">
                 </div>
             </div>
         </div>
-
-        <div class="pt-2">
-            <button @click="confirmUpdateAdmin(); showSettings = false" 
-                    class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[9px] font-black uppercase transition-all shadow-lg shadow-blue-900/40 active:scale-95 flex items-center justify-center gap-2">
-                <i class="ri-refresh-line"></i>
-                <span>保存并立即重启生效</span>
-            </button>
-            <button @click="showSettings = false" class="w-full py-2 mt-1 text-[8px] text-slate-600 hover:text-white uppercase font-black transition">放弃修改</button>
-        </div>
+        <button @click="confirmUpdateAdmin(); showSettings = false" class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[9px] font-black uppercase transition-all flex items-center justify-center gap-2">
+            <i class="ri-refresh-line"></i>
+            <span x-text="t('sync_restart')"></span>
+        </button>
     </div>
 </div>
