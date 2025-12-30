@@ -58,120 +58,112 @@ env_cleaner() {
     
     echo -e "${GREEN}>>> 物理大扫除完成，环境与 UI 结构已就绪。${PLAIN}"
 }
-# --- [ 1. 凭据与配置详情看板 ] ---
-# --- [ 1. 凭据中心看板模块 ] ---
+
+# --- [ Hub-Next Panel 凭据管理中心：看板 + 修改一体化 ] ---
 credential_center() {
-    clear
-    [ ! -f "$M_ROOT/.env" ] && echo -e "${RED}[错误]${PLAIN} 尚未安装主控！" && pause_back && return
-    source "$M_ROOT/.env"
-    
-    # 获取实时 IP
-    V4=$(curl -s4m 2 api.ipify.org || echo "N/A")
-    V6=$(curl -s6m 2 api64.ipify.org || echo "未分配")
-    
-    echo -e "${SKYBLUE}==================================================${PLAIN}"
-    echo -e "          🛰️  MULTIY PRO 旗舰凭据看板"
-    echo -e "${SKYBLUE}==================================================${PLAIN}"
-    
-    echo -e "${GREEN}[ 1. 管理面板入口 ]${PLAIN}"
-    echo -e " 🔹 IPv4 访问: http://$V4:$M_PORT"
-    echo -e " 🔹 IPv6 访问: http://[$V6]:$M_PORT"
-    echo -e " 🔹 管理账号: ${YELLOW}$M_USER${PLAIN}"
-    echo -e " 🔹 管理密码: ${YELLOW}$M_PASS${PLAIN}"
-    
-# 动态获取通信端口变量，如果脚本中未定义则兜底 9339
-    WS_PORT=${M_WS_PORT:-9339}
-
-    echo -e "\n${GREEN}[ 2. Agent 接入配置 (原生 WS) ]${PLAIN}"
-    echo -e " 🔹 接入地址: ${SKYBLUE}$M_HOST${PLAIN}"
-    echo -e " 🔹 通信端口: ${SKYBLUE}$WS_PORT${PLAIN}"
-    echo -e " 🔹 通信令牌: ${YELLOW}$M_TOKEN${PLAIN}"
-    
-    echo -e "\n${GREEN}[ 3. 双栈监听物理状态 ]${PLAIN}"
-    
-# --- [ 提升版：双栈解耦物理探测 ] ---
-    check_net_stat() {
-        local port=$1
-        local family=$2
+    while true; do
+        clear
+        [ ! -f "$M_ROOT/.env" ] && echo -e "${RED}[错误]${PLAIN} 尚未安装主控！" && pause_back && return
+        source "$M_ROOT/.env"
         
-        # 使用 ss 分别提取 IPv4 和 IPv6 栈的真实监听状态
-        local has_v4=$(ss -lnpt4 | grep -q ":$port " && echo "yes" || echo "no")
-        local has_v6=$(ss -lnpt6 | grep -q ":$port " && echo "yes" || echo "no")
+        # 实时环境获取
+        V4=$(curl -s4m 2 api.ipify.org || echo "N/A")
+        V6=$(curl -s6m 2 api64.ipify.org || echo "未分配")
+        WS_PORT=${M_WS_PORT:-9339}
 
-        if [ "$family" == "v4" ]; then
-            # 只要 IPv4 栈有监听，或者 IPv6 栈处于双栈合一 (::) 模式，v4 就算 OK
-            if [ "$has_v4" == "yes" ] || ss -lnpt | grep -q ":::$port"; then
-                echo -ne "${GREEN}● IPv4 OK${PLAIN}"
-            else
-                echo -ne "${RED}○ IPv4 OFF${PLAIN}"
-            fi
-        else
-            # 显式检查 IPv6 协议栈是否有监听
-            if [ "$has_v6" == "yes" ]; then
-                echo -ne "${GREEN}● IPv6 OK${PLAIN}"
-            else
-                echo -ne "${RED}○ IPv6 OFF${PLAIN}"
-            fi
-        fi
-    }
+        echo -e "${SKYBLUE}==================================================${PLAIN}"
+        echo -e "         🛰️  Hub-Next Panel 凭据管理中心"
+        echo -e "             Ver 1.0 (Build 202512)"
+        echo -e "${SKYBLUE}==================================================${PLAIN}"
+        
+        echo -e "${GREEN}[ 1. 当前运行凭据 ]${PLAIN}"
+        echo -e " 🔹 管理入口: ${YELLOW}http://$V4:$M_PORT${PLAIN}"
+        echo -e " 🔹 管理账号: ${SKYBLUE}$M_USER${PLAIN}"
+        echo -e " 🔹 管理密码: ${SKYBLUE}$M_PASS${PLAIN}"
+        echo -e " 🔹 通信令牌: ${SKYBLUE}$M_TOKEN${PLAIN}"
+        echo -e " 🔹 API 监听: ${SKYBLUE}$WS_PORT${PLAIN}"
+        
+        echo -e "\n${GREEN}[ 2. 物理监听状态 ]${PLAIN}"
+        echo -ne " 🔹 面板服务 ($M_PORT): " && _check_port_stat "$M_PORT"
+        echo -ne " 🔹 API 服务 ($WS_PORT): " && _check_port_stat "$WS_PORT"
+        
+        echo -e "\n${YELLOW}--------------------------------------------------${PLAIN}"
+        echo -e " 1) 修改 管理用户名       2) 修改 管理密码"
+        echo -e " 3) 修改 通信令牌(Token)  4) 修改 面板 Web 端口"
+        echo -e " 5) 修改 API 监听端口     6) ${RED}一键重置所有凭据${PLAIN}"
+        echo -e " 0) 返回主菜单"
+        echo -e "${YELLOW}--------------------------------------------------${PLAIN}"
+        read -p "请选择操作 [0-6]: " opt
 
-    # 定义通信端口变量（对齐主控逻辑）
-    WS_PORT=${M_WS_PORT:-9339}
+        case $opt in
+            1) _update_env "M_USER" "管理用户名" ;;
+            2) _update_env "M_PASS" "管理密码" ;;
+            3) _update_env "M_TOKEN" "通信令牌" ;;
+            4) _update_env "M_PORT" "面板 Web 端口" ;;
+            5) _update_env "M_WS_PORT" "API 监听端口" ;;
+            6) _reset_all_credentials ;;
+            0) break ;;
+            *) echo -e "${RED}无效选择${PLAIN}" && sleep 1 ;;
+        esac
+    done
+}
 
-    echo -ne " 🔹 面板服务 ($M_PORT): "
-    check_net_stat "$M_PORT" "v4"
-    echo -ne "  "
-    check_net_stat "$M_PORT" "v6"
-    echo ""
+# --- [ 核心：物理更新逻辑 ] ---
+_update_env() {
+    local key=$1
+    local name=$2
+    read -p "请输入新的${name}: " new_val
+    [ -z "$new_val" ] && echo -e "${RED}输入不能为空！${PLAIN}" && sleep 1 && return
+
+    echo -e "${YELLOW}>>> 正在同步物理配置...${PLAIN}"
+    # 使用 sed 精准替换 .env 文件中的键值对
+    sed -i "s/^${key}=.*/${key}=${new_val}/" "$M_ROOT/.env"
     
-    echo -ne " 🔹 通信服务 ($WS_PORT): "
-    check_net_stat "$WS_PORT" "v4"
-    echo -ne "  "
-    check_net_stat "$WS_PORT" "v6"
-    echo ""
-    echo -e "${SKYBLUE}==================================================${PLAIN}"
-    
-    # --- [ 深度自诊逻辑 ] ---
-    if ss -lnpt | grep -q ":::$M_PORT"; then
-        echo -e "${GREEN}[状态] 检测到双栈(::)监听模式。${PLAIN}"
-        echo -e "${GREEN}[状态] 内核已自动将 IPv4 流量映射至 IPv6 协议栈。${PLAIN}"
-    elif ss -lnpt | grep -q "0.0.0.0:$M_PORT"; then
-        echo -e "${YELLOW}[状态] 仅检测到纯 IPv4 监听。IPv6 访问可能受限。${PLAIN}"
-    else
-        echo -e "${RED}[告警] 端口 $M_PORT 未处于监听状态，请检查进程。${PLAIN}"
-    fi
+    # 立即重载服务以生效
+    _apply_and_restart
+}
 
+# --- [ 核心：应用配置并物理重启 ] ---
+_apply_and_restart() {
+    source "$M_ROOT/.env"
+    echo -e "${YELLOW}>>> 正在重启 Hub-Next 系统组件...${PLAIN}"
+    
+    # 重启面板服务
+    systemctl restart hub-next-panel 2>/dev/null || systemctl restart multiy-master
+    # 重启 API 服务
+    systemctl restart hub-next-api 2>/dev/null || systemctl restart multiy-api
+    
+    echo -e "${GREEN}>>> 配置已生效！${PLAIN}"
+    sleep 2
+}
+
+# --- [ 辅助：端口状态探测 ] ---
+_check_port_stat() {
+    local port=$1
+    local has_v4=$(ss -lnpt4 | grep -q ":$port " && echo "yes" || echo "no")
+    local has_v6=$(ss -lnpt6 | grep -q ":$port " && echo "yes" || echo "no")
+    
+    if [ "$has_v4" == "yes" ]; then echo -ne "${GREEN}● IPv4 OK ${PLAIN}"; else echo -ne "${RED}○ IPv4 OFF ${PLAIN}"; fi
+    if [ "$has_v6" == "yes" ]; then echo -ne "${GREEN}● IPv6 OK${PLAIN}"; else echo -ne "${RED}○ IPv6 OFF${PLAIN}"; fi
+    echo ""
+}
+
+# --- [ 辅助：一键重置凭据 ] ---
+_reset_all_credentials() {
+    read -p "确认重置所有凭据为初始状态？[y/n]: " res
+    [ "$res" != "y" ] && return
+    
+    local new_pass=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 12)
+    local new_token=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
+    
+    sed -i "s/^M_USER=.*/M_USER=admin/" "$M_ROOT/.env"
+    sed -i "s/^M_PASS=.*/M_PASS=${new_pass}/" "$M_ROOT/.env"
+    sed -i "s/^M_TOKEN=.*/M_TOKEN=${new_token}/" "$M_ROOT/.env"
+    
+    _apply_and_restart
+    echo -e "${GREEN}凭据已重置！新密码: $new_pass${PLAIN}"
     pause_back
 }
-
-# --- [ 补全缺失的服务部署函数 ] ---
-_deploy_service() {
-    local name=$1
-    local cmd=$2
-    local workdir=$(dirname "$cmd")
-    
-    echo -e "${YELLOW}>>> 正在注册系统服务: ${name}${PLAIN}"
-    cat > "/etc/systemd/system/${name}.service" <<EOF
-[Unit]
-Description=${name} Service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=${workdir}
-ExecStart=/usr/bin/python3 ${cmd}
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload
-    systemctl enable "${name}"
-    systemctl restart "${name}"
-}
-
 # --- [ 2. 主控安装：旗舰加固版 ] ---
 install_master() {
     clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (双栈自愈版)${PLAIN}"
