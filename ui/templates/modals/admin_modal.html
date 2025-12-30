@@ -76,4 +76,70 @@
                                 <button @click="manageAgent(sid, 'hide')" class="p-2 rounded-lg hover:bg-white/5">
                                     <i :class="n.hidden ? 'ri-eye-off-line text-amber-500' : 'ri-eye-line text-slate-500'" class="text-xs"></i>
                                 </button>
-                                <button @click="if(confirm(lang === 'zh' ? '确定删除该节点？' : 'Delete?')) manageAgent(sid, 'delete')" class="p-2 text-slate-500 hover:text-red-500
+                                <button @click="if(confirm(lang === 'zh' ? '确定删除该节点？' : 'Delete?')) manageAgent(sid, 'delete')" class="p-2 text-slate-500 hover:text-red-500 rounded-lg">
+                                    <i class="ri-delete-bin-line text-xs"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+        
+        <div class="py-3 bg-black/40 border-t border-white/5 flex justify-center shrink-0">
+            <span class="text-[7px] font-black text-slate-700 uppercase tracking-[0.4em]">Hub-Next Panel Ver 1.0 (Build 202512)</span>
+        </div>
+    </div>
+</div>
+
+<div x-show="showSettings" x-transition x-cloak class="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+    <div @click.away="showSettings = false" class="w-80 bg-[#0a0a0c] border border-white/10 p-5 rounded-[2rem] shadow-2xl space-y-3 animate-in fade-in zoom-in duration-200">
+        
+        <div class="text-center border-b border-white/5 pb-2">
+            <h3 class="text-[10px] font-black text-blue-400 uppercase tracking-widest" 
+                x-text="lang === 'zh' ? '安全设置自愈中心' : 'Security Settings' "></h3>
+        </div>
+        
+        <div class="space-y-2.5">
+            <div class="grid grid-cols-2 gap-2">
+                <div class="flex flex-col gap-1">
+                    <label class="text-[7px] text-slate-500 font-black uppercase px-1" x-text="lang === 'zh' ? '管理员账号' : 'Admin User'"></label>
+                    <input type="text" x-model="tempUser" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-3 text-[11px] text-white outline-none focus:border-blue-500">
+                </div>
+                <div class="flex flex-col gap-1">
+                    <label class="text-[7px] text-slate-500 font-black uppercase px-1" x-text="lang === 'zh' ? '新密码(不改留空)' : 'New Password'"></label>
+                    <input type="password" x-model="tempPass" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-3 text-[11px] text-white outline-none focus:border-blue-500">
+                </div>
+            </div>
+
+            <div class="flex flex-col gap-1">
+                <label class="text-[7px] text-slate-500 font-black uppercase px-1" x-text="lang === 'zh' ? '主控访问域名 / IP' : 'Master Host Domain/IP'"></label>
+                <input type="text" x-model="tempHost" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-3 text-[11px] text-blue-400 outline-none focus:border-blue-500">
+            </div>
+
+            <div class="flex flex-col gap-1">
+                <label class="text-[7px] text-slate-500 font-black uppercase px-1" x-text="lang === 'zh' ? '通信令牌 (Token)' : 'Communication Token'"></label>
+                <input type="text" x-model="tempToken" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-3 text-[11px] text-amber-500 font-mono outline-none focus:border-blue-500">
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2">
+                <div class="flex flex-col gap-1">
+                    <label class="text-[7px] text-slate-500 font-black uppercase px-1" x-text="lang === 'zh' ? '面板 Web 端口' : 'Panel Web Port'"></label>
+                    <input type="number" x-model="tempPort" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-2 text-[11px] text-white outline-none">
+                </div>
+                <div class="flex flex-col gap-1">
+                    <label class="text-[7px] text-slate-500 font-black uppercase px-1" x-text="lang === 'zh' ? 'API 监听端口' : 'API Listen Port'"></label>
+                    <input type="number" x-model="tempWsPort" class="w-full bg-white/5 border border-white/10 rounded-md py-1.5 px-2 text-[11px] text-white outline-none">
+                </div>
+            </div>
+        </div>
+
+        <div class="pt-2 space-y-2">
+            <button @click="confirmUpdateAdmin(); showSettings = false" class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[9px] font-black uppercase transition-all shadow-lg shadow-blue-900/40 active:scale-95 flex items-center justify-center gap-2">
+                <i class="ri-refresh-line"></i>
+                <span x-text="lang === 'zh' ? '同步配置并重启' : 'Sync Configuration & Restart'"></span>
+            </button>
+            <button @click="showSettings = false" class="w-full py-2 text-[8px] text-slate-600 hover:text-white uppercase font-black transition-colors" x-text="lang === 'zh' ? '放弃修改' : 'Discard Changes'"></button>
+        </div>
+    </div>
+</div>
