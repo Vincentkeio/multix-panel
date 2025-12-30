@@ -398,38 +398,42 @@ async def ws_handler(ws):
         WS_CLIENTS.pop(sid, None)
 
 async def main():
-    # 1. 启动通信服务 (9339) - 兼容 IPv4 和 IPv6
+    # 1. 启动通信服务 (9339) - 监听 [::] 以实现真双栈
     try:
-        # 同时监听 0.0.0.0 (v4) 和 :: (v6)
-        await websockets.serve(ws_handler, "0.0.0.0", 9339)
+        # 监听 :: 会自动兼容 IPv4 和 IPv6 接入
         await websockets.serve(ws_handler, "::", 9339)
     except Exception as e:
-        print(f"WS Start Warning: {e}")
+        # 如果 :: 监听失败，则回退到传统 v4 监听
+        print(f"WS Dual-Stack failed, falling back to v4: {e}")
+        await websockets.serve(ws_handler, "0.0.0.0", 9339)
 
-    # 2. 启动面板服务 (7575)
+    # 2. 启动面板服务 (7575) - 旗舰级双栈适配
     def run_flask():
         try:
-            # 强制使用 app.run 并监听 0.0.0.0 以确保 IPv4 100% 可访
-            app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
+            # 关键修改：host 改为 '::'。
+            # 这会让 Flask 同时监听 http://109.107.137.250:7575 和 http://[2403:71c0:2000:1211::a]:7575
+            app.run(host='::', port=7575, threaded=True, debug=False)
         except Exception as e:
-            print(f"Flask Start Error: {e}")
+            print(f"Flask v6 failed, falling back to v4: {e}")
+            app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
 
-    # 使用守护线程启动 Flask，防止阻塞异步循环
+    # 守护线程启动，确保不阻塞 asyncio 循环
     threading.Thread(target=run_flask, daemon=True).start()
     
-    print(">>> Multiy Pro Master Active on 7575 (Web) & 9339 (WS)")
+    print(">>> Multiy Pro Master Active on Dual-Stack [::]:7575 & [::]:9339")
     
     # 保持主进程活跃
     while True:
         await asyncio.sleep(60)
 
 if __name__ == "__main__":
-    # 启动前确保数据库环境就绪
+    # 启动前初始化数据库
     if not os.path.exists(DB_PATH):
         save_db({})
     asyncio.run(main())
 EOF
 }
+
 # --- [ 3. 被控端安装 (全能仆人旗舰版) ] ---
 install_agent() {
     apt-get install -y python3-pip
