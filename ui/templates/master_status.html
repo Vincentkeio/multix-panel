@@ -2,8 +2,8 @@
     <div class="flex flex-wrap md:flex-nowrap items-center justify-between gap-6">
         
         <div class="flex items-center gap-4 shrink-0 border-r border-white/10 pr-6">
-            <div class="w-11 h-11 bg-blue-500/10 rounded-2xl flex items-center justify-center border border-blue-500/20 shadow-inner group">
-                <i class="ri-shield-flash-line text-blue-400 text-xl group-hover:scale-110 transition-transform"></i>
+            <div class="w-11 h-11 bg-blue-500/10 rounded-2xl flex items-center justify-center border border-blue-500/20 shadow-inner group overflow-hidden">
+                <i class="ri-shield-flash-line text-blue-400 text-xl group-hover:scale-110 group-hover:rotate-3 transition-transform duration-300"></i>
             </div>
             <div>
                 <h2 class="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] leading-none mb-1" 
@@ -19,15 +19,15 @@
                 {label: 'RAM', val: master.mem, color: 'bg-purple-500', icon: 'ri-database-2-line'},
                 {label: 'DISK', val: master.disk, color: 'bg-amber-500', icon: 'ri-hard-drive-2-line'}
             ]">
-                <div class="flex items-center gap-3 group transition-transform hover:scale-105">
+                <div class="flex items-center gap-3 group transition-transform hover:scale-105 duration-300 cursor-default">
                     <i :class="item.icon" class="text-slate-600 group-hover:text-blue-400 transition-colors text-sm"></i>
                     <div class="flex flex-col">
                         <div class="flex items-baseline gap-2">
                             <span class="text-[10px] text-slate-500 font-black" x-text="item.label"></span>
                             <span class="text-sm font-black font-mono text-white" x-text="item.val + '%'"></span>
                         </div>
-                        <div class="w-16 bg-white/5 h-1 rounded-full mt-1 overflow-hidden hidden lg:block border border-white/5">
-                            <div class="h-full transition-all duration-1000 ease-out shadow-[0_0_8px] shadow-current" 
+                        <div class="w-16 bg-white/5 h-1 rounded-full mt-1 overflow-hidden hidden lg:block border border-white/5 relative">
+                            <div class="h-full transition-all duration-1000 ease-out shadow-[0_0_8px] shadow-current opacity-80 group-hover:opacity-100" 
                                  :class="item.color" 
                                  :style="'width:' + item.val + '%'"></div>
                         </div>
@@ -39,30 +39,34 @@
         <div class="flex items-center gap-8 shrink-0 border-l border-white/10 pl-6">
             
             <div class="flex items-center gap-4">
-                <div class="flex flex-col items-center gap-1">
-                    <div :class="master.ip4 ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.6)] animate-pulse' : 'bg-red-500'" 
+                <div class="flex flex-col items-center gap-1 group">
+                    <div :class="master.ip4 ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.6)] animate-pulse' : 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]'" 
                          class="w-2.5 h-2.5 rounded-full transition-all duration-500"></div>
-                    <span class="text-[8px] font-black text-slate-600">IPV4</span>
+                    <span class="text-[8px] font-black text-slate-600 group-hover:text-slate-400 transition-colors">IPV4</span>
                 </div>
-                <div class="flex flex-col items-center gap-1">
+                <div class="flex flex-col items-center gap-1 group">
                     <div :class="master.ip6 ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.6)]' : 'bg-slate-700'" 
                          class="w-2.5 h-2.5 rounded-full transition-all duration-500"></div>
-                    <span class="text-[8px] font-black text-slate-600">IPV6</span>
+                    <span class="text-[8px] font-black text-slate-600 group-hover:text-slate-400 transition-colors">IPV6</span>
                 </div>
             </div>
 
             <div class="flex flex-col items-end gap-1">
-                <div class="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-xl border border-white/10 shadow-inner group">
-                    <span class="text-[11px] font-mono text-blue-400 font-bold tracking-tight" 
+                <div class="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-xl border border-white/10 shadow-inner group relative overflow-hidden">
+                    <div class="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
+                    
+                    <span class="text-[11px] font-mono text-blue-400 font-bold tracking-tight relative z-10" 
                           x-text="isLoggedIn ? (showToken ? config.token : '••••••••••••') : '********'"></span>
+                    
                     <template x-if="isLoggedIn">
-                        <i class="cursor-pointer text-slate-600 hover:text-white transition-colors text-xs" 
+                        <i class="cursor-pointer text-slate-600 hover:text-white transition-colors text-xs relative z-10" 
                            :class="showToken ? 'ri-eye-off-line' : 'ri-eye-line'" 
                            @click="showToken = !showToken"></i>
                     </template>
                 </div>
-                <div class="text-[9px] text-slate-500 font-black uppercase tracking-widest flex items-center gap-1">
-                    <span class="text-slate-600">SING-BOX CORE</span> 
+                
+                <div class="text-[9px] text-slate-500 font-black uppercase tracking-widest flex items-center gap-1 group">
+                    <span class="text-slate-600 group-hover:text-slate-400 transition-colors">SING-BOX CORE</span> 
                     <span class="text-blue-500/80 font-mono" x-text="master.sb_ver || 'N/A'"></span>
                 </div>
             </div>
