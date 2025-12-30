@@ -1,89 +1,121 @@
-<template x-for="(n, sid) in sortedAgents" :key="sid">
-    <div x-show="!n.hidden || isLoggedIn" 
-         @click="isLoggedIn ? openNodeModal(n) : null"
-         :class="[
-            n.hidden ? 'opacity-50 grayscale border-amber-500/30' : 'border-white/5', 
-            isLoggedIn ? 'cursor-pointer hover:border-blue-500/50 hover:shadow-2xl hover:shadow-blue-500/10 transition-all duration-300' : 'cursor-default'
-         ]"
-         class="glass-flat rounded-[2rem] p-5 border relative group overflow-hidden">
+<div class="max-w-7xl mx-auto px-6 pb-20">
+    
+    <div class="flex items-center justify-between mb-8">
+        <div class="flex items-center gap-4">
+            <h3 class="text-xs font-black text-slate-500 uppercase tracking-[0.3em] italic">Network Nodes</h3>
+            <div class="h-px w-12 bg-white/10"></div>
+            <span class="text-[10px] font-black text-blue-500 bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/20" 
+                  x-text="Object.keys(filteredAgents).length + ' ACTIVE'"></span>
+        </div>
         
-        <div class="absolute -right-8 -top-8 w-24 h-24 rounded-full blur-3xl opacity-10 transition-colors duration-700"
-             :class="n.status === 'online' ? 'bg-blue-500' : 'bg-slate-700'"></div>
-
-        <div class="flex justify-between items-start mb-5 relative z-10">
-            <div class="flex items-center gap-3 overflow-hidden">
-                <div class="w-2.5 h-2.5 rounded-full relative">
-                    <div class="absolute inset-0 rounded-full animate-ping opacity-75"
-                         :class="n.status === 'online' ? 'bg-green-500' : 'bg-slate-600'"></div>
-                    <div class="relative w-2.5 h-2.5 rounded-full"
-                         :class="n.status === 'online' ? 'bg-green-500' : 'bg-slate-600'"></div>
-                </div>
-                <div class="overflow-hidden">
-                    <h3 class="text-sm font-black uppercase italic tracking-tighter text-white group-hover:text-blue-400 transition truncate w-32" 
-                        x-text="n.alias || n.hostname"></h3>
-                    <div class="flex gap-2 mt-0.5">
-                        <span class="text-[7px] text-slate-500 font-mono uppercase bg-white/5 px-1 rounded" 
-                              x-text="n.metrics.sys_ver ? n.metrics.sys_ver.split(' ')[0] : 'Linux'"></span>
-                        <span class="text-[7px] text-blue-500/80 font-mono uppercase bg-blue-500/5 px-1 rounded" 
-                              x-text="'SB: ' + (n.metrics.sb_ver || 'N/A')"></span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="flex flex-col items-end">
-                <template x-if="n.hidden && isLoggedIn">
-                    <span class="text-[7px] px-1.5 py-0.5 bg-amber-500/10 text-amber-500 rounded border border-amber-500/20 font-black uppercase italic mb-1">Hidden</span>
-                </template>
-                <span class="text-[8px] text-slate-700 font-mono tracking-tighter group-hover:text-slate-500 transition" x-text="sid.substring(0,8)"></span>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-2 gap-x-4 gap-y-4 relative z-10">
-            <div class="space-y-1.5">
-                <div class="flex justify-between text-[8px] font-black uppercase tracking-widest text-slate-500">
-                    <span>Processing</span>
-                    <span class="text-white" x-text="(n.metrics.cpu || 0) + '%'"></span>
-                </div>
-                <div class="h-1 bg-white/5 rounded-full overflow-hidden">
-                    <div class="h-full bg-blue-500 transition-all duration-1000" 
-                         :style="'width: ' + (n.metrics.cpu || 0) + '%'"></div>
-                </div>
-            </div>
-
-            <div class="space-y-1.5">
-                <div class="flex justify-between text-[8px] font-black uppercase tracking-widest text-slate-500">
-                    <span>Memory</span>
-                    <span class="text-white" x-text="(n.metrics.mem || 0) + '%'"></span>
-                </div>
-                <div class="h-1 bg-white/5 rounded-full overflow-hidden">
-                    <div class="h-full bg-purple-500 transition-all duration-1000" 
-                         :style="'width: ' + (n.metrics.mem || 0) + '%'"></div>
-                </div>
-            </div>
-        </div>
-
-        <div class="mt-5 pt-4 border-t border-white/5 flex justify-between items-end relative z-10">
-            <div class="flex gap-4">
-                <div class="flex flex-col">
-                    <span class="text-[6px] uppercase font-black text-slate-600">Storage</span>
-                    <span class="text-[10px] font-bold text-white" x-text="(n.metrics.disk || 0) + '%'"></span>
-                </div>
-                <div class="flex flex-col">
-                    <span class="text-[6px] uppercase font-black text-slate-600">Net Speed</span>
-                    <div class="text-[10px] font-mono text-blue-400 font-bold leading-none mt-0.5">
-                        <span x-text="n.metrics.net_up || 0"></span>↑ <span class="text-slate-800 text-[8px]">/</span> <span x-text="n.metrics.net_down || 0"></span>↓
-                    </div>
-                </div>
-            </div>
-            
-            <div class="flex gap-2">
-                <template x-if="isLoggedIn">
-                    <i class="ri-settings-3-line text-slate-500 group-hover:text-blue-500 transition-colors"></i>
-                </template>
-                <template x-if="!isLoggedIn">
-                    <i class="ri-pulse-line text-slate-700"></i>
-                </template>
-            </div>
-        </div>
+        <template x-if="Object.keys(filteredAgents).length === 0 && searchQuery">
+            <span class="text-[10px] text-amber-500 font-black uppercase italic animate-pulse">No matching nodes found...</span>
+        </template>
     </div>
-</template>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <template x-for="(n, sid) in filteredAgents" :key="sid">
+            <div @click="isLoggedIn ? (currentNode=n, nodeModal=true) : null"
+                 :class="[
+                    n.hidden ? 'opacity-50 grayscale border-amber-500/30' : 'border-white/5', 
+                    isLoggedIn ? 'cursor-pointer hover:border-blue-500/50 hover:shadow-2xl hover:shadow-blue-500/10 transition-all duration-500' : 'cursor-default',
+                    n.is_demo ? 'border-dashed border-blue-500/40' : ''
+                 ]"
+                 class="glass-flat rounded-[2.5rem] p-6 border relative group overflow-hidden animate-in fade-in zoom-in duration-300">
+                
+                <template x-if="n.is_demo">
+                    <div class="absolute -top-1 -left-10 bg-blue-500/20 text-blue-400 text-[7px] font-black px-10 py-1 rotate-[-45deg] border border-blue-500/20 z-20">
+                        VIRTUAL
+                    </div>
+                </template>
+
+                <div class="absolute -right-8 -top-8 w-24 h-24 rounded-full blur-3xl opacity-10 transition-colors duration-700"
+                     :class="n.status === 'online' ? 'bg-blue-500' : 'bg-slate-700'"></div>
+
+                <div class="flex justify-between items-start mb-6 relative z-10">
+                    <div class="flex items-center gap-3 overflow-hidden">
+                        <div class="w-2.5 h-2.5 rounded-full relative shrink-0">
+                            <div class="absolute inset-0 rounded-full animate-ping opacity-75"
+                                 :class="n.status === 'online' ? 'bg-green-500' : 'bg-slate-600'"></div>
+                            <div class="relative w-2.5 h-2.5 rounded-full"
+                                 :class="n.status === 'online' ? 'bg-green-500' : 'bg-slate-600'"></div>
+                        </div>
+                        <div class="overflow-hidden">
+                            <h3 class="text-sm font-black uppercase italic tracking-tighter text-white group-hover:text-blue-400 transition truncate w-32" 
+                                x-text="n.alias || n.hostname"></h3>
+                            <div class="flex gap-2 mt-1">
+                                <span class="text-[7px] text-slate-500 font-black uppercase bg-white/5 px-1.5 py-0.5 rounded" 
+                                      x-text="n.metrics?.sys_ver ? n.metrics.sys_ver.split(' ')[0] : 'Linux'"></span>
+                                <span class="text-[7px] text-blue-500 font-black uppercase bg-blue-500/5 px-1.5 py-0.5 rounded border border-blue-500/10" 
+                                      x-text="'SB: ' + (n.metrics?.sb_ver || 'N/A')"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col items-end shrink-0">
+                        <template x-if="n.hidden && isLoggedIn">
+                            <span class="text-[7px] px-1.5 py-0.5 bg-amber-500/10 text-amber-500 rounded border border-amber-500/20 font-black uppercase italic mb-1">Hidden</span>
+                        </template>
+                        <span class="text-[8px] text-slate-700 font-black font-mono tracking-tighter group-hover:text-slate-500 transition" 
+                              x-text="sid.substring(0,8)"></span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-x-6 gap-y-4 relative z-10">
+                    <div class="space-y-2">
+                        <div class="flex justify-between text-[8px] font-black uppercase tracking-[0.1em] text-slate-500">
+                            <span>Processing</span>
+                            <span class="text-white" x-text="(n.metrics?.cpu || 0) + '%'"></span>
+                        </div>
+                        <div class="h-1 bg-white/5 rounded-full overflow-hidden">
+                            <div class="h-full bg-blue-500 transition-all duration-1000 ease-out" 
+                                 :style="'width: ' + (n.metrics?.cpu || 0) + '%'"></div>
+                        </div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <div class="flex justify-between text-[8px] font-black uppercase tracking-[0.1em] text-slate-500">
+                            <span>Memory</span>
+                            <span class="text-white" x-text="(n.metrics?.mem || 0) + '%'"></span>
+                        </div>
+                        <div class="h-1 bg-white/5 rounded-full overflow-hidden">
+                            <div class="h-full bg-purple-500 transition-all duration-1000 ease-out" 
+                                 :style="'width: ' + (n.metrics?.mem || 0) + '%'"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-6 pt-5 border-t border-white/5 flex justify-between items-end relative z-10">
+                    <div class="flex gap-5">
+                        <div class="flex flex-col">
+                            <span class="text-[6px] uppercase font-black text-slate-600 tracking-widest mb-0.5">Storage</span>
+                            <span class="text-[10px] font-black text-white" x-text="(n.metrics?.disk || 0) + '%'"></span>
+                        </div>
+                        <div class="flex flex-col">
+                            <span class="text-[6px] uppercase font-black text-slate-600 tracking-widest mb-0.5">Network Traffic</span>
+                            <div class="text-[10px] font-mono text-blue-400 font-bold leading-none flex items-center gap-1">
+                                <span x-text="n.metrics?.net_out || '0B/s'"></span>
+                                <i class="ri-arrow-up-line text-[8px] text-blue-500/50"></i>
+                                <span class="text-slate-800 mx-0.5">/</span>
+                                <span x-text="n.metrics?.net_in || '0B/s'"></span>
+                                <i class="ri-arrow-down-line text-[8px] text-purple-500/50"></i>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="flex items-center justify-center w-8 h-8 rounded-xl bg-white/2 border border-white/5 group-hover:border-blue-500/30 transition-all">
+                        <template x-if="isLoggedIn">
+                            <i class="ri-settings-3-fill text-slate-500 group-hover:text-blue-400 transition-colors text-sm"></i>
+                        </template>
+                        <template x-if="!isLoggedIn">
+                            <i class="ri-pulse-line text-slate-700 text-sm"></i>
+                        </template>
+                    </div>
+                </div>
+
+                <span class="absolute -bottom-4 -right-2 text-6xl font-black italic text-white/[0.02] pointer-events-none select-none" 
+                      x-text="'#' + (n.order || '99')"></span>
+            </div>
+        </template>
+    </div>
+</div>
