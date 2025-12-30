@@ -242,10 +242,10 @@ EOF
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
-# --- [ 后端核心逻辑：全量校准与双栈增强版 ] ---
+# --- [ 后端核心逻辑：固化版 (支持超级订阅与密钥生成) ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
-import asyncio, websockets, json, os, time, subprocess, psutil, platform, random, threading, socket
+import asyncio, websockets, json, os, time, subprocess, psutil, platform, random, threading, socket, base64
 from flask import Flask, request, jsonify, send_from_directory, render_template
 
 # 1. 基础配置与路径校准
@@ -258,13 +258,12 @@ app = Flask(__name__,
             template_folder=os.path.join(BASE_DIR, 'templates'),
             static_folder=os.path.join(BASE_DIR, 'static'))
 
-# --- [ 数据库管理：UUID 与 Order 自动校准 ] ---
+# --- [ 数据库管理 ] ---
 def load_db():
     if not os.path.exists(DB_PATH): return {}
     try:
         with open(DB_PATH, 'r', encoding='utf-8') as f:
             db = json.load(f)
-        # 强制序号连续化且按现有 order 排序
         nodes = list(db.items())
         nodes.sort(key=lambda x: (x[1].get('order') == 0, x[1].get('order', 999)))
         cleaned_db = {}
@@ -276,7 +275,7 @@ def load_db():
 
 def save_db(db_data):
     with open(DB_PATH, 'w', encoding='utf-8') as f:
-        json.dump(db_data, f, indent=4)
+        json.dump(db_data, f, indent=4, ensure_ascii=False)
 
 def load_env():
     c = {}
@@ -326,59 +325,146 @@ def api_state():
             "sys_ver": f"{platform.system()} {platform.release()}",
             "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"
         },
-        "config": {"user": curr.get('M_USER'), "token": TOKEN, "ip4": curr.get('M_HOST'), "ip6": "Detected"}
+        "config": {"user": curr.get('M_USER'), "token": TOKEN, "ip4": curr.get('M_HOST')}
     })
+
+# --- [ 新增：超级订阅转换器 ] ---
+@app.route('/sub')
+def sub_handler():
+    db = load_db()
+    curr_env = load_env()
+    token = request.args.get('token')
+    sub_type = request.args.get('type', 'v2ray')
+    
+    if token != TOKEN:
+        return "Unauthorized", 403
+    
+    links = []
+    clash_proxies = []
+    
+    for sid, agent in db.items():
+        if agent.get('hidden'): continue
+        ip = agent.get('ip') or curr_env.get('M_HOST')
+        inbounds = agent.get('metrics', {}).get('inbounds', [])
+        
+        for inb in inbounds:
+            if inb.get('type') == 'vless':
+                # 隐私脱敏：仅使用节点 Tag
+                tag = inb.get('tag', 'VLESS_Node')
+                uuid = inb.get('uuid')
+                port = inb.get('listen_port') or inb.get('port')
+                sni = inb.get('reality_dest', '').split(':')[0] or 'yahoo.com'
+                pbk = inb.get('reality_pub', '')
+                sid_param = inb.get('short_id', '')
+                
+                # V2Ray 格式
+                links.append(f"vless://{uuid}@{ip}:{port}?security=reality&sni={sni}&fp=chrome&pbk={pbk}&sid={sid_param}&type=tcp&flow=xtls-rprx-vision#{tag}")
+                
+                # Clash 格式
+                clash_proxies.append({
+                    "name": tag, "type": "vless", "server": ip, "port": port, "uuid": uuid,
+                    "udp": True, "tls": True, "flow": "xtls-rprx-vision", "servername": sni,
+                    "reality-opts": {"public-key": pbk, "short-id": sid_param}, "client-fingerprint": "chrome"
+                })
+
+    if sub_type == 'clash':
+        # 极简 YAML 构造
+        res = "proxies:\n"
+        for p in clash_proxies:
+            res += f"  - {{name: \"{p['name']}\", type: vless, server: \"{p['server']}\", port: {p['port']}, uuid: \"{p['uuid']}\", udp: true, tls: true, flow: \"xtls-rprx-vision\", servername: \"{p['servername']}\", reality-opts: {{public-key: \"{p['reality-opts']['public-key']}\", short-id: \"{p['reality-opts']['short-id']}\"}}, client-fingerprint: chrome}}\n"
+        res += "proxy-groups:\n  - {name: \"GLOBAL\", type: select, proxies: [" + ",".join([f"\"{p['name']}\"" for p in clash_proxies]) + "]}\n"
+        res += "rules:\n  - MATCH,GLOBAL"
+        return res, 200, {'Content-Type': 'text/yaml; charset=utf-8'}
+    
+    return base64.b64encode('\n'.join(links).encode()).decode()
+
+# --- [ 新增：密钥生成接口 ] ---
+@app.route('/api/gen_keys')
+def gen_keys():
+    try:
+        out = subprocess.getoutput("sing-box generate reality-keypair")
+        lines = out.split('\n')
+        return jsonify({
+            "private_key": lines[0].split(': ')[1].strip(),
+            "public_key": lines[1].split(': ')[1].strip()
+        })
+    except: return jsonify({"private_key": "", "public_key": ""})
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
     d = request.json
     c = load_env()
     if d.get('user') == c.get('M_USER') and d.get('pass') == c.get('M_PASS'):
-        return jsonify({"status": "success", "token": TOKEN, "user": c.get('M_USER')})
+        return jsonify({"status": "success", "token": TOKEN})
     return jsonify({"status": "fail"}), 401
-
-@app.route('/api/update_admin', methods=['POST'])
-def update_admin():
-    d = request.json
-    if request.headers.get('Authorization') != TOKEN: return jsonify({"res":"fail"}), 403
-    curr = load_env()
-    if d.get('user'): curr['M_USER'] = d.get('user')
-    if d.get('pass'): curr['M_PASS'] = d.get('pass')
-    if d.get('token'): curr['M_TOKEN'] = d.get('token')
-    with open(ENV_PATH, 'w') as f:
-        for k, v in curr.items(): f.write(f"{k}='{v}'\n")
-    return jsonify({"res": "ok"})
 
 @app.route('/api/manage_agent', methods=['POST'])
 def api_manage_agent():
     d = request.json
-    sid, action = d.get('sid'), d.get('action')
     if request.headers.get('Authorization') != TOKEN: return jsonify({"res":"fail"}), 403
     db = load_db()
-    if action == 'add_demo':
-        nid = f"v_{random.randint(100,999)}"
-        db[nid] = {"hostname": f"Demo-{nid}", "is_demo": True, "order": len(db)+1, "hidden": False, "alias": ""}
-    elif sid in db:
+    sid, action = d.get('sid'), d.get('action')
+    if sid in db:
         if action == 'delete': del db[sid]
         elif action == 'hide': db[sid]['hidden'] = not db[sid].get('hidden', False)
         elif action == 'alias': db[sid]['alias'] = d.get('value', '').strip()
-        elif action == 'reorder': db[sid]['order'] = int(d.get('value', 0))
     save_db(db)
     return jsonify({"res": "ok"})
 
 @app.route('/api/update_node_config', methods=['POST'])
 def api_update_node_config():
     d = request.json
-    sid, inbounds = d.get('sid'), d.get('inbounds')
     if request.headers.get('Authorization') != TOKEN: return jsonify({"res":"fail"}), 403
-    live = AGENTS_LIVE.get(sid)
+    # JSON 透传逻辑：直接下发给 Agent
+    live = AGENTS_LIVE.get(d.get('sid'))
     if live and live.get('session') in WS_CLIENTS:
         ws = WS_CLIENTS[live['session']]
-        cmd = json.dumps({"action": "update_config", "inbounds": inbounds})
+        cmd = json.dumps({"action": "update_config", "inbounds": d.get('inbounds')})
         asyncio.run_coroutine_threadsafe(ws.send(cmd), asyncio.get_event_loop())
         return jsonify({"res": "ok"})
     return jsonify({"res": "fail", "msg": "Agent Offline"})
 
+# --- [ 通信逻辑 ] ---
+async def ws_handler(ws):
+    sid = str(id(ws))
+    WS_CLIENTS[sid] = ws
+    node_uuid = None
+    try:
+        async for m in ws:
+            d = json.loads(m)
+            if d.get('token') != TOKEN: continue
+            node_uuid = d.get('node_id')
+            if not node_uuid: continue
+            db = load_db()
+            if node_uuid not in db:
+                db[node_uuid] = {"hostname": d.get('hostname', 'Node'), "order": len(db)+1, "ip": ws.remote_address[0], "hidden": False, "alias": ""}
+                save_db(db)
+            AGENTS_LIVE[node_uuid] = {"metrics": d.get('metrics'), "status": "online", "session": sid, "last_seen": time.time()}
+    except: pass
+    finally:
+        if node_uuid in AGENTS_LIVE: AGENTS_LIVE[node_uuid]['status'] = 'offline'
+        WS_CLIENTS.pop(sid, None)
+
+async def main():
+    try: await websockets.serve(ws_handler, "::", 9339, reuse_address=True)
+    except: await websockets.serve(ws_handler, "0.0.0.0", 9339, reuse_address=True)
+    
+    def run_web():
+        from werkzeug.serving import make_server
+        try: 
+            srv = make_server('::', 7575, app, threaded=True)
+            srv.serve_forever()
+        except: 
+            app.run(host='0.0.0.0', port=7575, threaded=True)
+    
+    threading.Thread(target=run_web, daemon=True).start()
+    while True: await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    if not os.path.exists(DB_PATH): save_db({})
+    asyncio.run(main())
+EOF
+}
 # --- [ 通信逻辑：UUID 硬件指纹识别 ] ---
 async def ws_handler(ws):
     sid = str(id(ws))
