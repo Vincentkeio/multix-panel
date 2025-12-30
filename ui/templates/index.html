@@ -43,34 +43,34 @@
 
 <body x-data="multix()" x-init="init()" x-cloak class="antialiased font-sans pb-20 text-[#f8fafc] custom-scrollbar overflow-x-hidden">
 
-    <header class="max-w-7xl mx-auto px-6 pt-10 flex justify-between items-center relative z-[100]">
-        <div class="flex items-center gap-3">
+<header class="max-w-7xl mx-auto px-6 pt-10 flex justify-between items-center relative z-[100]">
+    <div class="flex items-center gap-6">
+        <div class="flex flex-col">
+            <h1 class="text-3xl font-black italic tracking-tighter text-blue-500 leading-none">MULTIX <span class="text-white">PRO</span></h1>
+            <span class="text-[9px] text-slate-500 font-black uppercase tracking-[0.3em] mt-1">Ultimate Edition</span>
+        </div>
+        <button @click="switchLang()" class="px-3 py-1 bg-white/5 border border-white/10 rounded-xl text-[10px] font-black text-slate-400 hover:text-white uppercase tracking-tighter transition">
+            <span x-text="lang === 'zh' ? 'EN' : '中'"></span>
+        </button>
+    </div>
+    
+    <div class="flex items-center gap-5">
+        <button @click="isRefreshing=true; fetchState()" class="p-2.5 bg-white/5 hover:bg-white/10 rounded-full transition-all group" :class="isRefreshing && 'animate-spin-slow'">
+            <i class="ri-refresh-line text-xl text-slate-400 group-hover:text-white"></i>
+        </button>
+
+        <div @click="isLoggedIn ? adminModal = true : showLoginModal = true" 
+             class="flex items-center gap-3 px-5 py-2.5 bg-white/5 border border-white/10 rounded-[1.5rem] cursor-pointer hover:bg-white/10 hover:border-blue-500/30 transition-all group relative">
+            <div class="w-2.5 h-2.5 rounded-full shadow-[0_0_10px]" 
+                 :class="isLoggedIn ? 'bg-green-500 shadow-green-500/50 animate-pulse' : 'bg-slate-600 shadow-transparent'"></div>
             <div class="flex flex-col">
-                <h1 class="text-3xl font-black italic tracking-tighter text-blue-500 leading-none">MULTIX <span class="text-white">PRO</span></h1>
-                <span class="text-[9px] text-slate-500 font-black uppercase tracking-[0.3em] mt-1">Ultimate Edition</span>
+                <span class="text-[8px] text-slate-500 font-black uppercase tracking-widest leading-none mb-1" x-text="t('identity')"></span>
+                <span class="text-xs font-black italic tracking-tighter text-white uppercase group-hover:text-blue-400 transition" 
+                      x-text="isLoggedIn ? (config.user || t('control')) : t('guest') + ' / ' + t('login')"></span>
             </div>
         </div>
-        
-        <div class="flex items-center gap-5">
-            <button @click="isRefreshing=true; fetchState()" 
-                    class="p-2.5 bg-white/5 hover:bg-white/10 rounded-full transition-all group" 
-                    :class="isRefreshing && 'animate-spin-slow'">
-                <i class="ri-refresh-line text-xl text-slate-400 group-hover:text-white transition-colors"></i>
-            </button>
-
-            <div @click="isLoggedIn ? adminModal = true : showLoginModal = true" 
-                 class="flex items-center gap-3 px-5 py-2.5 bg-white/5 border border-white/10 rounded-[1.5rem] cursor-pointer hover:bg-white/10 hover:border-blue-500/30 transition-all group relative">
-                <div class="w-2.5 h-2.5 rounded-full shadow-[0_0_10px]" 
-                     :class="isLoggedIn ? 'bg-green-500 shadow-green-500/50 animate-pulse' : 'bg-slate-600 shadow-transparent'"></div>
-                <div class="flex flex-col">
-                    <span class="text-[8px] text-slate-500 font-black uppercase tracking-widest leading-none mb-1">Identity Status</span>
-                    <span class="text-xs font-black italic tracking-tighter text-white uppercase group-hover:text-blue-400 transition" 
-                          x-text="isLoggedIn ? (config.user || 'ADMIN') : 'GUEST / 点击登录'"></span>
-                </div>
-            </div>
-        </div>
-    </header>
-
+    </div>
+</header>
     <main class="max-w-7xl mx-auto px-6 mt-10 space-y-8 relative z-10">
         
         <section class="animate-in fade-in slide-in-from-bottom-4 duration-500">
