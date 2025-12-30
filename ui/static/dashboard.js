@@ -10,9 +10,10 @@ function multix() {
         searchQuery: '',
         
         // --- [ 2. 数据容器 ] ---
+        // 初始值预设，防止页面渲染时因 undefined 导致 0% 报错
         master: { cpu: 0, mem: 0, disk: 0, sys_ver: '加载中...', sb_ver: 'N/A' },
         agents: {},
-        config: { user: '', token: '', ip4: '', web_port: 7575 },
+        config: { user: 'GUEST', token: '', ip4: '', web_port: 7575 },
         
         // --- [ 3. 弹窗控制变量 ] ---
         showLoginModal: false,
@@ -33,27 +34,38 @@ function multix() {
         currentNodeInbounds: [],
         editingInbound: null,
 
-        // --- [ 6. 初始化 ] ---
-        init() {
+        // --- [ 6. 初始化核心：解决登录不响应的关键 ] ---
+        async init() {
+            console.log("Multiy Engine Initializing...");
             const savedToken = localStorage.getItem('m_token');
             if (savedToken) {
+                // 仅标记状态，具体权限交由 fetchState 校验
                 this.isLoggedIn = true;
-                this.fetchState();
             }
-            setInterval(() => this.fetchState(), 5000); // 5秒高频心跳
+            
+            // 立即执行首次数据同步并开启心跳
+            await this.fetchState();
+            setInterval(() => this.fetchState(), 5000); 
         },
 
-        // --- [ 7. 核心数据同步 ] ---
+        // --- [ 7. 核心数据同步：修复 0% 数据的关键 ] ---
         async fetchState() {
             try {
-                const res = await fetch('/api/state');
+                // 增加缓存穿透，确保获取实时数据
+                const res = await fetch(`/api/state?v=${Date.now()}`);
                 if (!res.ok) throw new Error("Backend Offline");
                 const data = await res.json();
                 
-                this.master = data.master;
-                this.agents = data.agents;
-                this.config = data.config;
+                // 严格赋值，确保数据对象完整性
+                this.master = data.master || this.master;
+                this.agents = data.agents || {};
+                this.config = data.config || this.config;
                 
+                // 身份同步：如果后端返回无 Token，前端强制降级
+                if (this.isLoggedIn && !this.config.token) {
+                    // console.warn("Session expired");
+                }
+
                 if (this.isLoggedIn && !this.tempUser) {
                     this.tempUser = this.config.user;
                     this.tempToken = this.config.token;
@@ -65,20 +77,19 @@ function multix() {
             }
         },
 
-        // --- [ 8. 节点管理逻辑 - 核心重构 ] ---
+        // --- [ 8. 节点管理逻辑 - 搜索与虚拟占位 ] ---
         
-        // 原始排序逻辑
         get sortedAgents() {
             return Object.fromEntries(
                 Object.entries(this.agents).sort(([, a], [, b]) => (a.order || 999) - (b.order || 999))
             );
         },
 
-        // 旗舰版：计算属性 - 过滤、隐藏感知与虚拟补全
+        // 旗舰版核心：主页网格列表逻辑
         get filteredAgents() {
             let list = Object.entries(this.agents);
             
-            // A. 如果没有任何真实节点，生成虚拟小鸡占位符
+            // 场景 A: 如果列表为空，注入虚拟小鸡
             if (list.length === 0) {
                 return {
                     "virtual-001": {
@@ -92,34 +103,32 @@ function multix() {
                 };
             }
 
-            // B. 搜索过滤逻辑
+            // 场景 B: 搜索与隐藏逻辑过滤
             const q = this.searchQuery.toLowerCase();
             let filtered = list.filter(([sid, a]) => {
                 const matchSearch = (a.alias && a.alias.toLowerCase().includes(q)) || 
                                     a.hostname.toLowerCase().includes(q) || 
                                     sid.includes(q);
                 
-                // 访客模式下强制隐藏 hidden 节点；管理员模式下在管理面板显示，主页网格依然隐藏以保持视图整洁
+                // 无论是否登录，主页网格都不显示标记为 hidden 的节点
                 return matchSearch && !a.hidden;
             });
 
             return Object.fromEntries(filtered.sort(([, a], [, b]) => (a.order || 999) - (b.order || 999)));
         },
 
-        // 管理面板专用：显示所有节点（含隐藏节点）以便管理
-        get adminNodeList() {
-            return this.sortedAgents;
-        },
-
         async manageAgent(sid, action, value = null) {
             try {
                 const res = await fetch('/api/manage_agent', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': this.config.token },
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'Authorization': localStorage.getItem('m_token') || '' 
+                    },
                     body: JSON.stringify({ sid, action, value })
                 });
                 if (res.ok) await this.fetchState();
-            } catch (e) { alert("操作失败"); }
+            } catch (e) { alert("操作失败: " + e.message); }
         },
 
         async saveAlias(sid) {
@@ -127,7 +136,7 @@ function multix() {
             this.editingSid = null;
         },
 
-        // --- [ 9. 超级订阅与导出 ] ---
+        // --- [ 9. 订阅与导出 ] ---
         generateSubLink() {
             return `http://${window.location.host}/sub?token=${this.config.token}&type=${this.subType}`;
         },
@@ -147,7 +156,7 @@ function multix() {
             });
             if (count === 0) return alert("无可导出的 VLESS 节点");
             this.globalExportModal = true;
-            setTimeout(() => this.renderQR(this.globalLinks), 150);
+            this.$nextTick(() => this.renderQR(this.globalLinks));
         },
 
         renderQR(text) {
@@ -162,9 +171,12 @@ function multix() {
             navigator.clipboard.writeText(text).then(() => alert("已复制到剪贴板"));
         },
 
-        // --- [ 10. 认证管理 ] ---
+        // --- [ 10. 认证管理：点击响应修复 ] ---
         async login() {
-            if (!this.loginForm.user || !this.loginForm.pass) return;
+            if (!this.loginForm.user || !this.loginForm.pass) {
+                alert("请填写账号密码");
+                return;
+            }
             try {
                 const res = await fetch('/api/login', {
                     method: 'POST',
@@ -176,13 +188,19 @@ function multix() {
                     localStorage.setItem('m_token', data.token);
                     this.isLoggedIn = true;
                     this.showLoginModal = false;
+                    // 登录后强制全量刷新
                     await this.fetchState();
-                } else { alert("凭据错误"); }
-            } catch (e) { alert("服务器连接超时"); }
+                    window.location.reload(); 
+                } else { 
+                    alert("账号或密码错误"); 
+                }
+            } catch (e) { 
+                alert("服务器连接异常: " + e.message); 
+            }
         },
 
         logout() {
-            if (confirm("确定注销？")) {
+            if (confirm("确定注销当前管理员会话？")) {
                 localStorage.removeItem('m_token');
                 window.location.reload();
             }
