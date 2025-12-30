@@ -365,40 +365,34 @@ def get_state():
         }
     })
 
-# --- [ 3. 核心修复：更新系统全局凭据与端口 ] ---
+# --- [ 核心修复：添加凭据物理更新 API ] ---
 @app.route('/api/update_admin', methods=['POST'])
 def update_admin():
-    d = request.json
-    if request.headers.get('Authorization') != TOKEN: 
-        return jsonify({"res":"fail", "msg": "Unauthorized"}), 403
-    
     try:
-        # 提取新参数
-        u, p, tk = d.get('user'), d.get('pass'), d.get('token')
-        p_web, p_ws = str(d.get('port', '7575')), str(d.get('ws_port', '9339'))
-        
-        # 物理写入 .env
-        with open(ENV_PATH, 'w', encoding='utf-8') as f:
-            f.write(f"M_USER='{u}'\n")
-            f.write(f"M_PASS='{p}'\n")
-            f.write(f"M_TOKEN='{tk}'\n")
-            f.write(f"M_PORT='{p_web}'\n")
-            f.write(f"M_WS_PORT='{p_ws}'\n")
-            f.write(f"M_HOST='{env.get('M_HOST', '0.0.0.0')}'\n")
-        
-        # 异步触发重启逻辑
-        def reboot():
-            time.sleep(1.5)
-            # 尝试自动开启防火墙端口
-            os.system(f"ufw allow {p_web}/tcp >/dev/null 2>&1")
-            os.system(f"ufw allow {p_ws}/tcp >/dev/null 2>&1")
-            os.system("systemctl restart multiy-master")
-            
-        threading.Thread(target=reboot).start()
-        return jsonify({"res": "ok", "msg": "Config saved, restarting..."})
-    except Exception as e:
-        return jsonify({"res": "fail", "msg": str(e)})
+        d = request.get_json()
+        if request.headers.get('Authorization') != TOKEN:
+            return jsonify({"status": "fail", "msg": "Unauthorized"}), 403
 
+        # 1. 物理写入 .env 文件确保持久化
+        with open(ENV_PATH, 'w', encoding='utf-8') as f:
+            f.write(f"M_USER='{d.get('user')}'\n")
+            f.write(f"M_PASS='{d.get('pass')}'\n")
+            f.write(f"M_TOKEN='{d.get('token')}'\n")
+            f.write(f"M_PORT='{d.get('port', '7575')}'\n")
+            f.write(f"M_WS_PORT='{d.get('ws_port', '9339')}'\n")
+            f.write(f"M_HOST='{env.get('M_HOST', '0.0.0.0')}'\n")
+
+        # 2. 异步重启服务以应用新端口和凭据
+        def restart_srv():
+            import time
+            time.sleep(1)
+            os.system("systemctl restart multiy-master")
+        import threading
+        threading.Thread(target=restart_srv).start()
+
+        return jsonify({"status": "success"})
+    except Exception as e:
+        return jsonify({"status": "error", "msg": str(e)}), 500
 # --- [ 4. 节点管理路由 ] ---
 @app.route('/api/manage_agent', methods=['POST'])
 def manage_agent():
