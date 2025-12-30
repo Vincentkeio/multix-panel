@@ -86,21 +86,21 @@ credential_center() {
         local port=$1
         local family=$2
         
-        # 探测 [::] 监听状态 (这是双栈合一的关键)
-        local listen_all_v6=$(ss -lnpt | grep -q ":::$port" && echo "yes" || echo "no")
-        # 探测 0.0.0.0 监听状态 (纯 v4)
-        local listen_v4=$(ss -lnpt | grep -q "0.0.0.0:$port" && echo "yes" || echo "no")
+        # 探测是否处于 [::] 监听状态 (双栈合一的关键)
+        local dual_stack=$(ss -lnpt | grep -q ":::$port" && echo "yes" || echo "no")
+        # 探测是否处于 0.0.0.0 监听状态 (纯 v4)
+        local pure_v4=$(ss -lnpt | grep -q "0.0.0.0:$port" && echo "yes" || echo "no")
 
         if [ "$family" == "v4" ]; then
-            # 只要监听到 ::: (双栈) 或者 0.0.0.0 (纯v4)，IPv4 就算 OK
-            if [ "$listen_all_v6" == "yes" ] || [ "$listen_v4" == "yes" ]; then
+            # 只要监听到 ::: (双栈) 或者 0.0.0.0 (纯v4)，IPv4 状态就应该亮绿灯
+            if [ "$dual_stack" == "yes" ] || [ "$pure_v4" == "yes" ]; then
                 echo -e "${GREEN}● IPv4 OK${PLAIN}"
             else
                 echo -e "${RED}○ IPv4 OFF${PLAIN}"
             fi
         else
-            # 只有监听到 ::: 时，IPv6 才是真正的双栈 OK
-            if [ "$listen_all_v6" == "yes" ]; then
+            # 只有监听到 ::: 时，IPv6 才是真正的双栈全通
+            if [ "$dual_stack" == "yes" ]; then
                 echo -e "${GREEN}● IPv6 OK${PLAIN}"
             else
                 echo -e "${RED}○ IPv6 OFF${PLAIN}"
@@ -122,10 +122,10 @@ credential_center() {
     
     # --- [ 智能逻辑诊断 ] ---
     if ss -lnpt | grep -q ":::$M_PORT"; then
-        echo -e "${GREEN}[状态] 检测到双栈(::)监听模式：IPv4 流量已自动映射至 IPv6 栈。${PLAIN}"
-        echo -e "${GREEN}[状态] 面板与 Agent 联通性正常。${PLAIN}"
+        echo -e "${GREEN}[状态] 系统运行于双栈(::)监听模式。${PLAIN}"
+        echo -e "${GREEN}[状态] IPv4 访问已通过内核映射至 IPv6 协议栈，全链路正常。${PLAIN}"
     else
-        echo -e "${RED}[告警] 未发现双栈监听，请检查 app.py 的 host 是否为 '::'${PLAIN}"
+        echo -e "${RED}[告警] 未发现双栈监听，请检查 app.py 是否配置了 host='::'${PLAIN}"
     fi
 
     pause_back
