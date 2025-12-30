@@ -219,25 +219,23 @@ EOF
     
     # 【重构下载函数】：支持自动创建目录并强制校验
     _download_ui() {
-        local file=$1
-        local target="$M_ROOT/master/$file"
-        
-        # 自动创建子目录 (如 static/ 或 templates/modals/)
-        mkdir -p "$(dirname "$target")"
-        
-        echo -ne "  🔹 正在同步 ${file} ... "
-        # 使用 -L 跟随重定向，确保下载原始代码
-        curl -sL -o "$target" "${RAW_URL}/${file}${V_CACHE}"
-        
-        # 校验：检查文件是否存在且大小是否正常（防止下到404页面）
-        if [ ! -s "$target" ] || [ $(stat -c%s "$target") -lt 50 ]; then
-            echo -e "${RED}[失败]${PLAIN}"
-            echo -e "${RED}错误：文件 ${file} 内容异常或路径不存在。${PLAIN}"
-            exit 1
-        else
-            echo -e "${GREEN}[OK]${PLAIN}"
-        fi
-    }
+    local file=$1
+    local target="$M_ROOT/master/$file"
+    
+    # 核心修复：下载前物理强制创建父级目录
+    mkdir -p "$(dirname "$target")"
+    
+    echo -ne "  🔹 正在同步 ${file} ... "
+    # 增加 -L (重定向) 和随机数缓存绕过
+    curl -sL -o "$target" "${RAW_URL}/${file}?v=$(date +%s)"
+    
+    if [ ! -s "$target" ] || grep -q "404: Not Found" "$target"; then
+        echo -e "${RED}[失败]${PLAIN}"
+        return 1
+    else
+        echo -e "${GREEN}[OK]${PLAIN}"
+    fi
+}
 
     # 【核心配置】：UI 文件全量清单
 # 1. 重新声明全量清单（确保没有 drawer.html）
