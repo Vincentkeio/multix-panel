@@ -9,7 +9,28 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m';
 check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[错误]${PLAIN} 需 Root 权限!" && exit 1; }
 install_shortcut() { [ ! -f /usr/bin/hubnp ] && cp "$0" /usr/bin/hubnp && chmod +x /usr/bin/hubnp; }
 pause_back() { echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"; read -n 1 -s -r; main_menu; }
-
+_deploy_service() {
+    local name=$1
+    local cmd=$2
+    local workdir=$(dirname "$cmd")
+    cat > "/etc/systemd/system/${name}.service" <<EOF
+[Unit]
+Description=${name} Service
+After=network.target
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${workdir}
+ExecStart=/usr/bin/python3 ${cmd}
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable "${name}"
+    systemctl restart "${name}"
+}
 # --- [ 深度清理中心：Hub-Next 旗舰全向兼容版 ] ---
 env_cleaner() {
     echo -e "${YELLOW}>>> 正在执行环境物理级大扫除 (锁定服务名: hub-next-panel)...${PLAIN}"
