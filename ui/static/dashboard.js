@@ -100,46 +100,76 @@ function multix() {
             this.tempPass = ""; // 密码安全考虑不回显
         },
 
-        // --- [ 8. 核心：修改管理员凭据与端口并触发重启 ] ---
-        async confirmUpdateAdmin() {
-            const msg = this.lang === 'zh' ? "确认同步新配置？系统将物理重启服务。" : "Sync new config? System will restart service.";
-            if(!confirm(msg)) return;
+       /**
+ * 核心功能：同步主控环境凭据与端口
+ * 逻辑：发送请求 -> 后端写入 .env -> 重启服务 -> 前端即时更新并重定向
+ */
+async confirmUpdateAdmin() {
+    // 1. 交互确认：根据当前语言显示对应的警告信息
+    const msg = this.lang === 'zh' 
+        ? "确认同步新配置？系统将物理重启服务并断开当前连接，主面板将即时同步新凭据。" 
+        : "Sync new config? System will restart service and update dashboard credentials immediately.";
+    
+    if(!confirm(msg)) return;
+
+    // 2. 构造负载：包含所有物理环境变量
+    const payload = {
+        user: this.tempUser,
+        pass: this.tempPass || "", // 密码留空则后端维持原样
+        token: this.tempToken,
+        port: parseInt(this.tempPort) || 7575,
+        ws_port: parseInt(this.tempWsPort) || 9339
+    };
+
+    try {
+        // 3. 发送异步同步指令
+        const res = await fetch('/api/update_admin', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': localStorage.getItem('m_token') 
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        const data = await res.json();
+        
+        if (res.ok && data.status === "success") {
+            // --- [ 关键修复：即时更新主面板状态 ] ---
+            this.config.user = payload.user;
+            this.config.token = payload.token;
             
-            const payload = {
-                user: this.tempUser,
-                pass: this.tempPass || this.ADMIN_PASS, // 如果没填则后端保持不变
-                token: this.tempToken,
-                port: this.tempPort,
-                ws_port: this.tempWsPort
-            };
-
-            try {
-                const res = await fetch('/api/update_admin', {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Authorization': localStorage.getItem('m_token') 
-                    },
-                    body: JSON.stringify(payload)
-                });
-                
-                const data = await res.json();
-                if (res.ok && data.res === "ok") {
-                    alert(this.t('sync_ok'));
-                    localStorage.removeItem('m_token');
-                    // 如果修改了 Web 端口，重定向到新地址
-                    const newUrl = `${window.location.protocol}//${window.location.hostname}:${payload.port}`;
-                    window.location.href = newUrl;
-                } else {
-                    alert("Error: " + (data.msg || "Update failed"));
-                }
-            } catch (e) {
-                // 重启过程中 fetch 会失败，属于正常现象
-                alert(this.t('restarting'));
-                setTimeout(() => window.location.reload(), 3000);
-            }
-        },
-
+            // 弹出提示并清除登录状态（因为 Token 或端口可能已变）
+            alert(this.lang === 'zh' ? "同步成功！正在重定向至新环境..." : "Success! Redirecting to new environment...");
+            localStorage.removeItem('m_token');
+            
+            // --- [ 关键修复：动态计算重定向 URL ] ---
+            // 如果用户改了 Web Port，必须跳转到新端口，否则会 404
+            const newUrl = `${window.location.protocol}//${window.location.hostname}:${payload.port}`;
+            
+            // 延迟一秒给后端留出写入文件的时间，然后执行跳转
+            setTimeout(() => {
+                window.location.href = newUrl;
+            }, 1000);
+            
+        } else {
+            alert(this.lang === 'zh' ? "同步失败：" + (data.msg || "未知错误") : "Sync Failed: " + (data.msg || "Unknown error"));
+        }
+    } catch (e) {
+        /**
+         * 特殊处理：由于后端在收到指令后会立即重启
+         * 此时 fetch 可能会报“连接已重置”，这在预期范围内。
+         */
+        console.log("Reboot triggered...");
+        alert(this.lang === 'zh' ? "系统正在物理重启，请稍后刷新页面。" : "System restarting, please refresh later.");
+        
+        // 5秒后尝试回到主页
+        setTimeout(() => {
+            const finalPort = this.tempPort || window.location.port;
+            window.location.href = `${window.location.protocol}//${window.location.hostname}:${finalPort}`;
+        }, 5000);
+    }
+},
         // --- [ 9. 节点管理逻辑 ] ---
         get sortedAgents() {
             return Object.fromEntries(
