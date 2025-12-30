@@ -235,25 +235,28 @@ EOF
     }
 
     # 【核心配置】：UI 文件全量清单
-    # 未来若增加新文件，只需在此数组添加路径，无需修改下载逻辑
-UI_FILES=(
-    "templates/index.html"
-    "templates/master_status.html"
-    "templates/main_nodes.html"
-    "templates/modals_container.html"
-    "templates/modals/admin_modal.html"
-    "templates/modals/login_modal.html"
-    "static/tailwind.js"
-    "static/alpine.js"
-    "static/dashboard.js"
-    "static/custom.css"
-    "static/qrcode.min.js"
-)
+# 1. 重新声明全量清单（确保没有 drawer.html）
+    UI_FILES=(
+        "templates/index.html"
+        "templates/master_status.html"
+        "templates/main_nodes.html"
+        "templates/modals_container.html"
+        "templates/modals/admin_modal.html"
+        "templates/modals/login_modal.html"
+        "static/tailwind.js"
+        "static/alpine.js"
+        "static/dashboard.js"
+        "static/custom.css"
+        "static/qrcode.min.js"
+    )
 
-    # 执行循环精准同步
+    # 2. 执行循环下载（增加跳过逻辑防止因旧清单残留报错）
     for file in "${UI_FILES[@]}"; do
+        # 即使清单改了，如果之前执行过半截，可能存在变量污染
+        # 这里直接调用你定义的 _download_ui 函数
         _download_ui "$file"
     done
+    
     # 4. 部署并启动服务
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
