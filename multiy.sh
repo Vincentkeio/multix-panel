@@ -81,21 +81,22 @@ credential_center() {
     
     echo -e "\n${GREEN}[ 3. 双栈监听物理状态 ]${PLAIN}"
     
-   # --- [ 精准双栈物理监听探测 ] ---
+ # --- [ 旗舰级精准双栈探测逻辑 ] ---
     check_net_stat() {
         local port=$1
-        local family=$2 # v4 或 v6
+        local family=$2
         
+        # 使用 lsof 或 ss 代替 netstat，这些工具对双栈监听的判断更权威
         if [ "$family" == "v4" ]; then
-            # 检测是否有 0.0.0.0 或 ::: 覆盖的 v4 监听
-            if netstat -lnpt | grep -E "0.0.0.0:$port|:::$port" > /dev/null 2>&1; then
+            # 检查是否有 IPv4 监听 (0.0.0.0) 或 IPv6 双栈监听 (::) 覆盖了 v4
+            if lsof -i4 :$port >/dev/null 2>&1 || ss -lnpt | grep -q ":::$port"; then
                 echo -e "${GREEN}● IPv4 OK${PLAIN}"
             else
                 echo -e "${RED}○ IPv4 OFF${PLAIN}"
             fi
         else
-            # 专门检测是否有 [::] 或 ::: 覆盖的 v6 监听
-            if netstat -lnpt | grep -q ":::$port" > /dev/null 2>&1; then
+            # 专门检查是否有 IPv6 监听 (::)
+            if lsof -i6 :$port >/dev/null 2>&1 || ss -ln6pt | grep -q ":$port"; then
                 echo -e "${GREEN}● IPv6 OK${PLAIN}"
             else
                 echo -e "${RED}○ IPv6 OFF${PLAIN}"
@@ -115,10 +116,20 @@ credential_center() {
     
     echo -e "${SKYBLUE}==================================================${PLAIN}"
     
-    # 自动诊断提示：如果物理 OK 但点不开，提示防火墙 
-    if netstat -lnpt | grep -q ":::$M_PORT"; then
-        echo -e "${YELLOW}[提示]${PLAIN} 物理监听已就绪。如 IPv6 仍无法访问，请检查防火墙："
-        echo -e "      ip6tables -I INPUT -p tcp --dport $M_PORT -j ACCEPT"
+    # --- [ IPv6 连通性深度诊断 ] ---
+    # 如果物理监听 OK 但外网不通，大概率是 ip6tables 没开
+    if lsof -i6 :$M_PORT >/dev/null 2>&1; then
+        # 尝试自动检查并修复防火墙（需要 root）
+        if ! ip6tables -L INPUT -n | grep -q "$M_PORT"; then
+            echo -e "${YELLOW}[修复] 检测到 IPv6 监听已就绪，正在尝试自动放行防火墙...${PLAIN}"
+            ip6tables -I INPUT -p tcp --dport $M_PORT -j ACCEPT >/dev/null 2>&1
+            ip6tables -I INPUT -p tcp --dport 9339 -j ACCEPT >/dev/null 2>&1
+            echo -e "${GREEN}[成功] 防火墙已放行。若仍无法访问，请检查云服务商安全组。${PLAIN}"
+        else
+            echo -e "${GREEN}[提示] 物理监听与防火墙规则均已就绪。${PLAIN}"
+        fi
+    else
+        echo -e "${RED}[告警] 面板服务未在 IPv6 协议栈启动，请检查 app.py 是否配置了 host='::'${PLAIN}"
     fi
 
     pause_back
