@@ -461,23 +461,63 @@ async def ws_handler(ws):
         WS_CLIENTS.pop(sid, None)
 
 async def main():
-    try: await websockets.serve(ws_handler, "::", 9339, reuse_address=True)
-    except: await websockets.serve(ws_handler, "0.0.0.0", 9339, reuse_address=True)
+    # 1. 动态加载最新环境配置
+    curr_env = load_env()
     
+    # 2. 端口决策逻辑：优先自定义 M_PORT，无效则回退 7575
+    try:
+        # 增加 strip() 防止空格干扰，增加 None 判断
+        raw_web_port = str(curr_env.get('M_PORT', '7575')).strip()
+        if raw_web_port.isdigit() and 1 <= int(raw_web_port) <= 65535:
+            web_port = int(raw_web_port)
+        else:
+            web_port = 7575
+    except:
+        web_port = 7575
+        
+    # 通信端口处理 (WS_PORT 逻辑对齐)
+    ws_port = 9339 
+    
+    # 3. 启动双栈 WS 通信服务
+    try: 
+        await websockets.serve(ws_handler, "::", ws_port, reuse_address=True)
+    except: 
+        await websockets.serve(ws_handler, "0.0.0.0", ws_port, reuse_address=True)
+    
+    # 4. 启动 Web 面板服务 (Flask)
     def run_web():
         from werkzeug.serving import make_server
+        # 尝试阶段 A：使用自定义端口启动
         try: 
-            srv = make_server('::', 7575, app, threaded=True)
+            print(f"[*] 正在物理探测 Web 端口: {web_port}...")
+            srv = make_server('::', web_port, app, threaded=True)
             srv.serve_forever()
-        except: 
-            app.run(host='0.0.0.0', port=7575, threaded=True)
-    
+        except Exception as e:
+            # 尝试阶段 B：若自定义端口无效或被占用，强制回退默认 7575
+            if web_port != 7575:
+                print(f"[!] 端口 {web_port} 绑定失败: {e}，正在回退至默认端口 7575...")
+                try:
+                    srv_default = make_server('::', 7575, app, threaded=True)
+                    srv_default.serve_forever()
+                except:
+                    # 最后的暴力启动尝试
+                    app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
+            else:
+                print(f"[!!] 默认端口 7575 亦不可用，请检查系统端口占用情况。")
+
+    # 5. 在独立线程启动服务并维持心跳
     threading.Thread(target=run_web, daemon=True).start()
-    while True: await asyncio.sleep(3600)
+    print(f"[*] Multiy Master 核心就绪 | 通信端口: {ws_port}")
+    
+    while True: 
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     if not os.path.exists(DB_PATH): save_db({})
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
 EOF
 }
 # --- [ 通信逻辑：UUID 硬件指纹识别 ] ---
