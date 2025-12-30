@@ -7,24 +7,30 @@
                     <span x-text="lang === 'zh' ? '管理' : 'ADMIN'"></span> 
                     <span class="text-blue-500" x-text="lang === 'zh' ? '中心' : 'CENTER'"></span>
                 </h2>
-                <button @click="showSettings = true" class="text-[9px] px-3 py-1.5 bg-blue-500/10 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg border border-blue-500/20 transition-all font-black flex items-center gap-2">
+                <button @click="toggleSettings()" 
+                        class="text-[9px] px-3 py-1.5 bg-blue-500/10 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg border border-blue-500/20 transition-all font-black flex items-center gap-2">
                     <i class="ri-settings-3-line"></i>
                     <span x-text="lang === 'zh' ? '安全凭据与端口修改' : 'Security Settings'"></span>
                 </button>
             </div>
+
             <div class="flex items-center gap-2">
-                <button @click="logout()" class="p-2 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-xl transition-all"><i class="ri-logout-circle-r-line"></i></button>
-                <button @click="adminModal = false" class="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-slate-400 transition"><i class="ri-close-line text-white"></i></button>
+                <button @click="logout()" class="p-2 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-xl transition-all">
+                    <i class="ri-logout-circle-r-line"></i>
+                </button>
+                <button @click="adminModal = false" class="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-slate-400 transition">
+                    <i class="ri-close-line text-white"></i>
+                </button>
             </div>
         </div>
 
         <div class="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-6">
             <div class="grid grid-cols-2 gap-3">
-                <button @click="exportGlobalNodes()" class="flex items-center justify-center gap-2 py-2.5 bg-white/5 border border-white/5 rounded-xl hover:bg-blue-600/10 transition-all group">
+                <button @click="exportGlobalNodes()" class="flex items-center justify-center gap-2.5 py-2.5 px-4 bg-white/5 border border-white/5 rounded-xl hover:bg-blue-600/10 transition-all group">
                     <i class="ri-qr-code-line text-lg text-blue-500"></i>
                     <span class="text-[9px] font-black text-slate-300 uppercase tracking-widest" x-text="lang === 'zh' ? '超级导出 (JSON/QR)' : 'Global Export'"></span>
                 </button>
-                <button @click="adminModal = false; subModal = true" class="flex items-center justify-center gap-2 py-2.5 bg-white/5 border border-white/5 rounded-xl hover:bg-emerald-600/10 transition-all group">
+                <button @click="adminModal = false; subModal = true" class="flex items-center justify-center gap-2.5 py-2.5 px-4 bg-white/5 border border-white/5 rounded-xl hover:bg-emerald-600/10 transition-all group">
                     <i class="ri-rss-line text-lg text-emerald-400"></i>
                     <span class="text-[9px] font-black text-slate-300 uppercase tracking-widest" x-text="lang === 'zh' ? '一键订阅 (CLASH/V2)' : 'One-Tap Sub'"></span>
                 </button>
@@ -33,13 +39,14 @@
             <div class="space-y-3">
                 <div class="flex justify-between items-center px-1">
                     <h3 class="text-[9px] text-slate-500 font-black uppercase tracking-widest" x-text="t('node_manage')"></h3>
-                    <button @click="manageAgent('virtual-' + Date.now(), 'add_virtual')" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-[8px] font-black uppercase rounded-lg shadow-lg active:scale-95 transition-all">
+                    <button @click="manageAgent('virtual-' + Math.random().toString(36).substr(2, 9), 'add_virtual')" 
+                            class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-[8px] font-black uppercase rounded-lg shadow-lg active:scale-95 transition-all">
                         + <span x-text="lang === 'zh' ? '增加虚拟小鸡' : 'Add Virtual'"></span>
                     </button>
                 </div>
 
                 <div class="grid grid-cols-1 gap-1.5">
-                    <template x-for="(n, sid) in sortedAgents" :key="sid">
+                    <template x-for="[sid, n] in sortedAgents" :key="sid">
                         <div class="flex items-center justify-between bg-white/2 hover:bg-white/5 p-3 rounded-xl border border-white/5 transition-all group"
                              :class="n.is_demo ? 'border-blue-500/20 bg-blue-500/5' : ''">
                             <div class="flex items-center gap-4 flex-1">
@@ -54,6 +61,9 @@
                                 <div class="flex flex-col">
                                     <div class="flex items-center gap-2">
                                         <span class="text-xs font-bold text-white tracking-tight" x-text="n.alias || n.hostname"></span>
+                                        <template x-if="n.hidden">
+                                            <i class="ri-eye-off-line text-amber-500 text-[10px]" title="访客不可见"></i>
+                                        </template>
                                         <template x-if="n.is_demo">
                                             <span class="px-1 py-0.5 bg-blue-500/10 text-blue-500 text-[6px] font-black rounded uppercase">Demo</span>
                                         </template>
@@ -66,18 +76,4 @@
                                 <button @click="manageAgent(sid, 'hide')" class="p-2 rounded-lg hover:bg-white/5">
                                     <i :class="n.hidden ? 'ri-eye-off-line text-amber-500' : 'ri-eye-line text-slate-500'" class="text-xs"></i>
                                 </button>
-                                <button @click="if(confirm(lang === 'zh' ? '确定删除？' : 'Delete?')) manageAgent(sid, 'delete')" class="p-2 text-slate-500 hover:text-red-500 rounded-lg">
-                                    <i class="ri-delete-bin-line text-xs"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </template>
-                </div>
-            </div>
-        </div>
-        
-        <div class="py-3 bg-black/40 border-t border-white/5 flex justify-center shrink-0">
-            <span class="text-[7px] font-black text-slate-700 uppercase tracking-[0.4em]">Hub-Next Panel Ver 1.0 (Build 202512)</span>
-        </div>
-    </div>
-</div>
+                                <button @click="if(confirm(lang === 'zh' ? '确定删除该节点？' : 'Delete?')) manageAgent(sid, 'delete')" class="p-2 text-slate-500 hover:text-red-500
