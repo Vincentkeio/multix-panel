@@ -1,31 +1,38 @@
 /**
- * Multiy Pro 旗舰版核心逻辑控制中心 - 深度增强全功能版
+ * HubX Panel Ver 1.0 (Build 202512) 核心控制引擎
+ * 功能：响应式状态管理、双栈监控、动态 i18n、配置同步自愈
  */
+
 function multix() {
     return {
-        // --- [ 1. 基础响应式状态 ] ---
+        // --- [ 1. 响应式基础状态 ] ---
         lang: localStorage.getItem('m_lang') || 'zh',
         isLoggedIn: false,
         isRefreshing: false,
         showToken: false,
-        showIP: false, // 控制主控 IP 显示状态
+        showIP: false,
         searchQuery: '',
         
-        // --- [ 国际化语言包 ] ---
+        // --- [ 2. 国际化语言包 (i18n) ] ---
+        // HubX Panel 品牌名在各语种中保持一致
         i18n: {
             zh: { 
-                login: "登录", logout: "注销", guest: "访客身份", identity: "身份状态", 
-                control: "管理中心", nodes: "集群节点", sys: "主控状态", 
+                login: "登录", logout: "注销", guest: "访客身份", identity: "当前身份", 
+                control: "管理中心", node_manage: "节点管理列表", sys: "主控机状态", 
                 search: "搜索节点名称、IP或别名...", total: "总计", online: "在线",
                 unlock: "解除管理限制", back: "返回访客模式", virtual: "演示节点",
-                restarting: "系统正在重启，请稍后刷新页面...", sync_ok: "同步成功！请使用新凭据重新登录。"
+                restarting: "系统正在重启，请稍后刷新页面...", sync_ok: "同步成功！请使用新凭据重新登录。",
+                export_success: "节点配置备份已生成并开始下载。",
+                copy_ok: "已复制到剪贴板"
             },
             en: { 
-                login: "Login", logout: "Logout", guest: "Guest Mode", identity: "Identity", 
-                control: "Control Center", nodes: "Cluster Nodes", sys: "Master Status", 
+                login: "Login", logout: "Logout", guest: "Guest Mode", identity: "Identity Status", 
+                control: "Control Center", node_manage: "Node Management", sys: "Master Status", 
                 search: "Search by Name, IP or Alias...", total: "Total", online: "Online",
                 unlock: "Unlock Console", back: "Back to Guest", virtual: "Demo Node",
-                restarting: "System restarting, please refresh later...", sync_ok: "Success! Please login with new credentials."
+                restarting: "System restarting, please refresh later...", sync_ok: "Success! Please login with new credentials.",
+                export_success: "Node backup generated and downloading.",
+                copy_ok: "Copied to clipboard"
             }
         },
         t(key) { return this.i18n[this.lang][key] || key; },
@@ -34,143 +41,128 @@ function multix() {
             localStorage.setItem('m_lang', this.lang); 
         },
 
-        // --- [ 2. 数据容器 ] ---
-        master: { cpu: 0, mem: 0, disk: 0, sys_ver: '加载中...', sb_ver: 'N/A' },
+        // --- [ 3. 核心数据容器 ] ---
+        master: { cpu: 0, mem: 0, disk: 0, sys_ver: 'Loading...', sb_ver: 'N/A' },
         agents: {},
-        config: { user: 'GUEST', token: '', ip4: '', port: 7575, ws_port: 9339 },
+        config: { user: 'GUEST', token: '', host: '', port: 7575, ws_port: 9339 },
         
-        // --- [ 3. 弹窗控制变量 ] ---
+        // --- [ 4. 弹窗控制变量 ] ---
         showLoginModal: false,
         adminModal: false,
+        showSettings: false, // 安全凭据弹窗控制
         nodeModal: false,
         subModal: false,
-        globalExportModal: false,
         
-        // --- [ 4. 表单与交互临时变量 ] ---
+        // --- [ 5. 交互临时变量 ] ---
         loginForm: { user: '', pass: '' },
-        tempUser: '', tempPass: '', tempToken: '', 
-        tempPort: 7575, tempWsPort: 9339, // 端口修改临时变量
+        tempUser: '', tempPass: '', tempToken: '', tempHost: '',
+        tempPort: 7575, tempWsPort: 9339,
         editingSid: null, tempAlias: '', 
         subType: 'v2ray', 
-        globalLinks: '',
         
-        // --- [ 5. 节点详情变量 ] ---
-        currentNode: null,
-        currentNodeInbounds: [],
-        editingInbound: null,
-
-        // --- [ 6. 初始化核心 ] ---
+        // --- [ 6. 生命周期钩子 ] ---
         async init() {
-            console.log("Multiy Engine Initializing...");
             const savedToken = localStorage.getItem('m_token');
-            if (savedToken) this.isLoggedIn = true;
-            
+            if (savedToken) {
+                this.isLoggedIn = true;
+                this.token = savedToken;
+            }
             await this.fetchState();
+            // 每5秒拉取一次最新硬件指标
             setInterval(() => this.fetchState(), 5000); 
         },
 
-        // --- [ 7. 核心数据同步 ] ---
+        // --- [ 7. 异步数据同步中心 ] ---
         async fetchState() {
             try {
                 const res = await fetch(`/api/state?v=${Date.now()}`);
-                if (!res.ok) throw new Error("Backend Offline");
+                if (!res.ok) throw new Error("Offline");
                 const data = await res.json();
                 
                 this.master = data.master || this.master;
                 this.agents = data.agents || {};
                 this.config = data.config || this.config;
                 
-                // 仅在首次登录成功后初始化管理表单
+                // 仅在首次拉取成功后初始化安全设置表单
                 if (this.isLoggedIn && !this.tempUser) {
                     this.initAdminForm();
                 }
             } catch (e) { 
-                console.error("同步失败:", e); 
+                console.error("HubX Sync Error:", e); 
             } finally { 
                 this.isRefreshing = false; 
             }
         },
 
-        // 填充管理表单初始值
         initAdminForm() {
             this.tempUser = this.config.user;
             this.tempToken = this.config.token;
+            this.tempHost = this.config.ip4; // 对应后端 M_HOST
             this.tempPort = this.config.port;
             this.tempWsPort = this.config.ws_port;
-            this.tempPass = ""; // 密码安全考虑不回显
+            this.tempPass = ""; 
         },
 
-       /**
- * 核心功能：同步主控环境凭据与端口
- * 逻辑：发送请求 -> 后端写入 .env -> 重启服务 -> 前端即时更新并重定向
- */
-async confirmUpdateAdmin() {
-    // 1. 交互确认：根据当前语言显示对应的警告信息
-    const msg = this.lang === 'zh' 
-        ? "确认同步新配置？系统将物理重启服务并断开当前连接，主面板将即时同步新凭据。" 
-        : "Sync new config? System will restart service and update dashboard credentials immediately.";
-    
-    if(!confirm(msg)) return;
+        // --- [ 8. 物理配置同步逻辑 (安全凭据修改) ] ---
+        async confirmUpdateAdmin() {
+            const msg = this.lang === 'zh' 
+                ? "确认同步新配置？HubX Panel 将物理重启服务，主面板将即时同步新域名与端口。" 
+                : "Sync new config? HubX Panel will restart and update domain/port immediately.";
+            
+            if(!confirm(msg)) return;
 
-    // 2. 构造负载：包含所有物理环境变量
-    const payload = {
-        user: this.tempUser,
-        pass: this.tempPass || "", // 密码留空则后端维持原样
-        token: this.tempToken,
-        port: parseInt(this.tempPort) || 7575,
-        ws_port: parseInt(this.tempWsPort) || 9339
-    };
+            const payload = {
+                user: this.tempUser,
+                pass: this.tempPass || "", 
+                token: this.tempToken,
+                host: this.tempHost,
+                port: parseInt(this.tempPort) || 7575,
+                ws_port: parseInt(this.tempWsPort) || 9339
+            };
 
-    try {
-        // 3. 发送异步同步指令
-        const res = await fetch('/api/update_admin', {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': localStorage.getItem('m_token') 
-            },
-            body: JSON.stringify(payload)
-        });
-        
-        const data = await res.json();
-        
-        if (res.ok && data.status === "success") {
-            // --- [ 关键修复：即时更新主面板状态 ] ---
-            this.config.user = payload.user;
-            this.config.token = payload.token;
-            
-            // 弹出提示并清除登录状态（因为 Token 或端口可能已变）
-            alert(this.lang === 'zh' ? "同步成功！正在重定向至新环境..." : "Success! Redirecting to new environment...");
-            localStorage.removeItem('m_token');
-            
-            // --- [ 关键修复：动态计算重定向 URL ] ---
-            // 如果用户改了 Web Port，必须跳转到新端口，否则会 404
-            const newUrl = `${window.location.protocol}//${window.location.hostname}:${payload.port}`;
-            
-            // 延迟一秒给后端留出写入文件的时间，然后执行跳转
-            setTimeout(() => {
-                window.location.href = newUrl;
-            }, 1000);
-            
-        } else {
-            alert(this.lang === 'zh' ? "同步失败：" + (data.msg || "未知错误") : "Sync Failed: " + (data.msg || "Unknown error"));
-        }
-    } catch (e) {
-        /**
-         * 特殊处理：由于后端在收到指令后会立即重启
-         * 此时 fetch 可能会报“连接已重置”，这在预期范围内。
-         */
-        console.log("Reboot triggered...");
-        alert(this.lang === 'zh' ? "系统正在物理重启，请稍后刷新页面。" : "System restarting, please refresh later.");
-        
-        // 5秒后尝试回到主页
-        setTimeout(() => {
-            const finalPort = this.tempPort || window.location.port;
-            window.location.href = `${window.location.protocol}//${window.location.hostname}:${finalPort}`;
-        }, 5000);
-    }
-},
-        // --- [ 9. 节点管理逻辑 ] ---
+            try {
+                const res = await fetch('/api/update_admin', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': this.token 
+                    },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (res.ok) {
+                    alert(this.t('restarting'));
+                    localStorage.removeItem('m_token');
+                    // 动态计算重定向：如果修改了域名或端口，自动跳转
+                    const protocol = window.location.protocol;
+                    const host = payload.host.includes(':') ? `[${payload.host}]` : payload.host;
+                    const newUrl = `${protocol}//${host}:${payload.port}`;
+                    
+                    setTimeout(() => { window.location.href = newUrl; }, 1500);
+                }
+            } catch (e) {
+                alert(this.t('restarting'));
+                setTimeout(() => { window.location.reload(); }, 5000);
+            }
+        },
+
+        // --- [ 9. 超级导出：节点备份逻辑 ] ---
+        exportGlobalNodes() {
+            const backup = {
+                brand: "HubX Panel",
+                version: "1.0",
+                timestamp: new Date().toISOString(),
+                agents: this.agents
+            };
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup, null, 4));
+            const dlAnchorElem = document.createElement('a');
+            dlAnchorElem.setAttribute("href", dataStr);
+            dlAnchorElem.setAttribute("download", `HubX_Backup_${new Date().getTime()}.json`);
+            dlAnchorElem.click();
+            alert(this.t('export_success'));
+        },
+
+        // --- [ 10. 节点搜索与排序逻辑 ] ---
         get sortedAgents() {
             return Object.fromEntries(
                 Object.entries(this.agents).sort(([, a], [, b]) => (a.order || 999) - (b.order || 999))
@@ -179,24 +171,10 @@ async confirmUpdateAdmin() {
 
         get filteredAgents() {
             let list = Object.entries(this.agents);
-            if (list.length === 0) {
-                return {
-                    "virtual-001": {
-                        hostname: "PRO-NODE-DEMO",
-                        alias: this.t('virtual'),
-                        is_demo: true, 
-                        order: 1,
-                        status: "online",
-                        metrics: { cpu: 12, mem: 24, load: "0.15", net_out: "0B/s", net_in: "0B/s", latency: "28" }
-                    }
-                };
-            }
             const q = this.searchQuery.toLowerCase();
             let filtered = list.filter(([sid, a]) => {
-                const matchSearch = (a.alias && a.alias.toLowerCase().includes(q)) || 
-                                    a.hostname.toLowerCase().includes(q) || 
-                                    sid.includes(q);
-                return matchSearch && !a.hidden;
+                const searchStr = `${sid} ${a.alias || ''} ${a.hostname}`.toLowerCase();
+                return searchStr.includes(q) && !a.hidden;
             });
             return Object.fromEntries(filtered.sort(([, a], [, b]) => (a.order || 999) - (b.order || 999)));
         },
@@ -207,15 +185,15 @@ async confirmUpdateAdmin() {
                     method: 'POST',
                     headers: { 
                         'Content-Type': 'application/json', 
-                        'Authorization': localStorage.getItem('m_token') || '' 
+                        'Authorization': this.token 
                     },
                     body: JSON.stringify({ sid, action, value })
                 });
                 if (res.ok) await this.fetchState();
-            } catch (e) { alert("Operation Failed"); }
+            } catch (e) { console.error("Agent Management Failed"); }
         },
 
-        // --- [ 10. 认证管理与登录流程 ] ---
+        // --- [ 11. 鉴权与辅助工具 ] ---
         async login() {
             if (!this.loginForm.user || !this.loginForm.pass) return;
             try {
@@ -229,10 +207,9 @@ async confirmUpdateAdmin() {
                     localStorage.setItem('m_token', data.token);
                     this.isLoggedIn = true;
                     this.showLoginModal = false;
-                    await this.fetchState();
                     window.location.reload(); 
-                } else { alert(this.t('login') + " Failed"); }
-            } catch (e) { alert("Server Connection Error"); }
+                } else { alert("Login Failed"); }
+            } catch (e) { alert("Connect Error"); }
         },
 
         logout() {
@@ -242,13 +219,12 @@ async confirmUpdateAdmin() {
             }
         },
 
-        // 辅助功能：复制与二维码
         copyToClipboard(text) {
-            navigator.clipboard.writeText(text).then(() => alert(this.lang === 'zh' ? "已复制到剪贴板" : "Copied"));
+            navigator.clipboard.writeText(text).then(() => alert(this.t('copy_ok')));
         },
         
         generateSubLink() {
-            return `http://${window.location.host}/sub?token=${this.config.token}&type=${this.subType}`;
+            return `${window.location.origin}/sub?token=${this.config.token}&type=${this.subType}`;
         }
     }
 }
