@@ -488,21 +488,37 @@ async def ws_handler(ws):
         WS_CLIENTS.pop(sid, None)
 
 async def main():
-    # 启动双栈 WS
-    try: await websockets.serve(ws_handler, "::", 9339, reuse_address=True)
-    except: await websockets.serve(ws_handler, "0.0.0.0", 9339, reuse_address=True)
+    # 1. 动态获取环境配置
+    curr_env = load_env()
     
-    # 启动 Web 面板 (端口 7575)
+    # 2. 读取自定义端口：Web 端口取 M_PORT，通信端口目前固定为 9339
+    # 如果环境文件里没有 M_PORT，则默认使用 7575
+    web_port = int(curr_env.get('M_PORT', 7575))
+    ws_port = 9339 
+    
+    # 3. 启动双栈 WS 通信服务
+    try: 
+        await websockets.serve(ws_handler, "::", ws_port, reuse_address=True)
+    except: 
+        await websockets.serve(ws_handler, "0.0.0.0", ws_port, reuse_address=True)
+    
+    # 4. 定义并启动 Web 面板服务 (Flask)
     def run_web():
         from werkzeug.serving import make_server
         try: 
-            srv = make_server('::', 7575, app, threaded=True)
+            # 优先尝试双栈监听 (::) 模式
+            srv = make_server('::', web_port, app, threaded=True)
             srv.serve_forever()
         except: 
-            app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
+            # 兜底使用纯 IPv4 监听
+            app.run(host='0.0.0.0', port=web_port, threaded=True, debug=False)
     
+    # 5. 在独立线程启动 Web 服务并保持主循环运行
     threading.Thread(target=run_web, daemon=True).start()
-    while True: await asyncio.sleep(3600)
+    print(f"[*] Multiy Master 已启动 | 面板端口: {web_port} | 通信端口: {ws_port}")
+    
+    while True: 
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     if not os.path.exists(DB_PATH): save_db({})
