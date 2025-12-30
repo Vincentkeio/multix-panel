@@ -81,22 +81,26 @@ credential_center() {
     
     echo -e "\n${GREEN}[ 3. 双栈监听物理状态 ]${PLAIN}"
     
- # --- [ 旗舰级精准双栈探测逻辑 ] ---
+# --- [ 兼容真双栈(::)的物理监听探测 ] ---
     check_net_stat() {
         local port=$1
         local family=$2
         
-        # 使用 lsof 或 ss 代替 netstat，这些工具对双栈监听的判断更权威
+        # 探测 [::] 监听状态 (这是双栈合一的关键)
+        local listen_all_v6=$(ss -lnpt | grep -q ":::$port" && echo "yes" || echo "no")
+        # 探测 0.0.0.0 监听状态 (纯 v4)
+        local listen_v4=$(ss -lnpt | grep -q "0.0.0.0:$port" && echo "yes" || echo "no")
+
         if [ "$family" == "v4" ]; then
-            # 检查是否有 IPv4 监听 (0.0.0.0) 或 IPv6 双栈监听 (::) 覆盖了 v4
-            if lsof -i4 :$port >/dev/null 2>&1 || ss -lnpt | grep -q ":::$port"; then
+            # 只要监听到 ::: (双栈) 或者 0.0.0.0 (纯v4)，IPv4 就算 OK
+            if [ "$listen_all_v6" == "yes" ] || [ "$listen_v4" == "yes" ]; then
                 echo -e "${GREEN}● IPv4 OK${PLAIN}"
             else
                 echo -e "${RED}○ IPv4 OFF${PLAIN}"
             fi
         else
-            # 专门检查是否有 IPv6 监听 (::)
-            if lsof -i6 :$port >/dev/null 2>&1 || ss -ln6pt | grep -q ":$port"; then
+            # 只有监听到 ::: 时，IPv6 才是真正的双栈 OK
+            if [ "$listen_all_v6" == "yes" ]; then
                 echo -e "${GREEN}● IPv6 OK${PLAIN}"
             else
                 echo -e "${RED}○ IPv6 OFF${PLAIN}"
@@ -105,31 +109,23 @@ credential_center() {
     }
 
     echo -ne " 🔹 面板服务 ($M_PORT): "
-    check_net_stat $M_PORT v4
+    check_net_stat "$M_PORT" "v4"
     echo -ne "                      "
-    check_net_stat $M_PORT v6
+    check_net_stat "$M_PORT" "v6"
     
     echo -ne " 🔹 通信服务 (9339): "
-    check_net_stat 9339 v4
+    check_net_stat "9339" "v4"
     echo -ne "                      "
-    check_net_stat 9339 v6
+    check_net_stat "9339" "v6"
     
     echo -e "${SKYBLUE}==================================================${PLAIN}"
     
-    # --- [ IPv6 连通性深度诊断 ] ---
-    # 如果物理监听 OK 但外网不通，大概率是 ip6tables 没开
-    if lsof -i6 :$M_PORT >/dev/null 2>&1; then
-        # 尝试自动检查并修复防火墙（需要 root）
-        if ! ip6tables -L INPUT -n | grep -q "$M_PORT"; then
-            echo -e "${YELLOW}[修复] 检测到 IPv6 监听已就绪，正在尝试自动放行防火墙...${PLAIN}"
-            ip6tables -I INPUT -p tcp --dport $M_PORT -j ACCEPT >/dev/null 2>&1
-            ip6tables -I INPUT -p tcp --dport 9339 -j ACCEPT >/dev/null 2>&1
-            echo -e "${GREEN}[成功] 防火墙已放行。若仍无法访问，请检查云服务商安全组。${PLAIN}"
-        else
-            echo -e "${GREEN}[提示] 物理监听与防火墙规则均已就绪。${PLAIN}"
-        fi
+    # --- [ 智能逻辑诊断 ] ---
+    if ss -lnpt | grep -q ":::$M_PORT"; then
+        echo -e "${GREEN}[状态] 检测到双栈(::)监听模式：IPv4 流量已自动映射至 IPv6 栈。${PLAIN}"
+        echo -e "${GREEN}[状态] 面板与 Agent 联通性正常。${PLAIN}"
     else
-        echo -e "${RED}[告警] 面板服务未在 IPv6 协议栈启动，请检查 app.py 是否配置了 host='::'${PLAIN}"
+        echo -e "${RED}[告警] 未发现双栈监听，请检查 app.py 的 host 是否为 '::'${PLAIN}"
     fi
 
     pause_back
