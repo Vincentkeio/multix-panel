@@ -270,7 +270,7 @@ _download_ui() {
     
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
-# --- [ 后端核心逻辑：旗舰全功能固化版 ] ---
+# --- [ 后端核心逻辑：旗舰全功能固化版 - 集成凭据与端口同步 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess, psutil, platform, random, threading, socket, base64
@@ -316,6 +316,7 @@ def load_env():
                     c[k] = v.strip("'\"")
     return c
 
+# 初始化全局变量
 env = load_env()
 ADMIN_USER = env.get('M_USER', 'admin')
 ADMIN_PASS = env.get('M_PASS', 'admin')
@@ -323,7 +324,7 @@ TOKEN = env.get('M_TOKEN', 'admin')
 AGENTS_LIVE = {}
 WS_CLIENTS = {}
 
-# --- [ 1. 认证路由：解决登录点击没反应 ] ---
+# --- [ 1. 认证路由 ] ---
 @app.route('/api/login', methods=['POST'])
 def login():
     try:
@@ -334,11 +335,10 @@ def login():
     except:
         return jsonify({"status": "error"}), 500
 
-# --- [ 2. 状态路由：解决主控 0% 加载问题 ] ---
+# --- [ 2. 状态路由：支持主控硬件与配置同步 ] ---
 @app.route('/api/state')
 def get_state():
     db = load_db()
-    # 采集主控硬件数据
     master_info = {
         "cpu": psutil.cpu_percent(),
         "mem": psutil.virtual_memory().percent,
@@ -346,23 +346,60 @@ def get_state():
         "sys_ver": f"{platform.system()} {platform.release()}",
         "sb_ver": subprocess.getoutput("sing-box version").split(' ')[2] if os.path.exists("/usr/bin/sing-box") else "N/A"
     }
-    # 合并 WebSocket 实时数据与数据库数据
     processed_agents = {}
     for sid, agent in db.items():
         processed_agents[sid] = agent
+        processed_agents[sid]['status'] = 'online' if sid in AGENTS_LIVE else 'offline'
         if sid in AGENTS_LIVE:
-            processed_agents[sid]['status'] = 'online'
             processed_agents[sid]['metrics'] = AGENTS_LIVE[sid].get('metrics', {})
-        else:
-            processed_agents[sid]['status'] = 'offline'
             
     return jsonify({
         "master": master_info,
         "agents": processed_agents,
-        "config": {"user": ADMIN_USER, "token": TOKEN, "ip4": env.get('M_IP4', '0.0.0.0')}
+        "config": {
+            "user": ADMIN_USER, 
+            "token": TOKEN, 
+            "ip4": env.get('M_HOST', '0.0.0.0'),
+            "port": env.get('M_PORT', '7575'),
+            "ws_port": env.get('M_WS_PORT', '9339')
+        }
     })
 
-# --- [ 3. 管理路由：管理中心各种功能归位 ] ---
+# --- [ 3. 核心修复：更新系统全局凭据与端口 ] ---
+@app.route('/api/update_admin', methods=['POST'])
+def update_admin():
+    d = request.json
+    if request.headers.get('Authorization') != TOKEN: 
+        return jsonify({"res":"fail", "msg": "Unauthorized"}), 403
+    
+    try:
+        # 提取新参数
+        u, p, tk = d.get('user'), d.get('pass'), d.get('token')
+        p_web, p_ws = str(d.get('port', '7575')), str(d.get('ws_port', '9339'))
+        
+        # 物理写入 .env
+        with open(ENV_PATH, 'w', encoding='utf-8') as f:
+            f.write(f"M_USER='{u}'\n")
+            f.write(f"M_PASS='{p}'\n")
+            f.write(f"M_TOKEN='{tk}'\n")
+            f.write(f"M_PORT='{p_web}'\n")
+            f.write(f"M_WS_PORT='{p_ws}'\n")
+            f.write(f"M_HOST='{env.get('M_HOST', '0.0.0.0')}'\n")
+        
+        # 异步触发重启逻辑
+        def reboot():
+            time.sleep(1.5)
+            # 尝试自动开启防火墙端口
+            os.system(f"ufw allow {p_web}/tcp >/dev/null 2>&1")
+            os.system(f"ufw allow {p_ws}/tcp >/dev/null 2>&1")
+            os.system("systemctl restart multiy-master")
+            
+        threading.Thread(target=reboot).start()
+        return jsonify({"res": "ok", "msg": "Config saved, restarting..."})
+    except Exception as e:
+        return jsonify({"res": "fail", "msg": str(e)})
+
+# --- [ 4. 节点管理路由 ] ---
 @app.route('/api/manage_agent', methods=['POST'])
 def manage_agent():
     d = request.json
@@ -370,19 +407,19 @@ def manage_agent():
     db = load_db()
     sid, action, val = d.get('sid'), d.get('action'), d.get('value')
     
-    if sid not in db and action != 'add_virtual': return jsonify({"res":"fail"})
-    
     if action == 'alias': db[sid]['alias'] = val
     elif action == 'hide': db[sid]['hidden'] = not db[sid].get('hidden', False)
     elif action == 'reorder': db[sid]['order'] = int(val)
-    elif action == 'delete': del db[sid]
+    elif action == 'delete': 
+        if sid in db: del db[sid]
     elif action == 'add_virtual':
-        db[sid] = {"hostname": "VIRTUAL-NODE", "alias": "演示节点", "is_demo": True, "order": 99}
+        v_id = f"virtual-{random.randint(1000,9999)}"
+        db[v_id] = {"hostname": "VIRTUAL-NODE", "alias": "演示节点", "is_demo": True, "order": 99}
         
     save_db(db)
     return jsonify({"res": "ok"})
 
-# --- [ 原有逻辑：静态文件与订阅 ] ---
+# --- [ 5. 静态、订阅与密钥 ] ---
 @app.route('/')
 def serve_index(): return render_template('index.html')
 
@@ -394,22 +431,17 @@ def sub_handler():
     db, curr_env = load_db(), load_env()
     token, sub_type = request.args.get('token'), request.args.get('type', 'v2ray')
     if token != TOKEN: return "Unauthorized", 403
-    links, clash_proxies = [], []
+    links = []
     for sid, agent in db.items():
         if agent.get('hidden'): continue
-        ip = agent.get('ip') or curr_env.get('M_IP4')
+        ip = agent.get('ip') or curr_env.get('M_HOST')
         for inb in agent.get('metrics', {}).get('inbounds', []):
             if inb.get('type') == 'vless':
                 tag, uuid = inb.get('tag', 'Node'), inb.get('uuid')
                 port = inb.get('listen_port') or inb.get('port')
-                sni = inb.get('reality_dest', '').split(':')[0] or 'yahoo.com'
-                links.append(f"vless://{uuid}@{ip}:{port}?security=reality&sni={sni}&fp=chrome&pbk={inb.get('reality_pub','')}&sid={inb.get('short_id','')}&type=tcp&flow=xtls-rprx-vision#{tag}")
-                clash_proxies.append({"name": tag, "type": "vless", "server": ip, "port": port, "uuid": uuid, "tls": True, "flow": "xtls-rprx-vision", "servername": sni, "reality-opts": {"public-key": inb.get('reality_pub',''), "short-id": inb.get('short_id','')}, "client-fingerprint": "chrome"})
-    if sub_type == 'clash':
-        res = "proxies:\n" + "\n".join([f"  - {{name: \"{p['name']}\", type: vless, server: \"{p['server']}\", port: {p['port']}, uuid: \"{p['uuid']}\", udp: true, tls: true, flow: \"xtls-rprx-vision\", servername: \"{p['servername']}\", reality-opts: {{public-key: \"{p['reality-opts']['public-key']}\", short-id: \"{p['reality-opts']['short-id']}\"}}, client-fingerprint: chrome}}" for p in clash_proxies])
-        res += "\nproxy-groups:\n  - {name: \"GLOBAL\", type: select, proxies: [" + ",".join([f"\"{p['name']}\"" for p in clash_proxies]) + "]}\nrules:\n  - MATCH,GLOBAL"
-        return res, 200, {'Content-Type': 'text/yaml; charset=utf-8'}
-    return base64.b64encode('\n'.join(links).encode()).decode()
+                links.append(f"vless://{uuid}@{ip}:{port}?security=reality&sni=yahoo.com&type=tcp&flow=xtls-rprx-vision#{tag}")
+    res = '\n'.join(links)
+    return base64.b64encode(res.encode()).decode() if sub_type != 'clash' else res
 
 @app.route('/api/gen_keys')
 def gen_keys():
@@ -428,31 +460,30 @@ async def ws_handler(ws):
             d = json.loads(m)
             if d.get('token') != TOKEN: continue
             node_uuid = d.get('node_id')
-            if not node_uuid: continue
             db = load_db()
             if node_uuid not in db:
                 db[node_uuid] = {"hostname": d.get('hostname', 'Node'), "order": len(db)+1, "ip": ws.remote_address[0], "hidden": False, "alias": ""}
                 save_db(db)
-            AGENTS_LIVE[node_uuid] = {"metrics": d.get('metrics'), "status": "online", "session": sid, "last_seen": time.time()}
+            AGENTS_LIVE[node_uuid] = {"metrics": d.get('metrics'), "session": sid}
     except: pass
-    finally:
-        if node_uuid in AGENTS_LIVE and AGENTS_LIVE[node_uuid].get('session') == sid:
-            AGENTS_LIVE[node_uuid]['status'] = 'offline'
-        WS_CLIENTS.pop(sid, None)
+    finally: WS_CLIENTS.pop(sid, None)
 
 async def main():
     curr_env = load_env()
-    web_port = int(curr_env.get('M_PORT', 7575))
-    ws_port = 9339 
-    try: await websockets.serve(ws_handler, "::", ws_port, reuse_address=True)
-    except: await websockets.serve(ws_handler, "0.0.0.0", ws_port, reuse_address=True)
+    web_p = int(curr_env.get('M_PORT', 7575))
+    ws_p = int(curr_env.get('M_WS_PORT', 9339))
+    
+    try: await websockets.serve(ws_handler, "::", ws_p, reuse_address=True)
+    except: await websockets.serve(ws_handler, "0.0.0.0", ws_p, reuse_address=True)
     
     def run_web():
         from werkzeug.serving import make_server
-        # 强制双栈监听：支持 IPv6
-        try: srv = make_server('::', web_port, app, threaded=True); srv.serve_forever()
-        except: app.run(host='0.0.0.0', port=web_port, threaded=True, debug=False)
-        
+        try:
+            srv = make_server('::', web_p, app, threaded=True)
+            srv.serve_forever()
+        except:
+            app.run(host='0.0.0.0', port=web_p, threaded=True, debug=False)
+            
     threading.Thread(target=run_web, daemon=True).start()
     while True: await asyncio.sleep(3600)
 
