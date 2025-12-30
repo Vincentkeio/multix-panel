@@ -608,6 +608,7 @@ class ServantCore:
                         payload = {
                             "type": "heartbeat",
                             "token": TOKEN,
+                            "node_id": self.node_id,
                             "hostname": self.hostname,
                             "metrics": self.get_metrics(),
                             "config_hash": state['hash']
