@@ -230,14 +230,13 @@ EOF
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
-# --- [ 后端核心逻辑：深度校准 404 修复版 ] ---
+# --- [ 后端核心逻辑：UUID 身份识别与序号校准版 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
-import asyncio, websockets, json, os, time, subprocess, psutil, platform, random, threading
+import asyncio, websockets, json, os, time, subprocess, psutil, platform, random, threading, socket
 from flask import Flask, request, jsonify, send_from_directory, render_template
-from werkzeug.serving import make_server
 
-# 1. 路径强制校准：确保 templates 和 static 在任何环境下都能找到
+# 1. 路径强制校准与基础配置
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 M_ROOT = "/opt/multiy_mvp"
 ENV_PATH = f"{M_ROOT}/.env"
@@ -247,18 +246,42 @@ app = Flask(__name__,
             template_folder=os.path.join(BASE_DIR, 'templates'),
             static_folder=os.path.join(BASE_DIR, 'static'))
 
-# --- [ 数据持久化系统 ] ---
+# --- [ 数据持久化系统：含 UUID 去重与 Order 校准 ] ---
 def load_db():
-    if os.path.exists(DB_PATH):
-        try:
-            with open(DB_PATH, 'r', encoding='utf-8') as f: return json.load(f)
-        except: return {}
-    return {}
+    if not os.path.exists(DB_PATH):
+        return {}
+    try:
+        with open(DB_PATH, 'r', encoding='utf-8') as f:
+            db = json.load(f)
+        
+        # 1. 自动校准逻辑：确保 Order 唯一且连续递增
+        # 按现有 order 排序，若无 order 或为 0 则排在最后
+        nodes = list(db.items())
+        nodes.sort(key=lambda x: (x[1].get('order') == 0, x[1].get('order', 999)))
+        
+        cleaned_db = {}
+        changed = False
+        
+        for i, (uid, data) in enumerate(nodes, 1):
+            # 2. 序号唯一性强制分配 (1, 2, 3...)
+            if data.get('order') != i:
+                data['order'] = i
+                changed = True
+            cleaned_db[uid] = data
+            
+        if changed:
+            save_db(cleaned_db)
+        return cleaned_db
+    except Exception:
+        return {}
 
 def save_db(db_data):
-    with open(DB_PATH, 'w', encoding='utf-8') as f: json.dump(db_data, f, indent=4)
+    """保存数据库，确保写入完整性"""
+    with open(DB_PATH, 'w', encoding='utf-8') as f:
+        json.dump(db_data, f, indent=4)
 
 def load_env():
+    """环境变量加载器"""
     c = {}
     if os.path.exists(ENV_PATH):
         with open(ENV_PATH, 'r', encoding='utf-8') as f:
@@ -268,10 +291,11 @@ def load_env():
                     c[k] = v.strip("'\"")
     return c
 
+# 核心全局状态变量
 env = load_env()
 TOKEN = env.get('M_TOKEN', 'admin')
-AGENTS_LIVE = {} 
-WS_CLIENTS = {}
+AGENTS_LIVE = {}  # 键值将使用 Agent 上报的硬件 UUID
+WS_CLIENTS = {}   # 用于 WebSocket 会话管理
 
 # --- [ 3. 核心 API 路由 ] ---
 
