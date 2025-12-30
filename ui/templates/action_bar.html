@@ -1,1 +1,28 @@
+<div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+    <div class="flex items-center space-x-4 flex-1 min-w-[300px]">
+        <div class="relative flex-1 max-w-md">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
+            <input type="text" x-model="searchQuery" 
+                   placeholder="搜索节点名称、IP或别名..." 
+                   class="w-full bg-gray-800 border border-gray-700 rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-sky-blue transition-all">
+        </div>
+        <div class="hidden md:flex items-center space-x-2 text-xs text-gray-400 font-mono bg-gray-800 px-3 py-2 rounded-lg border border-gray-700">
+            <span>TOTAL:</span>
+            <span class="text-sky-blue font-bold" x-text="Object.keys(agents).length"></span>
+            <span class="text-gray-600">|</span>
+            <span>ONLINE:</span>
+            <span class="text-green-500 font-bold" x-text="Object.values(agents).filter(a => a.status === 'online').length"></span>
+        </div>
+    </div>
 
+    <div class="flex items-center space-x-3">
+        <button @click="addDemoNode()" class="p-2 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-amber-500 rounded-lg border border-gray-700 transition" title="添加演示节点">
+            <i class="fas fa-flask"></i>
+        </button>
+        
+        <button @click="openAdminModal()" class="flex items-center space-x-2 bg-sky-blue hover:bg-sky-400 text-white px-4 py-2 rounded-lg font-bold text-sm shadow-lg shadow-sky-blue/20 transition-all active:scale-95">
+            <i class="fas fa-cog"></i>
+            <span>管理中心</span>
+        </button>
+    </div>
+</div>
