@@ -10,28 +10,26 @@ check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[错误]${PLAIN} 需 Root 权
 install_shortcut() { [ ! -f /usr/bin/multiy ] && cp "$0" /usr/bin/multiy && chmod +x /usr/bin/multiy; }
 pause_back() { echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
-# --- [ 环境深度清理 ] ---
+# --- [ 深度清理中心：含 UI 物理重置版 ] ---
 env_cleaner() {
-    echo -e "${YELLOW}>>> 正在执行环境物理级大扫除 (含旧版 Multix 清理)...${PLAIN}"
+    echo -e "${YELLOW}>>> 正在执行环境物理级大扫除 (含旧版残余抹除)...${PLAIN}"
     
-    # 1. 停止所有可能的服务名 (包含旧版 multix)
-    systemctl stop multiy-master multiy-agent multix multix-master multix-agent 2>/dev/null
-    systemctl disable multix multix-master multix-agent 2>/dev/null
+    # 1. 停止并禁用所有相关服务名 (含旧版 multix 兼容)
+    systemctl stop multiy-master multiy-agent multix* 2>/dev/null
+    systemctl disable multiy-master multiy-agent multix* 2>/dev/null
     
-    # 2. 移除旧版服务文件 (防止干扰)
-    rm -f /etc/systemd/system/multix* 2>/dev/null
+    # 2. 移除系统服务文件并刷新守护进程
+    rm -f /etc/systemd/system/multiy-* /etc/systemd/system/multix-* 2>/dev/null
     systemctl daemon-reload
     
-    # 3. 强制杀死残留进程
-    # 精准匹配新旧所有可能的路径关键字
+    # 3. 强制杀死残留进程 (精准匹配路径关键字)
     echo -e "${YELLOW}正在清理旧进程残留...${PLAIN}"
     pkill -9 -f "master/app.py" 2>/dev/null
     pkill -9 -f "agent/agent.py" 2>/dev/null
     pkill -9 -f "multix" 2>/dev/null
     pkill -9 -f "multiy" 2>/dev/null
-    pkill -9 python3 2>/dev/null # 最后的暴力兜底
     
-    # 4. 针对 7575 和 9339 端口进行定点强杀
+    # 4. 定点强杀端口占用 (面板与通信端口)
     for port in 7575 9339; do
         local pid=$(lsof -t -i:"$port" 2>/dev/null)
         if [ ! -z "$pid" ]; then
@@ -40,19 +38,26 @@ env_cleaner() {
         fi
     done
 
-    # 5. 彻底卸载冲突库并重新安装旗舰版三件套
-    echo -e "${YELLOW}正在更新 Python 环境依赖...${PLAIN}"
-    python3 -m pip uninstall -y python-socketio eventlet python-engineio websockets flask 2>/dev/null
-    python3 -m pip install --upgrade flask websockets psutil --break-system-packages 2>/dev/null
-    
-    # 6. 确保 lsof 已安装
+    # 5. 【核心重构】物理重置 UI 缓存目录结构
+    # 这一步彻底解决了“清单删除但文件残留”导致的安装报错问题
+    echo -e "${YELLOW}正在执行 UI 物理路径重置...${PLAIN}"
+    rm -rf "$M_ROOT/master/templates"
+    rm -rf "$M_ROOT/master/static"
+    # 重建标准旗舰版目录结构
+    mkdir -p "$M_ROOT/master/templates/modals"
+    mkdir -p "$M_ROOT/master/static"
+
+    # 6. 更新 Python 环境依赖与基础工具
+    echo -e "${YELLOW}正在校准 Python 环境依赖...${PLAIN}"
     if ! command -v lsof &> /dev/null; then
         apt-get update && apt-get install -y lsof >/dev/null 2>&1
     fi
+    # 卸载旧冲突库，重装三件套
+    python3 -m pip uninstall -y python-socketio eventlet python-engineio 2>/dev/null
+    python3 -m pip install --upgrade flask websockets psutil --break-system-packages 2>/dev/null
     
-    echo -e "${GREEN}>>> 物理大扫除完成，环境已就绪。${PLAIN}"
+    echo -e "${GREEN}>>> 物理大扫除完成，环境与 UI 结构已就绪。${PLAIN}"
 }
-
 # --- [ 1. 凭据与配置详情看板 ] ---
 # --- [ 1. 凭据中心看板模块 ] ---
 credential_center() {
