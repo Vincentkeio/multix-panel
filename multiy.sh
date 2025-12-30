@@ -179,7 +179,7 @@ install_master() {
     TK_RAND=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
     read -p "5. 通信令牌 Token [回车使用: $TK_RAND]: " IN_TK; M_TOKEN=${IN_TK:-$TK_RAND}
 
-    # 1. 写入环境变量
+# 1. 写入环境变量
     cat > "$M_ROOT/.env" << EOF
 M_TOKEN='$M_TOKEN'
 M_PORT='$M_PORT'
@@ -189,43 +189,55 @@ M_HOST='$M_HOST'
 EOF
 
     # 2. 生成后端核心 (app.py)
+    # 请确保脚本下方的 _generate_master_py 函数已更新为包含 /sub 和 /api/gen_keys 的版本
     _generate_master_py
 
     # 3. 从 GitHub 同步 UI 资源
     local RAW_URL="https://raw.githubusercontent.com/Vincentkeio/multix-panel/main/ui"
     local V_CACHE="?v=$(date +%s)"
-    echo -e "${YELLOW}>>> 正在同步云端 UI 资源...${PLAIN}"
+    echo -e "${YELLOW}>>> 正在同步云端 UI 资源 (全量自动化清单)...${PLAIN}"
     
-    # 【核心修复】：增加下载函数，强制校验文件大小
+    # 【重构下载函数】：支持自动创建目录并强制校验
     _download_ui() {
-        local file_path=$1
-        local target_path=$2
-        echo -ne "  🔹 正在同步 ${file_path} ... "
-        # 使用 -L 跟随重定向，确保下载原始代码
-        curl -sL -o "${target_path}" "${RAW_URL}/${file_path}${V_CACHE}"
+        local file=$1
+        local target="$M_ROOT/master/$file"
         
-        # 校验：如果文件小于 100 字节，说明下到了 404 文本
-        if [ ! -s "${target_path}" ] || [ $(stat -c%s "${target_path}") -lt 100 ]; then
+        # 自动创建子目录 (如 static/ 或 templates/modals/)
+        mkdir -p "$(dirname "$target")"
+        
+        echo -ne "  🔹 正在同步 ${file} ... "
+        # 使用 -L 跟随重定向，确保下载原始代码
+        curl -sL -o "$target" "${RAW_URL}/${file}${V_CACHE}"
+        
+        # 校验：检查文件是否存在且大小是否正常（防止下到404页面）
+        if [ ! -s "$target" ] || [ $(stat -c%s "$target") -lt 50 ]; then
             echo -e "${RED}[失败]${PLAIN}"
-            echo -e "${RED}错误：文件内容异常，请确认 GitHub 路径：${RAW_URL}/${file_path}${PLAIN}"
+            echo -e "${RED}错误：文件 ${file} 内容异常或路径不存在。${PLAIN}"
             exit 1
         else
             echo -e "${GREEN}[OK]${PLAIN}"
         fi
     }
 
-    # 执行精准下载（确保你的 GitHub 仓库 ui 文件夹下有 templates 和 static 子文件夹）
-    _download_ui "templates/index.html" "$M_ROOT/master/templates/index.html"
-    _download_ui "templates/main_nodes.html" "$M_ROOT/master/templates/main_nodes.html"
-    _download_ui "templates/modals/admin_modal.html" "$M_ROOT/master/templates/modals/admin_modal.html"
-    _download_ui "templates/modals/drawer.html" "$M_ROOT/master/templates/modals/drawer.html"
-    _download_ui "templates/modals/login_modal.html" "$M_ROOT/master/templates/modals/login_modal.html"
-    
-    _download_ui "static/tailwind.js" "$M_ROOT/master/static/tailwind.js"
-    _download_ui "static/alpine.js" "$M_ROOT/master/static/alpine.js"
-    _download_ui "static/dashboard.js" "$M_ROOT/master/static/dashboard.js"
-    _download_ui "static/custom.css" "$M_ROOT/master/static/custom.css"
+    # 【核心配置】：UI 文件全量清单
+    # 未来若增加新文件，只需在此数组添加路径，无需修改下载逻辑
+    UI_FILES=(
+        "templates/index.html"
+        "templates/main_nodes.html"
+        "templates/modals/admin_modal.html"
+        "templates/modals/drawer.html"
+        "templates/modals/login_modal.html"
+        "static/tailwind.js"
+        "static/alpine.js"
+        "static/dashboard.js"
+        "static/custom.css"
+        "static/qrcode.min.js"
+    )
 
+    # 执行循环精准同步
+    for file in "${UI_FILES[@]}"; do
+        _download_ui "$file"
+    done
     # 4. 部署并启动服务
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
