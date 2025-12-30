@@ -1,13 +1,13 @@
 #!/bin/bash
-# Multiy Pro V135.0-ULTIMATE - 终极全功能旗舰版
+# Hub-Next Panel Ver 1.0
 
-export M_ROOT="/opt/multiy_mvp"
+export M_ROOT="/opt/hubnp_mvp"
 SH_VER="V135.0-ULTIMATE"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; SKYBLUE='\033[0;36m'; PLAIN='\033[0m'
 
 # --- [ 基础工具 ] ---
 check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[错误]${PLAIN} 需 Root 权限!" && exit 1; }
-install_shortcut() { [ ! -f /usr/bin/multiy ] && cp "$0" /usr/bin/multiy && chmod +x /usr/bin/multiy; }
+install_shortcut() { [ ! -f /usr/bin/hubnp ] && cp "$0" /usr/bin/hubnp && chmod +x /usr/bin/hubnp; }
 pause_back() { echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
 # --- [ 深度清理中心：Hub-Next 旗舰全向兼容版 ] ---
@@ -183,7 +183,7 @@ _reset_all_credentials() {
 }
 # --- [ 2. 主控安装：旗舰加固版 ] ---
 install_master() {
-    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰主控 (双栈自愈版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}>>> 部署 Hub-Next Panel Ver 1.0 主控${PLAIN}"
     apt-get install -y python3-pip
     
     # 1. 物理环境预优化：强制开启内核双栈监听映射 (修复 IPv4 OFF 问题)
@@ -364,7 +364,7 @@ from flask import Flask, request, jsonify, send_from_directory, render_template
 
 # 1. 基础配置
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-M_ROOT = "/opt/multiy_mvp"
+M_ROOT = "/opt/hubnp_mvp"
 ENV_PATH = f"{M_ROOT}/.env"
 DB_PATH = f"{M_ROOT}/agents_db.json"
 
@@ -602,7 +602,7 @@ EOF
 
 install_agent() {
     apt-get install -y python3-pip
-    clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰被控 (Hybrid 状态对齐版)${PLAIN}"
+    clear; echo -e "${SKYBLUE}>>> 部署 Hub-Next Panel Ver 1.0 被控 (Hybrid 状态对齐版)${PLAIN}"
     mkdir -p "$M_ROOT/agent"
     read -p "1. 主控域名或IP: " M_INPUT
     read -p "2. 通信令牌 (Token): " M_TOKEN
@@ -768,7 +768,7 @@ EOF
     sed -i "s|REPLACE_URL|$FINAL_URL|; s|REPLACE_TOKEN|$M_TOKEN|" "$M_ROOT/agent/agent.py"
     
     # 部署并启动服务
-    _deploy_service "multiy-agent" "$M_ROOT/agent/agent.py"
+    _deploy_service "hubnp-agent" "$M_ROOT/agent/agent.py"
     echo -e "${GREEN}✅ 旗舰版被控已上线 (支持状态对齐与 Hybrid 同步)${PLAIN}"; pause_back
 }
 # --- [ 4. 链路诊断中心：动态端口感知版 ] ---
@@ -813,7 +813,7 @@ main_menu() {
         # 实时检测主控物理运行状态
         local m_stat="${RED}○ OFFLINE (未运行)${PLAIN}"
         if [ -f "$M_ROOT/.env" ]; then
-            if systemctl is-active --quiet hub-next-panel 2>/dev/null || systemctl is-active --quiet multiy-master 2>/dev/null; then
+            if systemctl is-active --quiet hub-next-panel ; then
                 m_stat="${GREEN}● ONLINE (核心在线)${PLAIN}"
             fi
         fi
