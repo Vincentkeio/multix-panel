@@ -1,6 +1,6 @@
 /**
  * Hub-Next Panel Ver 1.0 (Build 202512) 核心控制引擎
- * 功能：响应式状态管理、双栈监控、演示节点自愈、节点排序下发
+ * 深度修复版：IPv4/v6 分权、物理演示鸡自愈、管理员上帝视角、跨域剪贴板
  */
 
 function multix() {
@@ -13,8 +13,7 @@ function multix() {
         showIP: false,
         searchQuery: '',
         
-        // --- [ 2. 国际化语言包 (i18n) ] ---
-        // Hub-Next Panel 品牌名在各语种中保持一致
+        // --- [ 2. 国际化语言包 ] ---
         i18n: {
             zh: { 
                 login: "登录", logout: "注销", guest: "访客身份", identity: "当前身份", 
@@ -23,7 +22,7 @@ function multix() {
                 unlock: "解除管理限制", back: "返回访客模式", virtual: "演示节点",
                 restarting: "系统正在重启，请稍后刷新页面...", sync_ok: "同步成功！系统将重启。",
                 export_success: "备份导出成功！", copy_ok: "已复制到剪贴板",
-                demo_notice: "演示小鸡 (请添加真实节点)"
+                demo_notice: "演示小鸡 (自动生成)"
             },
             en: { 
                 login: "Login", logout: "Logout", guest: "Guest Mode", identity: "Identity Status", 
@@ -32,7 +31,7 @@ function multix() {
                 unlock: "Unlock Console", back: "Back to Guest", virtual: "Demo Node",
                 restarting: "System restarting, please refresh later...", sync_ok: "Success! Restarting.",
                 export_success: "Backup Exported!", copy_ok: "Copied to clipboard",
-                demo_notice: "Demo Instance (Add Real Nodes)"
+                demo_notice: "Demo Instance (Auto-Generated)"
             }
         },
         t(key) { return this.i18n[this.lang][key] || key; },
@@ -42,7 +41,7 @@ function multix() {
         },
 
         // --- [ 3. 核心数据容器 ] ---
-        master: { cpu: 0, mem: 0, disk: 0, sys_ver: 'Loading...', sb_ver: 'N/A' },
+        master: { cpu: 0, mem: 0, disk: 0, sys_ver: '', sb_ver: '', ip4: false, ip6: false },
         agents: {},
         config: { user: 'GUEST', token: '', ip4: '', port: 7575, ws_port: 9339 },
         
@@ -52,6 +51,7 @@ function multix() {
         showSettings: false, 
         nodeModal: false,
         subModal: false,
+        isAddingDemo: false, // 防止演示鸡重复写入锁
         
         // --- [ 5. 交互临时变量 ] ---
         loginForm: { user: '', pass: '' },
@@ -59,7 +59,7 @@ function multix() {
         tempPort: 7575, tempWsPort: 9339,
         editingSid: null, tempAlias: '', 
         subType: 'v2ray', 
-        
+
         // --- [ 6. 生命周期钩子 ] ---
         async init() {
             const savedToken = localStorage.getItem('m_token');
@@ -92,6 +92,14 @@ function multix() {
             }
         },
 
+        // --- [ 8. 管理中心凭据自愈 ] ---
+        toggleSettings() {
+            this.showSettings = !this.showSettings;
+            if (this.showSettings) {
+                this.initAdminForm(); // 唤起时强制同步最新配置
+            }
+        },
+
         initAdminForm() {
             this.tempUser = this.config.user;
             this.tempToken = this.config.token;
@@ -101,44 +109,59 @@ function multix() {
             this.tempPass = ""; 
         },
 
-        // --- [ 8. 演示节点自动注入逻辑 ] ---
-        get allAgents() {
-            const list = this.agents || {};
-            // 如果节点数量为 0，自动生成持久化风格的演示节点
-            if (Object.keys(list).length === 0) {
-                return {
-                    "virtual-demo-001": {
-                        hostname: "Hub-Next-DEMO",
-                        alias: this.t('demo_notice'),
-                        order: 1,
-                        status: "online",
-                        is_demo: true,
-                        metrics: { cpu: 12, mem: 24, load: "0.15", net_out: "0B/s", net_in: "0B/s", latency: "28" }
-                    }
-                };
-            }
-            return list;
-        },
-
-        // --- [ 9. 排序与搜索逻辑 ] ---
+        // --- [ 9. 演示节点物理持久化自愈逻辑 ] ---
         get sortedAgents() {
-            return Object.fromEntries(
-                Object.entries(this.allAgents).sort(([, a], [, b]) => (a.order || 999) - (b.order || 999))
-            );
+            let list = Object.entries(this.agents || {});
+            
+            // 检查可见节点数量
+            const visibleNodes = list.filter(([_, a]) => !a.hidden);
+            
+            // 如果无可显示节点，发起物理添加演示节点请求
+            if (visibleNodes.length === 0 && !this.isAddingDemo) {
+                this.isAddingDemo = true;
+                const demoId = 'virtual-' + Math.random().toString(36).substr(2, 7);
+                this.manageAgent(demoId, 'add_virtual', { 
+                    alias: this.t('demo_notice'), 
+                    order: 1 
+                }).then(() => { this.isAddingDemo = false; });
+            }
+
+            // 权限过滤：管理员看所有，访客只看非隐藏
+            return list.filter(([_, a]) => {
+                if (this.isLoggedIn) return true;
+                return !a.hidden;
+            }).sort(([, a], [, b]) => (a.order || 999) - (b.order || 999));
         },
 
+        // --- [ 10. 主页搜索与过滤 ] ---
         get filteredAgents() {
             const q = this.searchQuery.toLowerCase();
-            const filtered = Object.entries(this.allAgents).filter(([sid, a]) => {
-                const matchSearch = (a.alias || "").toLowerCase().includes(q) || 
-                                   a.hostname.toLowerCase().includes(q) || 
-                                   sid.includes(q);
-                return matchSearch && !a.hidden;
+            const allPossible = this.sortedAgents; // 依赖 sortedAgents 的权限过滤结果
+            
+            const filtered = allPossible.filter(([sid, a]) => {
+                const match = (a.alias || "").toLowerCase().includes(q) || 
+                              a.hostname.toLowerCase().includes(q) || 
+                              sid.includes(q);
+                return match;
             });
-            return Object.fromEntries(filtered.sort(([, a], [, b]) => (a.order || 999) - (b.order || 999)));
+            return Object.fromEntries(filtered);
         },
 
-        // --- [ 10. 物理配置同步逻辑 ] ---
+        // --- [ 11. 节点与物理配置管理 ] ---
+        async manageAgent(sid, action, value = null) {
+            try {
+                const res = await fetch('/api/manage_agent', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'Authorization': this.token || ''
+                    },
+                    body: JSON.stringify({ sid, action, value })
+                });
+                if (res.ok) await this.fetchState();
+            } catch (e) { console.error("Operation Failed"); }
+        },
+
         async confirmUpdateAdmin() {
             const msg = this.lang === 'zh' 
                 ? "确认同步新配置？Hub-Next Panel 将物理重启服务。" 
@@ -174,22 +197,36 @@ function multix() {
             }
         },
 
-        // --- [ 11. 节点管理：增删、隐藏、排序 ] ---
-        async manageAgent(sid, action, value = null) {
-            try {
-                const res = await fetch('/api/manage_agent', {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json', 
-                        'Authorization': this.token 
-                    },
-                    body: JSON.stringify({ sid, action, value })
+        // --- [ 12. 复制逻辑增强版：兼容非 HTTPS ] ---
+        copyToClipboard(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => {
+                    alert(this.t('copy_ok'));
+                }).catch(() => {
+                    this.fallbackCopy(text);
                 });
-                if (res.ok) await this.fetchState();
-            } catch (e) { console.error("Operation Failed"); }
+            } else {
+                this.fallbackCopy(text);
+            }
         },
 
-        // --- [ 12. 鉴权与辅助工具 ] ---
+        fallbackCopy(text) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed"; // 避免页面跳动
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) alert(this.t('copy_ok'));
+            } catch (err) {
+                alert('Copy Failed');
+            }
+            document.body.removeChild(textArea);
+        },
+
+        // --- [ 13. 其他鉴权逻辑 ] ---
         exportGlobalNodes() {
             const backup = { brand: "Hub-Next", version: "1.0", agents: this.agents };
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup, null, 4));
@@ -223,10 +260,6 @@ function multix() {
                 localStorage.removeItem('m_token');
                 window.location.reload();
             }
-        },
-
-        copyToClipboard(text) {
-            navigator.clipboard.writeText(text).then(() => alert(this.t('copy_ok')));
         },
         
         generateSubLink() {
