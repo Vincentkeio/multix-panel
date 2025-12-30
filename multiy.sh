@@ -81,26 +81,25 @@ credential_center() {
     
     echo -e "\n${GREEN}[ 3. 双栈监听物理状态 ]${PLAIN}"
     
-# --- [ 兼容真双栈(::)的物理监听探测 ] ---
+# --- [ 提升版：双栈解耦物理探测 ] ---
     check_net_stat() {
         local port=$1
         local family=$2
         
-        # 探测是否处于 [::] 监听状态 (双栈合一的关键)
-        local dual_stack=$(ss -lnpt | grep -q ":::$port" && echo "yes" || echo "no")
-        # 探测是否处于 0.0.0.0 监听状态 (纯 v4)
-        local pure_v4=$(ss -lnpt | grep -q "0.0.0.0:$port" && echo "yes" || echo "no")
+        # 使用 ss 分别提取 IPv4 和 IPv6 栈的真实监听状态
+        local has_v4=$(ss -lnpt4 | grep -q ":$port " && echo "yes" || echo "no")
+        local has_v6=$(ss -lnpt6 | grep -q ":$port " && echo "yes" || echo "no")
 
         if [ "$family" == "v4" ]; then
-            # 只要监听到 ::: (双栈) 或者 0.0.0.0 (纯v4)，IPv4 状态就应该亮绿灯
-            if [ "$dual_stack" == "yes" ] || [ "$pure_v4" == "yes" ]; then
+            # 只要 IPv4 栈有监听，或者 IPv6 栈处于双栈合一 (::) 模式，v4 就算 OK
+            if [ "$has_v4" == "yes" ] || ss -lnpt | grep -q ":::$port"; then
                 echo -e "${GREEN}● IPv4 OK${PLAIN}"
             else
                 echo -e "${RED}○ IPv4 OFF${PLAIN}"
             fi
         else
-            # 只有监听到 ::: 时，IPv6 才是真正的双栈全通
-            if [ "$dual_stack" == "yes" ]; then
+            # 显式检查 IPv6 协议栈是否有监听
+            if [ "$has_v6" == "yes" ]; then
                 echo -e "${GREEN}● IPv6 OK${PLAIN}"
             else
                 echo -e "${RED}○ IPv6 OFF${PLAIN}"
@@ -120,12 +119,14 @@ credential_center() {
     
     echo -e "${SKYBLUE}==================================================${PLAIN}"
     
-    # --- [ 智能逻辑诊断 ] ---
+    # --- [ 深度自诊逻辑 ] ---
     if ss -lnpt | grep -q ":::$M_PORT"; then
-        echo -e "${GREEN}[状态] 系统运行于双栈(::)监听模式。${PLAIN}"
-        echo -e "${GREEN}[状态] IPv4 访问已通过内核映射至 IPv6 协议栈，全链路正常。${PLAIN}"
+        echo -e "${GREEN}[状态] 检测到双栈(::)监听模式。${PLAIN}"
+        echo -e "${GREEN}[状态] 内核已自动将 IPv4 流量映射至 IPv6 协议栈。${PLAIN}"
+    elif ss -lnpt | grep -q "0.0.0.0:$M_PORT"; then
+        echo -e "${YELLOW}[状态] 仅检测到纯 IPv4 监听。IPv6 访问可能受限。${PLAIN}"
     else
-        echo -e "${RED}[告警] 未发现双栈监听，请检查 app.py 是否配置了 host='::'${PLAIN}"
+        echo -e "${RED}[告警] 端口 $M_PORT 未处于监听状态，请检查进程。${PLAIN}"
     fi
 
     pause_back
