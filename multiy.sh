@@ -377,6 +377,7 @@ _download_ui() {
     
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
+# --- [ 后端核心逻辑：旗舰全功能固化版 - 集成凭据、双栈与增殖自愈 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess, psutil, platform, random, threading, socket, base64
@@ -392,20 +393,16 @@ app = Flask(__name__,
             template_folder=os.path.join(BASE_DIR, 'templates'),
             static_folder=os.path.join(BASE_DIR, 'static'))
 
-# --- [ 数据库管理 ] ---
+# --- [ 数据库与环境自愈管理 ] ---
 def load_db():
     if not os.path.exists(DB_PATH): return {}
     try:
         with open(DB_PATH, 'r', encoding='utf-8') as f:
             db = json.load(f)
         nodes = list(db.items())
-        # 排序逻辑：Order 为 0 的排最后，其他按数字升序
-        nodes.sort(key=lambda x: (x[1].get('order') == 0, x[1].get('order', 999)))
-        cleaned_db = {}
-        for i, (uid, data) in enumerate(nodes, 1):
-            data['order'] = i
-            cleaned_db[uid] = data
-        return cleaned_db
+        # 排序逻辑：按 Order 升序
+        nodes.sort(key=lambda x: (x[1].get('order', 999)))
+        return {uid: data for uid, data in nodes}
     except: return {}
 
 def save_db(db_data):
@@ -430,7 +427,7 @@ TOKEN = env.get('M_TOKEN', 'admin')
 AGENTS_LIVE = {}
 WS_CLIENTS = {}
 
-# --- [ 1. 认证路由 ] ---
+# --- [ 路由逻辑 ] ---
 @app.route('/api/login', methods=['POST'])
 def login():
     try:
@@ -438,10 +435,8 @@ def login():
         if data.get('user') == ADMIN_USER and data.get('pass') == ADMIN_PASS:
             return jsonify({"status": "success", "token": TOKEN})
         return jsonify({"status": "fail", "msg": "Invalid Credentials"}), 401
-    except:
-        return jsonify({"status": "error"}), 500
+    except: return jsonify({"status": "error"}), 500
 
-# --- [ 2. 状态路由 ] ---
 @app.route('/api/state')
 def get_state():
     db = load_db()
@@ -458,62 +453,36 @@ def get_state():
         processed_agents[sid]['status'] = 'online' if sid in AGENTS_LIVE else 'offline'
         if sid in AGENTS_LIVE:
             processed_agents[sid]['metrics'] = AGENTS_LIVE[sid].get('metrics', {})
-            
-    return jsonify({
-        "master": master_info,
-        "agents": processed_agents,
-        "config": {
-            "user": ADMIN_USER, 
-            "token": TOKEN, 
-            "ip4": env.get('M_HOST', '0.0.0.0'),
-            "port": env.get('M_PORT', '7575'),
-            "ws_port": env.get('M_WS_PORT', '9339')
-        }
-    })
+    return jsonify({"master": master_info, "agents": processed_agents, "config": {"user": ADMIN_USER, "token": TOKEN, "ip4": env.get('M_HOST', '0.0.0.0'), "port": env.get('M_PORT', '7575'), "ws_port": env.get('M_WS_PORT', '9339')}})
 
-# --- [ 3. 核心修复：修复缩进与防火墙逻辑 ] ---
 @app.route('/api/update_admin', methods=['POST'])
 def update_admin():
     try:
         d = request.get_json()
-        if request.headers.get('Authorization') != TOKEN:
-            return jsonify({"status": "fail", "msg": "Unauthorized"}), 403
-
-        new_user = d.get('user')
-        new_pass = d.get('pass')
-        new_token = d.get('token')
-        new_host = d.get('host')
-        new_port = str(d.get('port'))
-        new_ws_port = str(d.get('ws_port'))
-
-        # 1. 持久化写入
+        if request.headers.get('Authorization') != TOKEN: return jsonify({"status": "fail"}), 403
+        
+        # 物理落盘 .env
         with open(ENV_PATH, 'w', encoding='utf-8') as f:
-            f.write(f"M_USER='{new_user}'\n")
-            f.write(f"M_PASS='{new_pass}'\n")
-            f.write(f"M_TOKEN='{new_token}'\n")
-            f.write(f"M_PORT='{new_port}'\n")
-            f.write(f"M_WS_PORT='{new_ws_port}'\n")
-            f.write(f"M_HOST='{new_host}'\n")
+            f.write(f"M_USER='{d.get('user')}'\n")
+            f.write(f"M_PASS='{d.get('pass')}'\n")
+            f.write(f"M_TOKEN='{d.get('token')}'\n")
+            f.write(f"M_PORT='{d.get('port')}'\n")
+            f.write(f"M_WS_PORT='{d.get('ws_port')}'\n")
+            f.write(f"M_HOST='{d.get('host')}'\n")
 
-# 2. 异步执行：防火墙自愈 + 服务重启
         def maintenance_task():
             import time
-            time.sleep(1) 
-            
-            # --- [ 防火墙自动放行逻辑 ] ---
-            for p in [new_port, new_ws_port]:
+            time.sleep(1)
+            # 缩进校准：严格 12 空格对齐
+            for p in [str(d.get('port')), str(d.get('ws_port'))]:
                 os.system(f"ufw allow {p}/tcp > /dev/null 2>&1")
                 os.system(f"iptables -I INPUT -p tcp --dport {p} -j ACCEPT > /dev/null 2>&1")
-            
-            # 物理重启主控服务 (确保前面有 12 个空格)
             os.system("systemctl restart hub-next-panel")
+
         threading.Thread(target=maintenance_task).start()
-        return jsonify({"status": "success", "msg": "Config updated."})
-    
-    except Exception as e:
-        return jsonify({"status": "error", "msg": str(e)}), 500
-        
-# --- [ 其余路由逻辑 ] ---
+        return jsonify({"status": "success"})
+    except Exception as e: return jsonify({"status": "error", "msg": str(e)}), 500
+
 @app.route('/api/manage_agent', methods=['POST'])
 def manage_agent():
     d = request.json
@@ -522,12 +491,7 @@ def manage_agent():
     sid, action, val = d.get('sid'), d.get('action'), d.get('value')
     if action == 'alias': db[sid]['alias'] = val
     elif action == 'hide': db[sid]['hidden'] = not db[sid].get('hidden', False)
-    elif action == 'reorder': db[sid]['order'] = int(val)
-    elif action == 'delete': 
-        if sid in db: del db[sid]
-    elif action == 'add_virtual':
-        v_id = f"virtual-{random.randint(1000,9999)}"
-        db[v_id] = {"hostname": "VIRTUAL-NODE", "alias": "演示节点", "is_demo": True, "order": 99}
+    elif action == 'delete' and sid in db: del db[sid]
     save_db(db)
     return jsonify({"res": "ok"})
 
@@ -537,30 +501,7 @@ def serve_index(): return render_template('index.html')
 @app.route('/static/<path:filename>')
 def serve_static(filename): return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
 
-@app.route('/sub')
-def sub_handler():
-    db, curr_env = load_db(), load_env()
-    token, sub_type = request.args.get('token'), request.args.get('type', 'v2ray')
-    if token != TOKEN: return "Unauthorized", 403
-    links = []
-    for sid, agent in db.items():
-        if agent.get('hidden'): continue
-        ip = agent.get('ip') or curr_env.get('M_HOST')
-        for inb in agent.get('metrics', {}).get('inbounds', []):
-            if inb.get('type') == 'vless':
-                tag, uuid = inb.get('tag', 'Node'), inb.get('uuid')
-                port = inb.get('listen_port') or inb.get('port')
-                links.append(f"vless://{uuid}@{ip}:{port}?security=reality&sni=yahoo.com&type=tcp&flow=xtls-rprx-vision#{tag}")
-    res = '\n'.join(links)
-    return base64.b64encode(res.encode()).decode() if sub_type != 'clash' else res
-
-@app.route('/api/gen_keys')
-def gen_keys():
-    try:
-        out = subprocess.getoutput("sing-box generate reality-keypair").split('\n')
-        return jsonify({"private_key": out[0].split(': ')[1].strip(), "public_key": out[1].split(': ')[1].strip()})
-    except: return jsonify({"private_key": "", "public_key": ""})
-
+# --- [ WebSocket Core: 后端判定增殖逻辑 ] ---
 async def ws_handler(ws):
     sid = str(id(ws))
     WS_CLIENTS[sid] = ws
@@ -568,51 +509,35 @@ async def ws_handler(ws):
     try:
         async for m in ws:
             d = json.loads(m)
-            # 1. 凭据校验（第一道防线）
             if d.get('token') != TOKEN: continue
-            
             node_uuid = d.get('node_id')
-            # 2. 从主控磁盘读取当前数据库状态
             db = load_db()
             
-            # --- [ 后端 Core 判定逻辑 ] ---
-            # 统计当前库中“未隐藏”的小鸡数量
+            # 后端判定：只有库为空或全部隐藏时才允许新 UUID 注册
             visible_count = sum(1 for node in db.values() if not node.get('hidden', False))
-            
-            # 判定条件：
-            # 只有当此 node_uuid 是新的，且 (数据库为空 OR 数据库中小鸡全部被隐藏) 时，才执行写入
             if node_uuid not in db:
                 if len(db) == 0 or visible_count == 0:
-                    db[node_uuid] = {
-                        "hostname": d.get('hostname', 'Node'), 
-                        "order": len(db) + 1, 
-                        "ip": ws.remote_address[0], 
-                        "hidden": False, 
-                        "alias": ""
-                    }
-                    # 3. 后端执行物理写入
+                    db[node_uuid] = {"hostname": d.get('hostname', 'Node'), "order": len(db)+1, "ip": ws.remote_address[0], "hidden": False, "alias": ""}
                     save_db(db)
-                    print(f"[Core] 判定通过：库为空或已全部隐藏，物理记录新节点 {node_uuid}")
+                    print(f"[Core] 判定通过：物理记录新节点 {node_uuid}")
             
-            # 无论是否写入数据库，只要连接正常，就更新内存中的实时指标用于 UI 展示
             AGENTS_LIVE[node_uuid] = {"metrics": d.get('metrics'), "session": sid}
-            
-    except Exception as e:
-        print(f"[WS Error] {e}")
-    finally:
-        WS_CLIENTS.pop(sid, None)
+    except: pass
+    finally: WS_CLIENTS.pop(sid, None)
+
 async def main():
     curr_env = load_env()
     web_p, ws_p = int(curr_env.get('M_PORT', 7575)), int(curr_env.get('M_WS_PORT', 9339))
     try: await websockets.serve(ws_handler, "::", ws_p, reuse_address=True)
     except: await websockets.serve(ws_handler, "0.0.0.0", ws_p, reuse_address=True)
+    
     def run_web():
         from werkzeug.serving import make_server
         try:
             srv = make_server('::', web_p, app, threaded=True)
             srv.serve_forever()
-        except:
-            app.run(host='0.0.0.0', port=web_p, threaded=True, debug=False)
+        except: app.run(host='0.0.0.0', port=web_p, threaded=True, debug=False)
+            
     threading.Thread(target=run_web, daemon=True).start()
     while True: await asyncio.sleep(3600)
 
