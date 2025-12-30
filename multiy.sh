@@ -439,13 +439,35 @@ async def ws_handler(ws):
         WS_CLIENTS.pop(sid, None)
 
 async def main():
-    await websockets.serve(ws_handler, "::", 9339)
-    srv = make_server('::', 7575, app)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    print(">>> Multiy Pro Master Active on Dual-Stack (:::7575)")
-    while True: await asyncio.sleep(1)
+    # 1. 启动通信服务 (9339) - 兼容 IPv4 和 IPv6
+    try:
+        # 同时监听 0.0.0.0 (v4) 和 :: (v6)
+        await websockets.serve(ws_handler, "0.0.0.0", 9339)
+        await websockets.serve(ws_handler, "::", 9339)
+    except Exception as e:
+        print(f"WS Start Warning: {e}")
+
+    # 2. 启动面板服务 (7575)
+    def run_flask():
+        try:
+            # 强制使用 app.run 并监听 0.0.0.0 以确保 IPv4 100% 可访
+            app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
+        except Exception as e:
+            print(f"Flask Start Error: {e}")
+
+    # 使用守护线程启动 Flask，防止阻塞异步循环
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    print(">>> Multiy Pro Master Active on 7575 (Web) & 9339 (WS)")
+    
+    # 保持主进程活跃
+    while True:
+        await asyncio.sleep(60)
 
 if __name__ == "__main__":
+    # 启动前确保数据库环境就绪
+    if not os.path.exists(DB_PATH):
+        save_db({})
     asyncio.run(main())
 EOF
 }
