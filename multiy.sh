@@ -169,7 +169,7 @@ _apply_and_restart() {
     echo -e "${YELLOW}>>> 正在重启 Hub-Next 系统组件...${PLAIN}"
     
     # 重启面板和API服务
-systemctl restart hub-next-panel hub-next-api
+systemctl restart hub-next-panel
     
     echo -e "${GREEN}>>> 配置已生效！${PLAIN}"
     sleep 2
