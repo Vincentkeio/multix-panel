@@ -548,37 +548,49 @@ async def ws_handler(ws):
         WS_CLIENTS.pop(session_id, None)
 
 async def main():
-    # 1. 通信服务 (9339) - 监听 [::] 通常能自动处理双栈
+    # 1. 通信服务 (9339) - 监听 [::] 自动处理双栈流量
+    # 启用 reuse_address 确保服务重启时端口能快速释放
     try:
-        await websockets.serve(ws_handler, "::", 9339)
-    except:
-        await websockets.serve(ws_handler, "0.0.0.0", 9339)
+        await websockets.serve(ws_handler, "::", 9339, reuse_address=True)
+        print(">>> Communication Server: Dual-Stack Listening on [::]:9339")
+    except Exception as e:
+        # 如果系统不支持 IPv6，则回退到纯 IPv4
+        await websockets.serve(ws_handler, "0.0.0.0", 9339, reuse_address=True)
+        print(f">>> Communication Server: IPv4-Only Listening on 9339 (Err: {e})")
 
-    # 2. 面板服务 (7575) - 显式双路监听
-    def run_flask_v4():
-        # 专门负责 IPv4
-        app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
-
-    def run_flask_v6():
+    # 2. 面板服务 (7575) - 使用单一双栈线程
+    def run_flask_dual_stack():
         try:
-            # 专门负责 IPv6
-            from werkzeug.serving import run_simple
-            run_simple('::', 7575, app, threaded=True)
-        except:
-            pass
+            # 核心：直接监听 '::'。在现代 Linux 中，这一个监听就涵盖了 v4 和 v6
+            # 禁用 debug 模式以防止 werkzeug 在多线程环境下产生冲突
+            app.run(host='::', port=7575, threaded=True, debug=False)
+        except Exception as e:
+            # 如果双栈监听失败，强制回退到纯 IPv4
+            print(f">>> Web Panel: Falling back to IPv4 (Err: {e})")
+            app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
 
-    # 启动两个线程，互不干扰
-    threading.Thread(target=run_flask_v4, daemon=True).start()
-    threading.Thread(target=run_flask_v6, daemon=True).start()
+    # 启动 Web 线程
+    threading.Thread(target=run_flask_dual_stack, daemon=True).start()
     
-    print(">>> Multiy Pro Master: Dual-Path Listening on 7575 & 9339")
-    while True: await asyncio.sleep(60)
+    print(">>> Multiy Pro Master: Web Panel Ready on port 7575")
+    
+    # 维持主循环
+    while True: 
+        await asyncio.sleep(60)
 
 if __name__ == "__main__":
-    if not os.path.exists(DB_PATH): save_db({})
-    asyncio.run(main())
+    # 确保数据库文件存在
+    if not os.path.exists(DB_PATH): 
+        save_db({})
+    
+    # 启动异步 IO 循环
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        print(f"致命错误: {e}")
 EOF
-}
 # --- [ 3. 被控端安装 (全能仆人旗舰版) ] ---
 install_agent() {
     apt-get install -y python3-pip
