@@ -429,23 +429,58 @@ def api_manage_agent():
     save_db(db)
     return jsonify({"res": "ok"})
     
-# --- [ 4. 通信逻辑 ] ---
+# --- [ 4. 通信逻辑：UUID 硬件指纹识别版 ] ---
 async def ws_handler(ws):
-    sid = str(id(ws))
-    WS_CLIENTS[sid] = ws
-    db = load_db()
+    session_id = str(id(ws)) # 仅用于底层连接管理
+    WS_CLIENTS[session_id] = ws
+    current_node_uuid = None 
+    
     try:
         async for msg in ws:
             data = json.loads(msg)
+            # 1. 安全令牌校验
             if data.get('token') != TOKEN: continue
-            if sid not in db:
-                db[sid] = {"hostname": data.get('hostname', 'Node'), "alias": "", "order": 0, "is_demo": False, "ip": ws.remote_address[0]}
+            
+            # 2. 提取硬件 UUID (由 Agent 生成并上报)
+            node_uuid = data.get('node_id')
+            if not node_uuid: continue
+            current_node_uuid = node_uuid
+
+            db = load_db()
+            # 3. UUID 唯一性校验与自动覆盖
+            if node_uuid not in db:
+                # 第一次连接，注册新卡片并分配唯一序号
+                db[node_uuid] = {
+                    "hostname": data.get('hostname', 'Node'), 
+                    "alias": "", 
+                    "order": len(db) + 1, 
+                    "is_demo": False, 
+                    "ip": ws.remote_address[0]
+                }
                 save_db(db)
-            AGENTS_LIVE[sid] = {"metrics": data.get('metrics'), "status": "online", "last_seen": time.time()}
-    except: pass
+            else:
+                # 已存在的小鸡，仅更新 IP 或 Hostname，不再增加卡片
+                if db[node_uuid].get('ip') != ws.remote_address[0]:
+                    db[node_uuid]['ip'] = ws.remote_address[0]
+                    save_db(db)
+
+            # 4. 更新实时在线状态 (使用 UUID 作为键，实现旧连接自动顶替)
+            AGENTS_LIVE[node_uuid] = {
+                "metrics": data.get('metrics'), 
+                "status": "online", 
+                "last_seen": time.time(),
+                "session": session_id # 记录当前会话
+            }
+            
+    except Exception as e:
+        pass
     finally:
-        if sid in AGENTS_LIVE: AGENTS_LIVE[sid]["status"] = "offline"
-        WS_CLIENTS.pop(sid, None)
+        # 5. 断开处理：仅在 UUID 匹配时标记离线
+        if current_node_uuid in AGENTS_LIVE:
+            # 检查是否是当前会话断开（防止新连接被旧连接的退出动作误杀）
+            if AGENTS_LIVE[current_node_uuid].get('session') == session_id:
+                AGENTS_LIVE[current_node_uuid]["status"] = "offline"
+        WS_CLIENTS.pop(session_id, None)
 
 async def main():
     # 1. 通信服务 (9339) - 监听 [::] 通常能自动处理双栈
