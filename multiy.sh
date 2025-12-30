@@ -82,13 +82,11 @@ credential_center() {
         
         # 判断 V6 是否有效，若有效则按标准格式封装显示
         if [[ "$V6" != "未分配" && "$V6" != "N/A" ]]; then
-            echo -e " 🔹 IPv6 入口: ${YELLOW}http:[$V6]:$M_PORT${PLAIN}"
+            echo -e " 🔹 IPv6 入口: ${YELLOW}http://[$V6]:$M_PORT${PLAIN}"
         else
             echo -e " 🔹 IPv6 入口: ${RED}未检测到有效公网 IPv6 地址${PLAIN}"
         fi
         
-        echo -e " 🔹 管理账号: ${SKYBLUE}$M_USER${PLAIN}"
-        echo -e " 🔹 管理密码: ${SKYBLUE}$M_PASS${PLAIN}"
         echo -e " 🔹 管理账号: ${SKYBLUE}$M_USER${PLAIN}"
         echo -e " 🔹 管理密码: ${SKYBLUE}$M_PASS${PLAIN}"
         echo -e " 🔹 通信令牌: ${SKYBLUE}$M_TOKEN${PLAIN}"
