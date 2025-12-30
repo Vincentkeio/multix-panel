@@ -99,7 +99,8 @@ credential_center() {
         echo -e " 🔹 管理账号: ${SKYBLUE}$M_USER${PLAIN}"
         echo -e " 🔹 管理密码: ${SKYBLUE}$M_PASS${PLAIN}"
         echo -e " 🔹 通信令牌: ${SKYBLUE}$M_TOKEN${PLAIN}"
-        echo -e " 🔹 API 监听: ${SKYBLUE}$WS_PORT${PLAIN}"
+        echo -e " 🔹 WEB 面板端口: ${SKYBLUE}$M_PORT${PLAIN}"
+        echo -e " 🔹 API 监听端口: ${SKYBLUE}$WS_PORT${PLAIN}"
         
         echo -e "\n${GREEN}[ 2. 物理监听状态 ]${PLAIN}"
         echo -ne " 🔹 面板服务 ($M_PORT): " && _check_port_stat "$M_PORT"
