@@ -236,18 +236,19 @@ EOF
 
     # 【核心配置】：UI 文件全量清单
     # 未来若增加新文件，只需在此数组添加路径，无需修改下载逻辑
-    UI_FILES=(
-        "templates/index.html"
-        "templates/main_nodes.html"
-        "templates/modals/admin_modal.html"
-        "templates/modals/drawer.html"
-        "templates/modals/login_modal.html"
-        "static/tailwind.js"
-        "static/alpine.js"
-        "static/dashboard.js"
-        "static/custom.css"
-        "static/qrcode.min.js"
-    )
+UI_FILES=(
+    "templates/index.html"
+    "templates/master_status.html"
+    "templates/main_nodes.html"
+    "templates/modals_container.html"
+    "templates/modals/admin_modal.html"
+    "templates/modals/login_modal.html"
+    "static/tailwind.js"
+    "static/alpine.js"
+    "static/dashboard.js"
+    "static/custom.css"
+    "static/qrcode.min.js"
+)
 
     # 执行循环精准同步
     for file in "${UI_FILES[@]}"; do
