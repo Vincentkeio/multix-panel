@@ -179,18 +179,18 @@ install_master() {
 
 echo -e "\n${YELLOW}--- 交互式设置 (回车使用默认值) ---${PLAIN}"
     
-    # 1. 面板 Web 端口交互 (仅保留这一个)
-    read -p "1. 面板 Web 端口 [默认 7575]: " M_PORT
+
+    # 1. 管理员账号与密码
+    read -p "1. 管理员账号 [默认 admin]: " M_USER; M_USER=${M_USER:-admin}
+    read -p "2. 管理员密码 [默认 admin]: " M_PASS; M_PASS=${M_PASS:-admin}
+    # 2. 面板 Web 端口交互 (仅保留这一个)
+    read -p "3. 面板 Web 端口 [默认 7575]: " M_PORT
     if [[ ! "$M_PORT" =~ ^[0-9]+$ ]] || [ "$M_PORT" -lt 1 ] || [ "$M_PORT" -gt 65535 ]; then
         M_PORT=7575
         echo -e "${YELLOW}[提示] 输入端口无效，已回退至默认: 7575${PLAIN}"
     fi
 
-    # 2. 管理员账号与密码
-    read -p "2. 管理员账号 [默认 admin]: " M_USER; M_USER=${M_USER:-admin}
-    read -p "3. 管理员密码 [默认 admin]: " M_PASS; M_PASS=${M_PASS:-admin}
-
-    # 3. 接入监听端口交互 (WebSocket) - 替换掉原来重复的 Web 端口项
+    # 4. 接入监听端口交互 (WebSocket) - 替换掉原来重复的 Web 端口项
     while true; do
         read -p "4. 接入监听端口 (WS) [默认 9339]: " M_WS_PORT
         M_WS_PORT=${M_WS_PORT:-9339}
