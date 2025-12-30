@@ -550,6 +550,21 @@ class ServantCore:
     def __init__(self):
         self.last_config_hash = ""
         self.hostname = socket.gethostname()
+        # --- [ 核心重构：提取硬件唯一 UUID ] ---
+        self.node_id = self._get_unique_id()
+
+    def _get_unique_id(self):
+        """尝试多种方式提取物理唯一 ID，确保重装不重名"""
+        try:
+            # 1. 优先读取 Linux 系统机器 ID
+            if os.path.exists("/etc/machine-id"):
+                with open("/etc/machine-id", 'r') as f:
+                    return f.read().strip()
+            # 2. 备选：使用网卡硬件 MAC 地址生成的 UUID
+            return str(uuid.getnode())
+        except:
+            # 3. 兜底：随机生成一个并记录（不推荐，通常前两步能成功）
+            return "unknown-" + socket.gethostname()
 
     def get_config_state(self):
         """Hybrid 模式核心：读取物理配置并生成 MD5"""
@@ -564,7 +579,6 @@ class ServantCore:
                 return {"hash": m.hexdigest(), "inbounds": data.get('inbounds', [])}
         except:
             return {"hash": "error", "inbounds": []}
-
     def get_metrics(self):
         """采集硬盘、流量、版本等核心指标"""
         try:
