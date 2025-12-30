@@ -772,11 +772,16 @@ EOF
     _deploy_service "multiy-agent" "$M_ROOT/agent/agent.py"
     echo -e "${GREEN}✅ 旗舰版被控已上线 (支持状态对齐与 Hybrid 同步)${PLAIN}"; pause_back
 }
-# --- [ 4. 链路诊断中心 ] ---
+# --- [ 4. 链路诊断中心：动态端口感知版 ] ---
 smart_diagnostic() {
     clear; echo -e "${SKYBLUE}🔍 旗舰诊断中心 (原生协议探测)${PLAIN}"
+    
+    # 定义通信端口变量（尝试从环境加载，否则默认 9339）
+    [ -f "$M_ROOT/.env" ] && source "$M_ROOT/.env"
+    WS_PORT=${M_WS_PORT:-9339}
+
     if [ -f "$M_ROOT/agent/agent.py" ]; then
-        # 从代码中提取当前运行的凭据
+        # 从代码中动态提取当前被控端实际运行的凭据
         A_URL=$(grep "MASTER =" "$M_ROOT/agent/agent.py" | cut -d'"' -f2)
         A_TK=$(grep "TOKEN =" "$M_ROOT/agent/agent.py" | cut -d'"' -f2)
         
@@ -785,20 +790,23 @@ smart_diagnostic() {
         echo -e " 🔹 通信令牌: ${YELLOW}$A_TK${PLAIN}"
         echo -e "------------------------------------------------"
         
-        # 物理探测逻辑
+        # 物理探测逻辑：直接探测被控端配置的目标地址
+        echo -ne " 👉 正在探测物理链路... "
         python3 -c "import websockets, asyncio; asyncio.run(websockets.connect('$A_URL', timeout=5))" >/dev/null 2>&1
+        
+        # 结果判定：0 为连接成功，1 为连接后握手失败（说明端口通了，但协议/Token不对），均为端口开放
         if [ $? -eq 0 ] || [ $? -eq 1 ]; then
-             echo -e " 👉 状态: ${GREEN}物理链路 OK${PLAIN} (端口已开放)"
-             echo -e "${YELLOW}[提示]${PLAIN} 如果面板仍无数据，请检查上面显示的令牌是否与主控一致。"
+             echo -e "${GREEN}OK${PLAIN} (端口已开放)"
+             echo -e "${YELLOW}[提示]${PLAIN} 物理连接正常。如果面板仍无数据，请确认上述 Token 是否与主控一致。"
         else
-             echo -e " 👉 状态: ${RED}链路 FAIL${PLAIN} (主控 9339 端口不可达)"
+             echo -e "${RED}FAIL${PLAIN}"
+             echo -e "${RED}[错误]${PLAIN} 主控通信端口不可达，请检查防火墙或主控 $WS_PORT 端口是否开启。"
         fi
     else
-        echo -e "${RED}[错误]${PLAIN} 未发现 Agent 记录。"
+        echo -e "${RED}[错误]${PLAIN} 本机未发现 Agent 记录，请先执行安装。"
     fi
     pause_back
 }
-
 main_menu() {
     clear; echo -e "${SKYBLUE}🛰️ Multiy Pro Beta ${SH_VER}${PLAIN}"
     echo " 1. 安装/更新主控 (不执行强制清理)"
