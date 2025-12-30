@@ -257,13 +257,13 @@ EOF
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
-# --- [ 后端核心逻辑：修正闭合版 ] ---
+# --- [ 后端核心逻辑：旗舰固化版 ] ---
 _generate_master_py() {
 cat > "$M_ROOT/master/app.py" << 'EOF'
 import asyncio, websockets, json, os, time, subprocess, psutil, platform, random, threading, socket, base64
 from flask import Flask, request, jsonify, send_from_directory, render_template
 
-# 1. 基础配置与路径校准
+# 1. 基础配置
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 M_ROOT = "/opt/multiy_mvp"
 ENV_PATH = f"{M_ROOT}/.env"
@@ -307,41 +307,12 @@ TOKEN = env.get('M_TOKEN', 'admin')
 AGENTS_LIVE = {}
 WS_CLIENTS = {}
 
-# --- [ 核心 API 路由 ] ---
+# --- [ API 路由：订阅、密钥、配置下发 ] ---
 @app.route('/')
-def serve_index(): 
-    return render_template('index.html')
+def serve_index(): return render_template('index.html')
 
 @app.route('/static/<path:filename>')
-def serve_static(filename):
-    return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
-
-@app.route('/api/state')
-def api_state():
-    db = load_db()
-    combined = {}
-    for sid, config in db.items():
-        live = AGENTS_LIVE.get(sid, {})
-        if config.get('is_demo'):
-            metrics = {"cpu": random.randint(2,8), "mem": random.randint(15,30), "disk": 20, "net_up": 0.5, "net_down": 1.2}
-            status = "online"
-        else:
-            metrics = live.get('metrics', {})
-            status = live.get('status', 'offline')
-        combined[sid] = {**config, "metrics": metrics, "status": status, "sid": sid}
-    
-    curr = load_env()
-    return jsonify({
-        "agents": combined,
-        "master": {
-            "cpu": int(psutil.cpu_percent()), 
-            "mem": int(psutil.virtual_memory().percent), 
-            "disk": int(psutil.disk_usage('/').percent),
-            "sys_ver": f"{platform.system()} {platform.release()}",
-            "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"
-        },
-        "config": {"user": curr.get('M_USER'), "token": TOKEN, "ip4": curr.get('M_HOST')}
-    })
+def serve_static(filename): return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
 
 @app.route('/sub')
 def sub_handler():
@@ -372,13 +343,6 @@ def gen_keys():
         return jsonify({"private_key": out[0].split(': ')[1].strip(), "public_key": out[1].split(': ')[1].strip()})
     except: return jsonify({"private_key": "", "public_key": ""})
 
-@app.route('/api/login', methods=['POST'])
-def api_login():
-    d, c = request.json, load_env()
-    if d.get('user') == c.get('M_USER') and d.get('pass') == c.get('M_PASS'):
-        return jsonify({"status": "success", "token": TOKEN})
-    return jsonify({"status": "fail"}), 401
-
 @app.route('/api/update_node_config', methods=['POST'])
 def update_node_config():
     d = request.json
@@ -389,7 +353,7 @@ def update_node_config():
         return jsonify({"res": "ok"})
     return jsonify({"res": "fail", "msg": "Agent Offline"})
 
-# --- [ 通信逻辑：必须包含在 EOF 内 ] ---
+# --- [ 通信逻辑 ] ---
 async def ws_handler(ws):
     sid = str(id(ws))
     WS_CLIENTS[sid] = ws
@@ -416,8 +380,7 @@ async def main():
     try:
         raw_web_port = str(curr_env.get('M_PORT', '7575')).strip()
         web_port = int(raw_web_port) if raw_web_port.isdigit() and 1 <= int(raw_web_port) <= 65535 else 7575
-    except:
-        web_port = 7575
+    except: web_port = 7575
     ws_port = 9339 
     try: await websockets.serve(ws_handler, "::", ws_port, reuse_address=True)
     except: await websockets.serve(ws_handler, "0.0.0.0", ws_port, reuse_address=True)
@@ -426,13 +389,8 @@ async def main():
         try: 
             srv = make_server('::', web_port, app, threaded=True)
             srv.serve_forever()
-        except Exception:
-            if web_port != 7575:
-                try:
-                    app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
-                except: pass
-            else:
-                app.run(host='0.0.0.0', port=web_port, threaded=True, debug=False)
+        except: 
+            app.run(host='0.0.0.0', port=web_port, threaded=True, debug=False)
     threading.Thread(target=run_web, daemon=True).start()
     while True: await asyncio.sleep(3600)
 
@@ -440,91 +398,12 @@ if __name__ == "__main__":
     if not os.path.exists(DB_PATH): save_db({})
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    except KeyboardInterrupt: pass
 EOF
 }
-# --- [ 通信逻辑：UUID 硬件指纹识别 ] ---
-async def ws_handler(ws):
-    sid = str(id(ws))
-    WS_CLIENTS[sid] = ws
-    node_uuid = None
-    try:
-        async for m in ws:
-            d = json.loads(m)
-            if d.get('token') != TOKEN: continue
-            node_uuid = d.get('node_id')
-            if not node_uuid: continue
-            db = load_db()
-            if node_uuid not in db:
-                db[node_uuid] = {"hostname": d.get('hostname', 'Node'), "order": len(db)+1, "ip": ws.remote_address[0], "hidden": False, "alias": ""}
-                save_db(db)
-            AGENTS_LIVE[node_uuid] = {"metrics": d.get('metrics'), "status": "online", "session": sid, "last_seen": time.time()}
-    except: pass
-    finally:
-        if node_uuid in AGENTS_LIVE and AGENTS_LIVE[node_uuid].get('session') == sid:
-            AGENTS_LIVE[node_uuid]['status'] = 'offline'
-        WS_CLIENTS.pop(sid, None)
 
-async def main():
-    # 1. 动态获取环境配置
-    curr_env = load_env()
-    
-    # 2. 读取自定义端口逻辑：优先自定义，无效则回退默认
-    try:
-        raw_port = curr_env.get('M_PORT', '7575')
-        # 校验：必须是纯数字且在合法范围内，否则视为无效
-        if str(raw_port).isdigit() and 1 <= int(raw_port) <= 65535:
-            web_port = int(raw_port)
-        else:
-            web_port = 7575
-    except:
-        web_port = 7575
-        
-    ws_port = 9339 
-    
-    # 3. 启动双栈 WS 通信服务
-    try: 
-        await websockets.serve(ws_handler, "::", ws_port, reuse_address=True)
-    except: 
-        await websockets.serve(ws_handler, "0.0.0.0", ws_port, reuse_address=True)
-    
-    # 4. 启动 Web 面板服务 (Flask)
-    def run_web():
-        from werkzeug.serving import make_server
-        try: 
-            # A. 尝试使用用户自定义端口
-            print(f"[*] 正在尝试启动 Web 面板 (端口: {web_port})...")
-            srv = make_server('::', web_port, app, threaded=True)
-            srv.serve_forever()
-        except Exception as e:
-            # B. 如果自定义端口无效（如被占用），强制回退到默认 7575
-            if web_port != 7575:
-                print(f"[!] 端口 {web_port} 绑定失败或无效，正在回退至默认端口 7575...")
-                try:
-                    srv_default = make_server('::', 7575, app, threaded=True)
-                    srv_default.serve_forever()
-                except:
-                    app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
-            else:
-                print(f"[!!] 默认端口 7575 亦无法启动，请检查系统端口占用。")
+# --- [ 3. 被控端安装 ] ---
 
-    # 5. 在独立线程运行 Web 服务并保持主循环
-    threading.Thread(target=run_web, daemon=True).start()
-    print(f"[*] Multiy Master 运行中 | WS通信端口: {ws_port}")
-    
-    while True: 
-        await asyncio.sleep(3600)
-
-if __name__ == "__main__":
-    if not os.path.exists(DB_PATH): save_db({})
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
-EOF
-}
-# --- [ 3. 被控端安装 (全能仆人旗舰版) ] ---
 install_agent() {
     apt-get install -y python3-pip
     clear; echo -e "${SKYBLUE}>>> 部署 Multiy 旗舰被控 (Hybrid 状态对齐版)${PLAIN}"
