@@ -457,7 +457,43 @@ def api_manage_agent():
         "action": action, 
         "current_state": db.get(sid) # 返回修改后的完整对象供前端同步
     })
+    @app.route('/api/update_node_config', methods=['POST'])
+def api_update_node_config():
+    """接收前端节点配置，并通过 WS 下发给 Agent"""
+    data = request.json
+    sid = data.get('sid')  # 这是小鸡的 UUID
+    new_inbounds = data.get('inbounds')
+    auth_token = request.headers.get('Authorization')
     
+    # 1. 鉴权校验
+    curr_env = load_env()
+    if auth_token != curr_env.get('M_TOKEN'):
+        return jsonify({"res": "fail", "msg": "Unauthorized"}), 403
+
+    # 2. 检查 Agent 是否在线
+    live_data = AGENTS_LIVE.get(sid)
+    if not live_data or live_data.get('status') != 'online':
+        return jsonify({"res": "fail", "msg": "Agent 离线，无法同步配置"}), 404
+
+    # 3. 提取 WebSocket 会话并下发指令
+    session_id = live_data.get('session')
+    ws = WS_CLIENTS.get(session_id)
+    
+    if ws:
+        try:
+            # 构造控制指令
+            cmd = json.dumps({
+                "action": "update_config",
+                "inbounds": new_inbounds
+            })
+            # 在 Flask 的线程环境中安全发送异步 WS 消息
+            asyncio.run_coroutine_threadsafe(ws.send(cmd), asyncio.get_event_loop())
+            
+            return jsonify({"res": "ok", "msg": "指令已成功送达 Agent"})
+        except Exception as e:
+            return jsonify({"res": "fail", "msg": f"WS 发送失败: {str(e)}"}), 500
+    
+    return jsonify({"res": "fail", "msg": "未找到有效的通信会话"}), 500
 # --- [ 4. 通信逻辑：UUID 硬件指纹识别版 ] ---
 async def ws_handler(ws):
     session_id = str(id(ws)) # 仅用于底层连接管理
