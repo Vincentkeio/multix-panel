@@ -8,7 +8,8 @@
                     <span class="text-blue-500" x-text="lang === 'zh' ? '中心' : 'CENTER'"></span>
                 </h2>
                 
-                <button @click="toggleSettings()" class="text-[9px] px-3 py-1.5 bg-blue-500/10 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg border border-blue-500/20 transition-all font-black flex items-center gap-2">
+                <button @click="toggleSettings()" 
+                        class="text-[9px] px-3 py-1.5 bg-blue-500/10 hover:bg-blue-600 text-blue-400 hover:text-white rounded-lg border border-blue-500/20 transition-all font-black flex items-center gap-2">
                     <i class="ri-settings-3-line"></i>
                     <span x-text="lang === 'zh' ? '安全凭据与端口修改' : 'Security Settings'"></span>
                 </button>
