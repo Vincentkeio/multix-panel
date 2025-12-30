@@ -485,16 +485,54 @@ def update_admin():
 
 @app.route('/api/manage_agent', methods=['POST'])
 def manage_agent():
-    d = request.json
-    if request.headers.get('Authorization') != TOKEN: return jsonify({"res":"fail"}), 403
-    db = load_db()
-    sid, action, val = d.get('sid'), d.get('action'), d.get('value')
-    if action == 'alias': db[sid]['alias'] = val
-    elif action == 'hide': db[sid]['hidden'] = not db[sid].get('hidden', False)
-    elif action == 'delete' and sid in db: del db[sid]
-    save_db(db)
-    return jsonify({"res": "ok"})
+    try:
+        d = request.json
+        # 1. 安全校验：非管理员 Token 直接拒绝
+        if request.headers.get('Authorization') != TOKEN: 
+            return jsonify({"res": "fail", "msg": "Unauthorized"}), 403
+            
+        db = load_db()
+        sid = d.get('sid')
+        action = d.get('action')
+        val = d.get('value')
+        
+        # 2. 执行基础管理动作
+        if action == 'alias': 
+            if sid in db: db[sid]['alias'] = val
+        elif action == 'hide': 
+            if sid in db: db[sid]['hidden'] = not db[sid].get('hidden', False)
+        elif action == 'delete': 
+            if sid in db: del db[sid]
+        elif action == 'reorder':
+            if sid in db: db[sid]['order'] = int(val)
+            
+        # --- [ 核心修复：虚拟节点添加逻辑门禁 ] ---
+        elif action == 'add_virtual':
+            # 后端统计：当前库中处于“显示状态”的小鸡数量
+            visible_count = sum(1 for node in db.values() if not node.get('hidden', False))
+            
+            # 判定条件：只有当库里没有任何小鸡，或者现有小鸡全部被隐藏时，才允许添加虚拟小鸡
+            if len(db) == 0 or visible_count == 0:
+                v_id = f"virtual-{random.randint(1000, 9999)}"
+                db[v_id] = {
+                    "hostname": "VIRTUAL-NODE",
+                    "alias": "演示节点",
+                    "is_demo": True,
+                    "order": 99,
+                    "hidden": False
+                }
+                print(f"[Core] 管理员触发添加，满足门禁条件，写入新节点: {v_id}")
+            else:
+                # 即使 Token 正确，若不满足业务条件，后端依然拒绝写入
+                print(f"[Core] 管理员触发添加被拒绝：当前已有可见节点")
+                return jsonify({"res": "ignored", "msg": "Active nodes already exist"})
 
+        # 3. 物理落盘执行
+        save_db(db)
+        return jsonify({"res": "ok"})
+        
+    except Exception as e:
+        return jsonify({"res": "error", "msg": str(e)}), 500
 @app.route('/')
 def serve_index(): return render_template('index.html')
 
