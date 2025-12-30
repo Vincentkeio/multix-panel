@@ -240,11 +240,11 @@ EOF
     fi
 }
 
-    # 【核心配置】：UI 文件全量清单
-# 1. 重新声明全量清单（确保没有 drawer.html）
+# 4. 【核心配置】：UI 文件全量清单 (已剔除 drawer.html，新增组件化模块)
     UI_FILES=(
         "templates/index.html"
         "templates/master_status.html"
+        "templates/action_bar.html"
         "templates/main_nodes.html"
         "templates/modals_container.html"
         "templates/modals/admin_modal.html"
@@ -256,15 +256,18 @@ EOF
         "static/qrcode.min.js"
     )
 
-    # 2. 执行循环下载（增加跳过逻辑防止因旧清单残留报错）
+    # 5. 执行物理清理后再同步 (确保无旧版脏数据)
+    echo -e "${YELLOW}>>> 正在同步云端 UI 资源 (全量自动化清单)...${PLAIN}"
+    rm -rf "$M_ROOT/master/templates" "$M_ROOT/master/static"
+    
     for file in "${UI_FILES[@]}"; do
-        # 即使清单改了，如果之前执行过半截，可能存在变量污染
-        # 这里直接调用你定义的 _download_ui 函数
+        # 内部调用已修复路径自愈能力的 _download_ui
         _download_ui "$file"
     done
-    
-    # 4. 部署并启动服务
+
+    # 6. 部署并启动系统服务
     _deploy_service "multiy-master" "$M_ROOT/master/app.py"
+    
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
 # --- [ 后端核心逻辑：旗舰固化版 ] ---
