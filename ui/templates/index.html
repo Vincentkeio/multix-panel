@@ -15,7 +15,7 @@
     <script defer src="/static/alpine.js"></script>
     
     <style>
-        /* [核心修复] 防止变量未加载时的 UI 闪烁 */
+        /* 防止 Alpine 初始化前的原始代码闪现 */
         [x-cloak] { display: none !important; }
         
         .animate-spin-slow { animation: spin 3s linear infinite; }
@@ -31,7 +31,6 @@
             content: "";
             position: fixed;
             inset: 0;
-            /* 增强径向渐变，提升纵深感 */
             background: radial-gradient(circle at 50% 50%, #1e293b 0%, #020617 100%);
             z-index: -1;
         }
@@ -77,19 +76,13 @@
     </header>
 
     <main class="max-w-7xl mx-auto px-6 mt-10 space-y-12 relative z-10">
-        
         <section class="animate-in fade-in slide-in-from-bottom-4 duration-500">
             {% include 'master_status.html' %}
-        </section>
-
-        <section class="animate-in fade-in slide-in-from-bottom-4 duration-700">
-            {% include 'action_bar.html' %}
         </section>
 
         <section class="animate-in fade-in slide-in-from-bottom-4 duration-1000">
             {% include 'main_nodes.html' %}
         </section>
-
     </main>
 
     {% include 'modals_container.html' %}
