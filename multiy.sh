@@ -81,28 +81,46 @@ credential_center() {
     
     echo -e "\n${GREEN}[ 3. 双栈监听物理状态 ]${PLAIN}"
     
-    # 精准双栈检测函数
+   # --- [ 精准双栈物理监听探测 ] ---
     check_net_stat() {
         local port=$1
-        local proto=$2 # tcp 或 tcp6
-        if [ "$proto" == "tcp" ]; then
-            netstat -lnpt | grep -q ":::$port " && echo -e "${GREEN}● IPv4 OK${PLAIN}" || echo -e "${RED}○ IPv4 OFF${PLAIN}"
+        local family=$2 # v4 或 v6
+        
+        if [ "$family" == "v4" ]; then
+            # 检测是否有 0.0.0.0 或 ::: 覆盖的 v4 监听
+            if netstat -lnpt | grep -E "0.0.0.0:$port|:::$port" > /dev/null 2>&1; then
+                echo -e "${GREEN}● IPv4 OK${PLAIN}"
+            else
+                echo -e "${RED}○ IPv4 OFF${PLAIN}"
+            fi
         else
-            netstat -lnpt | grep -q ":::$port " && echo -e "${GREEN}● IPv6 OK${PLAIN}" || echo -e "${RED}○ IPv6 OFF${PLAIN}"
+            # 专门检测是否有 [::] 或 ::: 覆盖的 v6 监听
+            if netstat -lnpt | grep -q ":::$port" > /dev/null 2>&1; then
+                echo -e "${GREEN}● IPv6 OK${PLAIN}"
+            else
+                echo -e "${RED}○ IPv6 OFF${PLAIN}"
+            fi
         fi
     }
 
     echo -ne " 🔹 面板服务 ($M_PORT): "
-    check_net_stat $M_PORT tcp
+    check_net_stat $M_PORT v4
     echo -ne "                      "
-    check_net_stat $M_PORT tcp6
+    check_net_stat $M_PORT v6
     
     echo -ne " 🔹 通信服务 (9339): "
-    check_net_stat 9339 tcp
+    check_net_stat 9339 v4
     echo -ne "                      "
-    check_net_stat 9339 tcp6
+    check_net_stat 9339 v6
     
     echo -e "${SKYBLUE}==================================================${PLAIN}"
+    
+    # 自动诊断提示：如果物理 OK 但点不开，提示防火墙 
+    if netstat -lnpt | grep -q ":::$M_PORT"; then
+        echo -e "${YELLOW}[提示]${PLAIN} 物理监听已就绪。如 IPv6 仍无法访问，请检查防火墙："
+        echo -e "      ip6tables -I INPUT -p tcp --dport $M_PORT -j ACCEPT"
+    fi
+
     pause_back
 }
 
