@@ -270,36 +270,53 @@ def api_login():
         })
     return jsonify({"status": "fail", "msg": "凭据验证失败"}), 401
 
-# 2. 状态获取接口（含 IP 自动探测）
+# --- [ 3. 核心 API 路由：智能状态与管理模块 ] ---
+import socket
+
+def get_public_ip(version=4):
+    """自动获取本机公网 IP (v4 或 v6)"""
+    try:
+        # 使用 Google/Cloudflare DNS 建立测试连接探测出口 IP
+        test_server = "8.8.8.8" if version == 4 else "2606:4700:4700::1111"
+        s = socket.socket(socket.AF_INET if version == 4 else socket.AF_INET6, socket.SOCK_DGRAM)
+        s.settimeout(1)
+        s.connect((test_server, 53))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return None
+
 @app.route('/api/state')
 def api_state():
     db = load_db()
     combined = {}
     for sid, config in db.items():
-        # 核心修改：如果是被标记为隐藏的小鸡，且当前不是管理员，则跳过（或由前端 x-show 处理）
+        # 合并数据库配置与 Agent 实时上报的数据
         live = AGENTS_LIVE.get(sid, {})
         if config.get('is_demo'):
-            metrics = {"cpu": random.randint(2, 7), "mem": random.randint(18, 32), "disk": random.randint(15, 25)}
+            # 虚拟小鸡生成模拟数据
+            metrics = {
+                "cpu": random.randint(2, 7), 
+                "mem": random.randint(18, 32), 
+                "disk": random.randint(15, 25),
+                "net_up": round(random.uniform(0.1, 1.2), 1),
+                "net_down": round(random.uniform(0.5, 3.5), 1)
+            }
             status = "online"
         else:
             metrics = live.get('metrics', {})
             status = live.get('status', 'offline')
+        
+        # 写入最终列表，包含排序、隐藏等字段
         combined[sid] = {**config, "metrics": metrics, "status": status}
     
     curr_env = load_env()
     
-    # 尝试探测本机双栈 IP
-    def probe_ip(version=4):
-        try:
-            test_server = "8.8.8.8" if version == 4 else "2606:4700:4700::1111"
-            s = socket.socket(socket.AF_INET if version == 4 else socket.AF_INET6, socket.SOCK_DGRAM)
-            s.settimeout(1)
-            s.connect((test_server, 53))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except: return None
-
+    # 智能地址获取：.env 配置优先 > 物理探测 > 默认值
+    m_ip4 = curr_env.get('M_HOST_V4') or get_public_ip(4) or curr_env.get('M_HOST', '127.0.0.1')
+    m_ip6 = curr_env.get('M_HOST_V6') or get_public_ip(6) or "Not Detected"
+    
     return jsonify({
         "agents": combined, 
         "master": {
@@ -312,13 +329,12 @@ def api_state():
         "config": {
             "user": curr_env.get('M_USER', 'admin'), 
             "token": curr_env.get('M_TOKEN'),
-            "ip4": curr_env.get('M_HOST_V4') or probe_ip(4) or curr_env.get('M_HOST'),
-            "ip6": curr_env.get('M_HOST_V6') or probe_ip(6) or "探测中...",
+            "ip4": m_ip4, 
+            "ip6": m_ip6,
             "port": curr_env.get('M_PORT', '7575')
         }
     })
 
-# 3. 凭据修改接口
 @app.route('/api/update_admin', methods=['POST'])
 def update_admin():
     data = request.json
@@ -335,7 +351,6 @@ def update_admin():
     TOKEN = curr.get('M_TOKEN', TOKEN)
     return jsonify({"res": "ok"})
 
-# 4. 小鸡全局控制接口 (删除、隐藏、排序)
 @app.route('/api/manage_agent', methods=['POST'])
 def api_manage_agent():
     data = request.json
@@ -352,73 +367,17 @@ def api_manage_agent():
         new_id = f"v_node_{random.randint(1000, 9999)}"
         db[new_id] = {"hostname": f"Demo-Node-{random.randint(1,99)}", "is_demo": True, "order": len(db)+1}
     elif action == 'delete' and sid in db:
-        del db[sid] # 物理删除：从数据库移除
-        if sid in AGENTS_LIVE: del AGENTS_LIVE[sid] # 断开连接
+        del db[sid]
+        if sid in AGENTS_LIVE: del AGENTS_LIVE[sid]
     elif action == 'hide' and sid in db:
-        db[sid]['hidden'] = not db[sid].get('hidden', False) # 切换隐藏状态
+        db[sid]['hidden'] = not db[sid].get('hidden', False)
     elif action == 'reorder' and sid in db:
-        db[sid]['order'] = int(data.get('value', 0)) # 更新排序
+        db[sid]['order'] = int(data.get('value', 0))
     elif action == 'alias' and sid in db:
         db[sid]['alias'] = data.get('value')
 
     save_db(db)
     return jsonify({"res": "ok"})
-
-# --- [ 3. 核心 API 路由：智能探测版 ] ---
-import socket
-
-def get_public_ip(version=4):
-    """自动获取本机公网 IP (v4 或 v6)"""
-    try:
-        # 使用 Google DNS 或 Cloudflare DNS 建立测试连接探测出口 IP
-        test_server = "8.8.8.8" if version == 4 else "2606:4700:4700::1111"
-        s = socket.socket(socket.AF_INET if version == 4 else socket.AF_INET6, socket.SOCK_DGRAM)
-        s.connect((test_server, 53))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except:
-        return None
-
-@app.route('/api/state')
-def api_state():
-    db = load_db()
-    combined = {}
-    for sid, config in db.items():
-        # ... 原有的 agents 处理逻辑保持不变 ...
-        if config.get('is_demo'):
-            metrics = {"cpu": random.randint(2, 7), "mem": random.randint(18, 32), "disk": random.randint(15, 25)}
-            status = "online"
-        else:
-            live = AGENTS_LIVE.get(sid, {})
-            metrics = live.get('metrics', {})
-            status = live.get('status', 'offline')
-        combined[sid] = {**config, "metrics": metrics, "status": status}
-    
-    curr_env = load_env()
-    
-    # --- [ 智能地址获取逻辑 ] ---
-    # 优先从环境变量读取，若无则自动探测
-    m_ip4 = curr_env.get('M_HOST_V4') or get_public_ip(4) or curr_env.get('M_HOST', '127.0.0.1')
-    m_ip6 = curr_env.get('M_HOST_V6') or get_public_ip(6) or "Not Detected"
-    
-    return jsonify({
-        "agents": combined, 
-        "master": {
-            "cpu": int(psutil.cpu_percent()), 
-            "mem": int(psutil.virtual_memory().percent), 
-            "disk": int(psutil.disk_usage('/').percent),
-            "sys_ver": f"{platform.system()} {platform.release()}",
-            "sb_ver": subprocess.getoutput("sing-box version | head -n 1 | awk '{print $3}'") or "N/A"
-        }, 
-        "config": {
-            "user": curr_env.get('M_USER', 'admin'), 
-            "token": curr_env.get('M_TOKEN'),
-            "ip4": m_ip4,  # 现在这里是纯 IP 了
-            "ip6": m_ip6,  # 成功探测后将显示真实 v6 地址
-            "port": curr_env.get('M_PORT', '7575')
-        }
-    })
     
 # --- [ 4. 通信逻辑 ] ---
 async def ws_handler(ws):
