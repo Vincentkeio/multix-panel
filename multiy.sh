@@ -365,34 +365,59 @@ def get_state():
         }
     })
 
-# --- [ 核心修复：添加凭据物理更新 API ] ---
+# --- [ 核心修复：添加凭据物理更新、域名同步与防火墙自愈 API ] ---
 @app.route('/api/update_admin', methods=['POST'])
 def update_admin():
     try:
+        # 获取前端传来的 JSON 数据
         d = request.get_json()
+        
+        # 严格校验当前访问令牌
         if request.headers.get('Authorization') != TOKEN:
             return jsonify({"status": "fail", "msg": "Unauthorized"}), 403
 
+        # 提取新参数并确保类型正确
+        new_user = d.get('user')
+        new_pass = d.get('pass')
+        new_token = d.get('token')
+        new_host = d.get('host')           # 新增：主控域名/公网IP
+        new_port = str(d.get('port'))      # 面板 Web 端口
+        new_ws_port = str(d.get('ws_port')) # 通信 WebSocket 端口
+
         # 1. 物理写入 .env 文件确保持久化
+        # 注意：此处必须写入 new_host 而不是读取旧的 env.get('M_HOST')
         with open(ENV_PATH, 'w', encoding='utf-8') as f:
-            f.write(f"M_USER='{d.get('user')}'\n")
-            f.write(f"M_PASS='{d.get('pass')}'\n")
-            f.write(f"M_TOKEN='{d.get('token')}'\n")
-            f.write(f"M_PORT='{d.get('port', '7575')}'\n")
-            f.write(f"M_WS_PORT='{d.get('ws_port', '9339')}'\n")
-            f.write(f"M_HOST='{env.get('M_HOST', '0.0.0.0')}'\n")
+            f.write(f"M_USER='{new_user}'\n")
+            f.write(f"M_PASS='{new_pass}'\n")
+            f.write(f"M_TOKEN='{new_token}'\n")
+            f.write(f"M_PORT='{new_port}'\n")
+            f.write(f"M_WS_PORT='{new_ws_port}'\n")
+            f.write(f"M_HOST='{new_host}'\n")
 
-        # 2. 异步重启服务以应用新端口和凭据
-        def restart_srv():
+        # 2. 异步执行：防火墙自愈 + 服务重启
+        def maintenance_task():
             import time
-            time.sleep(1)
+            time.sleep(1) # 留出时间让 API 返回响应给前端
+            
+            # --- [ 防火墙自动放行逻辑 ] ---
+            # 循环遍历 Web 端口和 WS 端口，尝试使用多种工具放行
+            for p in [new_port, new_ws_port]:
+                # 兼容 UFW 防火墙
+                os.system(f"ufw allow {p}/tcp > /dev/null 2>&1")
+                # 兼容 IPTables 防火墙
+                os.system(f"iptables -I INPUT -p tcp --dport {p} -j ACCEPT > /dev/null 2>&1")
+            
+            # 物理重启主控服务以应用新配置
             os.system("systemctl restart multiy-master")
-        import threading
-        threading.Thread(target=restart_srv).start()
 
-        return jsonify({"status": "success"})
+        import threading
+        threading.Thread(target=maintenance_task).start()
+
+        return jsonify({"status": "success", "msg": "Config updated, firewall port opened."})
+    
     except Exception as e:
         return jsonify({"status": "error", "msg": str(e)}), 500
+        
 # --- [ 4. 节点管理路由 ] ---
 @app.route('/api/manage_agent', methods=['POST'])
 def manage_agent():
