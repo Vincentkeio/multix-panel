@@ -7,14 +7,40 @@
                 <div class="h-6 w-px bg-white/10 hidden sm:block"></div>
                 
                 <div x-data="{ showSettings: false }" class="relative">
-                    <button @click="showSettings = !showSettings" class="text-[9px] px-3 py-1.5 bg-blue-500/10 hover:bg-blue-600 hover:text-white text-blue-400 rounded-xl border border-blue-500/20 transition-all font-black uppercase tracking-widest">
-                        安全凭据修改
+                    <button @click="showSettings = !showSettings" 
+                            class="text-[9px] px-3 py-1.5 bg-blue-500/10 hover:bg-blue-600 hover:text-white text-blue-400 rounded-xl border border-blue-500/20 transition-all font-black uppercase tracking-widest flex items-center gap-2">
+                        <i class="ri-settings-3-line"></i>
+                        <span x-text="lang === 'zh' ? '安全凭据与端口修改' : 'Security & Port Settings'"></span>
                     </button>
-                    <div x-show="showSettings" @click.away="showSettings = false" class="absolute top-12 left-0 w-72 bg-[#0a0a0c] border border-white/10 p-6 rounded-[2rem] shadow-2xl z-[200] space-y-4 animate-in fade-in zoom-in duration-200">
-                        <div class="space-y-1"><label class="text-[8px] text-slate-500 uppercase font-black px-2">Admin User</label><input type="text" x-model="tempUser" class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-white outline-none focus:border-blue-500"></div>
-                        <div class="space-y-1"><label class="text-[8px] text-slate-500 uppercase font-black px-2">New Password</label><input type="password" x-model="tempPass" class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-white outline-none focus:border-blue-500"></div>
-                        <div class="space-y-1"><label class="text-[8px] text-slate-500 uppercase font-black px-2">Communication Token</label><input type="text" x-model="tempToken" class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-amber-500 font-mono outline-none focus:border-blue-500"></div>
-                        <button @click="confirmUpdateAdmin(); showSettings = false" class="w-full py-4 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-900/40">同步主控环境</button>
+
+                    <div x-show="showSettings" @click.away="showSettings = false" 
+                         class="absolute top-12 left-0 w-80 bg-[#0a0a0c] border border-white/10 p-6 rounded-[2rem] shadow-2xl z-[200] space-y-4 animate-in fade-in zoom-in duration-200">
+                        
+                        <div class="space-y-3">
+                            <div class="space-y-1"><label class="text-[8px] text-slate-500 uppercase font-black px-2">Admin User</label><input type="text" x-model="tempUser" class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-white outline-none focus:border-blue-500"></div>
+                            <div class="space-y-1"><label class="text-[8px] text-slate-500 uppercase font-black px-2">New Password</label><input type="password" x-model="tempPass" placeholder="留空则保持不变" class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-white outline-none focus:border-blue-500"></div>
+                            <div class="space-y-1"><label class="text-[8px] text-slate-500 uppercase font-black px-2">Communication Token</label><input type="text" x-model="tempToken" class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-amber-500 font-mono outline-none focus:border-blue-500"></div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3 pt-2 border-t border-white/5">
+                            <div class="space-y-1">
+                                <label class="text-[8px] text-slate-500 uppercase font-black px-2">Web Port</label>
+                                <input type="number" x-model="tempPort" class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-blue-400 font-black outline-none focus:border-blue-500">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-[8px] text-slate-500 uppercase font-black px-2">WS Port</label>
+                                <input type="number" x-model="tempWsPort" class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-blue-400 font-black outline-none focus:border-blue-500">
+                            </div>
+                        </div>
+
+                        <div class="bg-red-500/10 p-3 rounded-xl border border-red-500/20">
+                            <p class="text-[8px] text-red-400 font-black leading-tight">注意：修改端口或凭据将导致系统自动重启并强制注销当前会话。</p>
+                        </div>
+
+                        <button @click="confirmUpdateAdmin(); showSettings = false" 
+                                class="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-900/40 transition-all">
+                            同步主控环境并重启
+                        </button>
                     </div>
                 </div>
             </div>
@@ -34,11 +60,11 @@
             <div class="grid grid-cols-2 gap-4">
                 <button @click="adminModal = false; exportGlobalNodes()" class="flex flex-col items-center justify-center gap-3 p-6 bg-blue-500/5 border border-blue-500/10 rounded-[2.5rem] hover:bg-blue-600/10 group transition-all">
                     <i class="ri-qr-code-line text-3xl text-blue-500 group-hover:scale-110 transition"></i>
-                    <span class="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em]">超级导出 (JSON/QR)</span>
+                    <span class="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em]" x-text="lang === 'zh' ? '超级导出 (JSON/QR)' : 'Global Export'"></span>
                 </button>
                 <button @click="adminModal = false; subModal = true" class="flex flex-col items-center justify-center gap-3 p-6 bg-emerald-500/5 border border-emerald-500/10 rounded-[2.5rem] hover:bg-emerald-600/10 group transition-all">
                     <i class="ri-rss-line text-3xl text-emerald-400 group-hover:scale-110 transition"></i>
-                    <span class="text-[10px] font-black text-emerald-400 uppercase tracking-[0.2em]">一键订阅 (Clash/V2)</span>
+                    <span class="text-[10px] font-black text-emerald-400 uppercase tracking-[0.2em]" x-text="lang === 'zh' ? '一键订阅 (Clash/V2)' : 'Universal Sub'"></span>
                 </button>
             </div>
 
@@ -46,7 +72,7 @@
                 <div class="flex justify-between items-center px-2">
                     <div class="flex items-center gap-2">
                         <i class="ri-cpu-line text-blue-500"></i>
-                        <h3 class="text-[10px] text-slate-500 font-black uppercase tracking-widest">节点资产清单</h3>
+                        <h3 class="text-[10px] text-slate-500 font-black uppercase tracking-widest" x-text="lang === 'zh' ? '节点资产清单' : 'Node Asset List'"></h3>
                     </div>
                     <button @click="manageAgent('virtual-' + Date.now(), 'add_virtual')" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-[9px] font-black uppercase rounded-xl transition shadow-lg shadow-blue-900/20">
                         + 增加虚拟小鸡
