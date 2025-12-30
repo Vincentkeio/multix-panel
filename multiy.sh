@@ -401,33 +401,62 @@ def update_admin():
     TOKEN = curr.get('M_TOKEN', TOKEN)
     return jsonify({"res": "ok"})
 
+
 @app.route('/api/manage_agent', methods=['POST'])
 def api_manage_agent():
     data = request.json
-    sid = data.get('sid')
+    sid = data.get('sid')  # 对应数据库中的 UUID
     action = data.get('action')
     auth_token = request.headers.get('Authorization')
-    curr_env = load_env()
     
+    # 1. 严格权限校验
+    curr_env = load_env()
     if auth_token != curr_env.get('M_TOKEN'):
         return jsonify({"res": "fail", "msg": "Unauthorized"}), 403
 
     db = load_db()
+    
+    # 2. 处理添加虚拟小鸡（不依赖 sid）
     if action == 'add_demo':
         new_id = f"v_node_{random.randint(1000, 9999)}"
-        db[new_id] = {"hostname": f"Demo-Node-{random.randint(1,99)}", "is_demo": True, "order": len(db)+1}
-    elif action == 'delete' and sid in db:
-        del db[sid]
-        if sid in AGENTS_LIVE: del AGENTS_LIVE[sid]
-    elif action == 'hide' and sid in db:
-        db[sid]['hidden'] = not db[sid].get('hidden', False)
-    elif action == 'reorder' and sid in db:
-        db[sid]['order'] = int(data.get('value', 0))
-    elif action == 'alias' and sid in db:
-        db[sid]['alias'] = data.get('value')
+        db[new_id] = {
+            "hostname": f"Demo-Node-{random.randint(1,99)}", 
+            "is_demo": True, 
+            "order": len(db) + 1,
+            "hidden": False,
+            "alias": ""
+        }
+        save_db(db)
+        return jsonify({"res": "ok", "new_id": new_id})
 
+    # 3. 针对特定小鸡的操作校验
+    if not sid or sid not in db:
+        return jsonify({"res": "fail", "msg": "Node not found"}), 404
+
+    # 4. 执行具体管理动作
+    if action == 'delete':
+        del db[sid]
+        if sid in AGENTS_LIVE: 
+            del AGENTS_LIVE[sid] # 物理断开连接
+            
+    elif action == 'hide':
+        # 切换隐藏状态并返回，供前端图标即时切换
+        db[sid]['hidden'] = not db[sid].get('hidden', False)
+        
+    elif action == 'reorder':
+        db[sid]['order'] = int(data.get('value', 0))
+        
+    elif action == 'alias':
+        # 别名修改，确保为空时显示原 hostname
+        db[sid]['alias'] = data.get('value', '').strip()
+
+    # 5. 持久化并返回成功
     save_db(db)
-    return jsonify({"res": "ok"})
+    return jsonify({
+        "res": "ok", 
+        "action": action, 
+        "current_state": db.get(sid) # 返回修改后的完整对象供前端同步
+    })
     
 # --- [ 4. 通信逻辑：UUID 硬件指纹识别版 ] ---
 async def ws_handler(ws):
