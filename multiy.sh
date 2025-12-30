@@ -187,7 +187,7 @@ install_master() {
 
 echo -e "\n${YELLOW}--- 交互式设置 (回车使用默认值) ---${PLAIN}"
     
-    # 1. 面板 Web 端口交互
+    # 1. 面板 Web 端口交互 (仅保留这一个)
     read -p "1. 面板 Web 端口 [默认 7575]: " M_PORT
     if [[ ! "$M_PORT" =~ ^[0-9]+$ ]] || [ "$M_PORT" -lt 1 ] || [ "$M_PORT" -gt 65535 ]; then
         M_PORT=7575
@@ -198,22 +198,26 @@ echo -e "\n${YELLOW}--- 交互式设置 (回车使用默认值) ---${PLAIN}"
     read -p "2. 管理员账号 [默认 admin]: " M_USER; M_USER=${M_USER:-admin}
     read -p "3. 管理员密码 [默认 admin]: " M_PASS; M_PASS=${M_PASS:-admin}
 
-    # 4. 接入监听端口交互 (WebSocket)
+    # 3. 接入监听端口交互 (WebSocket) - 替换掉原来重复的 Web 端口项
     while true; do
         read -p "4. 接入监听端口 (WS) [默认 9339]: " M_WS_PORT
         M_WS_PORT=${M_WS_PORT:-9339}
+        
         if [[ ! "$M_WS_PORT" =~ ^[0-9]+$ ]] || [ "$M_WS_PORT" -lt 1 ] || [ "$M_WS_PORT" -gt 65535 ]; then
             echo -e "${RED}[错误] 端口无效，请输入 1-65535 之间的数字。${PLAIN}"
             continue
         fi
+
         if [ "$M_WS_PORT" == "$M_PORT" ]; then
             echo -e "${RED}[错误] 接入端口不能与面板 Web 端口 ($M_PORT) 相同，请重新输入。${PLAIN}"
             continue
         fi
+        
         echo -e "${GREEN}[确认] 接入端口已设为: $M_WS_PORT${PLAIN}"
         break
     done
 
+    # --- [ 后接您之前的域名检测逻辑 ] ---
     # 5. 主控公网域名配置：含组件自愈与双栈解析探测
     if ! command -v host &> /dev/null; then
         echo -e "${YELLOW}[提示] 缺失域名探测组件，正在尝试自动安装修复...${PLAIN}"
