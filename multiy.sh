@@ -74,9 +74,12 @@ credential_center() {
     echo -e " 🔹 管理账号: ${YELLOW}$M_USER${PLAIN}"
     echo -e " 🔹 管理密码: ${YELLOW}$M_PASS${PLAIN}"
     
+# 动态获取通信端口变量，如果脚本中未定义则兜底 9339
+    WS_PORT=${M_WS_PORT:-9339}
+
     echo -e "\n${GREEN}[ 2. Agent 接入配置 (原生 WS) ]${PLAIN}"
     echo -e " 🔹 接入地址: ${SKYBLUE}$M_HOST${PLAIN}"
-    echo -e " 🔹 通信端口: ${SKYBLUE}9339${PLAIN}"
+    echo -e " 🔹 通信端口: ${SKYBLUE}$WS_PORT${PLAIN}"
     echo -e " 🔹 通信令牌: ${YELLOW}$M_TOKEN${PLAIN}"
     
     echo -e "\n${GREEN}[ 3. 双栈监听物理状态 ]${PLAIN}"
@@ -170,16 +173,24 @@ install_master() {
     mkdir -p "$M_ROOT/master/static"
     mkdir -p "$M_ROOT/master/templates/modals"
 
-    echo -e "\n${YELLOW}--- 交互式设置 (回车使用默认值) ---${PLAIN}"
-    read -p "1. 面板 Web 端口 [默认 7575]: " M_PORT; M_PORT=${M_PORT:-7575}
+echo -e "\n${YELLOW}--- 交互式设置 (回车使用默认值) ---${PLAIN}"
+    
+    # 1. 面板端口交互：增加数字合法性校验
+    read -p "1. 面板 Web 端口 [默认 7575]: " M_PORT
+    if [[ ! "$M_PORT" =~ ^[0-9]+$ ]] || [ "$M_PORT" -lt 1 ] || [ "$M_PORT" -gt 65535 ]; then
+        M_PORT=7575
+        echo -e "${YELLOW}[提示] 输入端口无效或为空，已回退至默认: 7575${PLAIN}"
+    fi
+
     read -p "2. 管理员账号 [默认 admin]: " M_USER; M_USER=${M_USER:-admin}
     read -p "3. 管理员密码 [默认 admin]: " M_PASS; M_PASS=${M_PASS:-admin}
     read -p "4. 主控公网地址: " M_HOST; M_HOST=${M_HOST:-$(curl -s4 api.ipify.org)}
     
+    # 5. Token 生成与交互
     TK_RAND=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
     read -p "5. 通信令牌 Token [回车使用: $TK_RAND]: " IN_TK; M_TOKEN=${IN_TK:-$TK_RAND}
 
-# 1. 写入环境变量
+    # --- [ 写入环境变量：确保持久化 ] ---
     cat > "$M_ROOT/.env" << EOF
 M_TOKEN='$M_TOKEN'
 M_PORT='$M_PORT'
@@ -491,9 +502,17 @@ async def main():
     # 1. 动态获取环境配置
     curr_env = load_env()
     
-    # 2. 读取自定义端口：Web 端口取 M_PORT，通信端口目前固定为 9339
-    # 如果环境文件里没有 M_PORT，则默认使用 7575
-    web_port = int(curr_env.get('M_PORT', 7575))
+    # 2. 读取自定义端口逻辑：优先自定义，无效则回退默认
+    try:
+        raw_port = curr_env.get('M_PORT', '7575')
+        # 校验：必须是纯数字且在合法范围内，否则视为无效
+        if str(raw_port).isdigit() and 1 <= int(raw_port) <= 65535:
+            web_port = int(raw_port)
+        else:
+            web_port = 7575
+    except:
+        web_port = 7575
+        
     ws_port = 9339 
     
     # 3. 启动双栈 WS 通信服务
@@ -502,20 +521,29 @@ async def main():
     except: 
         await websockets.serve(ws_handler, "0.0.0.0", ws_port, reuse_address=True)
     
-    # 4. 定义并启动 Web 面板服务 (Flask)
+    # 4. 启动 Web 面板服务 (Flask)
     def run_web():
         from werkzeug.serving import make_server
         try: 
-            # 优先尝试双栈监听 (::) 模式
+            # A. 尝试使用用户自定义端口
+            print(f"[*] 正在尝试启动 Web 面板 (端口: {web_port})...")
             srv = make_server('::', web_port, app, threaded=True)
             srv.serve_forever()
-        except: 
-            # 兜底使用纯 IPv4 监听
-            app.run(host='0.0.0.0', port=web_port, threaded=True, debug=False)
-    
-    # 5. 在独立线程启动 Web 服务并保持主循环运行
+        except Exception as e:
+            # B. 如果自定义端口无效（如被占用），强制回退到默认 7575
+            if web_port != 7575:
+                print(f"[!] 端口 {web_port} 绑定失败或无效，正在回退至默认端口 7575...")
+                try:
+                    srv_default = make_server('::', 7575, app, threaded=True)
+                    srv_default.serve_forever()
+                except:
+                    app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
+            else:
+                print(f"[!!] 默认端口 7575 亦无法启动，请检查系统端口占用。")
+
+    # 5. 在独立线程运行 Web 服务并保持主循环
     threading.Thread(target=run_web, daemon=True).start()
-    print(f"[*] Multiy Master 已启动 | 面板端口: {web_port} | 通信端口: {ws_port}")
+    print(f"[*] Multiy Master 运行中 | WS通信端口: {ws_port}")
     
     while True: 
         await asyncio.sleep(3600)
@@ -540,16 +568,21 @@ install_agent() {
     echo -e "${YELLOW}正在同步环境依赖...${PLAIN}"
     python3 -m pip install websockets psutil --break-system-packages --user >/dev/null 2>&1
 
-    # 自愈映射逻辑 (保留你的 IPv6 劫持方案)
+# 自愈映射逻辑 (保留你的 IPv6 劫持方案)
+    # 动态获取通信端口，如果主控端未来修改了 9339，此处可同步适配
+    WS_PORT=${M_WS_PORT:-9339}
+
     if [[ "$M_INPUT" == *:* ]]; then
         echo -e "${YELLOW}[物理自愈] 正在为 IPv6 执行 hosts 劫持映射...${PLAIN}"
+        # 移除旧的映射防止冲突
         sed -i "/multiy.local.master/d" /etc/hosts
         echo "$M_INPUT multiy.local.master" >> /etc/hosts
-        FINAL_URL="ws://multiy.local.master:9339"
+        FINAL_URL="ws://multiy.local.master:$WS_PORT"
     else
-        FINAL_URL="ws://$M_INPUT:9339"
+        FINAL_URL="ws://$M_INPUT:$WS_PORT"
     fi
-
+    
+    echo -e "${GREEN}>>> 接入地址已锁定: $FINAL_URL${PLAIN}"
     # 注入“全能仆人”逻辑
 cat > "$M_ROOT/agent/agent.py" << 'EOF'
 import asyncio, websockets, json, os, subprocess, psutil, platform, time, hashlib, socket
