@@ -416,40 +416,37 @@ async def ws_handler(ws):
         WS_CLIENTS.pop(sid, None)
 
 async def main():
-    # 1. 启动通信服务 (9339) - 监听 [::] 以实现真双栈
+    # 1. 通信服务 (9339) - 监听 [::] 通常能自动处理双栈
     try:
-        # 监听 :: 会自动兼容 IPv4 和 IPv6 接入
         await websockets.serve(ws_handler, "::", 9339)
-    except Exception as e:
-        # 如果 :: 监听失败，则回退到传统 v4 监听
-        print(f"WS Dual-Stack failed, falling back to v4: {e}")
+    except:
         await websockets.serve(ws_handler, "0.0.0.0", 9339)
 
-    # 2. 启动面板服务 (7575) - 旗舰级双栈适配
-    def run_flask():
-        try:
-            # 关键修改：host 改为 '::'。
-            # 这会让 Flask 同时监听 http://109.107.137.250:7575 和 http://[2403:71c0:2000:1211::a]:7575
-            app.run(host='::', port=7575, threaded=True, debug=False)
-        except Exception as e:
-            print(f"Flask v6 failed, falling back to v4: {e}")
-            app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
+    # 2. 面板服务 (7575) - 显式双路监听
+    def run_flask_v4():
+        # 专门负责 IPv4
+        app.run(host='0.0.0.0', port=7575, threaded=True, debug=False)
 
-    # 守护线程启动，确保不阻塞 asyncio 循环
-    threading.Thread(target=run_flask, daemon=True).start()
+    def run_flask_v6():
+        try:
+            # 专门负责 IPv6
+            from werkzeug.serving import run_simple
+            run_simple('::', 7575, app, threaded=True)
+        except:
+            pass
+
+    # 启动两个线程，互不干扰
+    threading.Thread(target=run_flask_v4, daemon=True).start()
+    threading.Thread(target=run_flask_v6, daemon=True).start()
     
-    print(">>> Multiy Pro Master Active on Dual-Stack [::]:7575 & [::]:9339")
-    
-    # 保持主进程活跃
-    while True:
-        await asyncio.sleep(60)
+    print(">>> Multiy Pro Master: Dual-Path Listening on 7575 & 9339")
+    while True: await asyncio.sleep(60)
 
 if __name__ == "__main__":
-    # 启动前初始化数据库
-    if not os.path.exists(DB_PATH):
-        save_db({})
+    if not os.path.exists(DB_PATH): save_db({})
     asyncio.run(main())
 EOF
+}
 }
 
 # --- [ 3. 被控端安装 (全能仆人旗舰版) ] ---
