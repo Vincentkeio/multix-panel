@@ -196,7 +196,86 @@ echo -e "\n${YELLOW}--- 交互式设置 (回车使用默认值) ---${PLAIN}"
 
     read -p "2. 管理员账号 [默认 admin]: " M_USER; M_USER=${M_USER:-admin}
     read -p "3. 管理员密码 [默认 admin]: " M_PASS; M_PASS=${M_PASS:-admin}
-    read -p "4. 主控公网地址: " M_HOST; M_HOST=${M_HOST:-$(curl -s4 api.ipify.org)}
+# --- [ 4. 主控公网域名配置：含组件自愈与双栈解析探测 ] ---
+
+# A. 自动自愈：检测并安装必要的 DNS 查询工具
+if ! command -v host &> /dev/null; then
+    echo -e "${YELLOW}[提示] 缺失域名探测组件，正在尝试自动安装修复...${PLAIN}"
+    if [[ -f /etc/redhat-release ]]; then
+        yum install -y bind-utils &> /dev/null
+    else
+        apt-get update &> /dev/null && apt-get install -y dnsutils &> /dev/null
+    fi
+    # 再次检查，若安装失败则提示手动安装
+    if ! command -v host &> /dev/null; then
+        echo -e "${RED}[错误] 自动修复失败！请手动执行 'apt install dnsutils' 后重新运行。${PLAIN}"
+        exit 1
+    fi
+fi
+
+# B. 交互与校验逻辑循环
+while true; do
+    echo -e "\n${BLUE}步骤 4: 配置主控访问域名${PLAIN}"
+    read -p "请输入主控公网域名 (例如 panel.example.com，严禁填IP): " M_HOST
+    
+    # 1. 基础格式校验
+    if [[ ! "$M_HOST" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
+        echo -e "${RED}[错误] 格式无效！请输入合法的域名，不能直接填写 IP 地址。${PLAIN}"
+        continue
+    fi
+
+    echo -e "${YELLOW}[检测] 正在验证域名解析状态，请稍候...${PLAIN}"
+
+    # 2. 获取本机真实公网出口 IP (用于比对)
+    LOCAL_IP4=$(curl -s4 --connect-timeout 5 api.ipify.org || echo "none")
+    LOCAL_IP6=$(curl -s6 --connect-timeout 5 api.ipify.org || echo "none")
+
+    # 3. 探测域名当前的 DNS 解析记录
+    DNS_IP4=$(host -t A "$M_HOST" 8.8.8.8 | grep "has address" | awk '{print $NF}' | head -n1)
+    DNS_IP6=$(host -t AAAA "$M_HOST" 8.8.8.8 | grep "has IPv6 address" | awk '{print $NF}' | head -n1)
+
+    IS_V4_MATCH=false
+    IS_V6_MATCH=false
+
+    # 4. 比2 IPv4 解析
+    if [[ -n "$DNS_IP4" ]]; then
+        if [[ "$DNS_IP4" == "$LOCAL_IP4" ]]; then
+            echo -e "${GREEN}[✔] IPv4 解析匹配成功: $DNS_IP4${PLAIN}"
+            IS_V4_MATCH=true
+        else
+            echo -e "${YELLOW}[!] IPv4 解析指向 $DNS_IP4，但本机实际 IP 为 $LOCAL_IP4${PLAIN}"
+        fi
+    fi
+
+    # 5. 比对 IPv6 解析
+    if [[ -n "$DNS_IP6" ]]; then
+        if [[ "$DNS_IP6" == "$LOCAL_IP6" ]]; then
+            echo -e "${GREEN}[✔] IPv6 解析匹配成功: $DNS_IP6${PLAIN}"
+            IS_V6_MATCH=true
+        else
+            echo -e "${YELLOW}[!] IPv6 解析指向 $DNS_IP6，但本机实际 IP 为 $LOCAL_IP6${PLAIN}"
+        fi
+    fi
+
+    # 6. 最终判定逻辑
+    if $IS_V4_MATCH && $IS_V6_MATCH; then
+        echo -e "${GREEN}[成功] 双栈解析检测通过！完美匹配本机 IP。${PLAIN}"
+        break
+    elif $IS_V4_MATCH; then
+        echo -e "${BLUE}[成功] IPv4 单栈解析检测通过。${PLAIN}"
+        break
+    elif $IS_V6_MATCH; then
+        echo -e "${BLUE}[成功] IPv6 单栈解析检测通过。${PLAIN}"
+        break
+    else
+        echo -e "${RED}[拒绝] 域名解析检测失败！${PLAIN}"
+        echo -e "${RED}原因：该域名未解析到本机 IP，或解析尚未在全球生效。${PLAIN}"
+        echo -e "${YELLOW}请确保您的域名 $M_HOST 已正确解析至：${PLAIN}"
+        [[ "$LOCAL_IP4" != "none" ]] && echo -e "  - A 记录 (IPv4)  -> $LOCAL_IP4"
+        [[ "$LOCAL_IP6" != "none" ]] && echo -e "  - AAAA 记录 (IPv6) -> $LOCAL_IP6"
+        echo -e "${YELLOW}待解析生效后，请重新输入域名进行校验。${PLAIN}"
+    fi
+done
     
     # 5. Token 生成与交互
     TK_RAND=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
