@@ -10,27 +10,34 @@ check_root() { [[ $EUID -ne 0 ]] && echo -e "${RED}[错误]${PLAIN} 需 Root 权
 install_shortcut() { [ ! -f /usr/bin/multiy ] && cp "$0" /usr/bin/multiy && chmod +x /usr/bin/multiy; }
 pause_back() { echo -e "\n${YELLOW}按任意键返回主菜单...${PLAIN}"; read -n 1 -s -r; main_menu; }
 
-# --- [ 深度清理中心：含 UI 物理重置版 ] ---
+# --- [ 深度清理中心：Hub-Next 旗舰全向兼容版 ] ---
 env_cleaner() {
-    echo -e "${YELLOW}>>> 正在执行环境物理级大扫除 (含旧版残余抹除)...${PLAIN}"
+    echo -e "${YELLOW}>>> 正在执行环境物理级大扫除 (锁定服务名: hub-next-panel)...${PLAIN}"
     
-    # 1. 停止并禁用所有相关服务名 (含旧版 multix 兼容)
-    systemctl stop multiy-master multiy-agent multix* 2>/dev/null
-    systemctl disable multiy-master multiy-agent multix* 2>/dev/null
+    # 1. 停止并禁用所有相关服务 (含旧版 multix/multiy 兼容抹除)
+    # 增加通配符，确保 hub-next-panel 和 hub-next-api 同时被捕获
+    echo -e "${YELLOW}正在物理停止所有旧版与当前服务...${PLAIN}"
+    systemctl stop hub-next-* multiy-* multix* 2>/dev/null
+    systemctl disable hub-next-* multiy-* multix* 2>/dev/null
     
-    # 2. 移除系统服务文件并刷新守护进程
-    rm -f /etc/systemd/system/multiy-* /etc/systemd/system/multix-* 2>/dev/null
+    # 2. 移除所有版本的系统服务文件并刷新守护进程
+    rm -f /etc/systemd/system/hub-next-* /etc/systemd/system/multiy-* /etc/systemd/system/multix-* 2>/dev/null
     systemctl daemon-reload
     
-    # 3. 强制杀死残留进程 (精准匹配路径关键字)
-    echo -e "${YELLOW}正在清理旧进程残留...${PLAIN}"
+    # 3. 强制杀死残留进程 (精准匹配路径关键字与旧版特征)
+    echo -e "${YELLOW}正在清理物理进程池残留...${PLAIN}"
     pkill -9 -f "master/app.py" 2>/dev/null
     pkill -9 -f "agent/agent.py" 2>/dev/null
+    pkill -9 -f "hub-next" 2>/dev/null
     pkill -9 -f "multix" 2>/dev/null
     pkill -9 -f "multiy" 2>/dev/null
     
-    # 4. 定点强杀端口占用 (面板与通信端口)
-    for port in 7575 9339; do
+    # 4. 定点强杀端口占用 (基于 lsof 实时探测)
+    # 自动获取 .env 中的自定义端口，若无则使用默认值
+    local P_WEB=${M_PORT:-7575}
+    local P_API=${M_WS_PORT:-9339}
+    
+    for port in "$P_WEB" "$P_API" 5959 5858; do
         local pid=$(lsof -t -i:"$port" 2>/dev/null)
         if [ ! -z "$pid" ]; then
             echo -e "${YELLOW}发现端口 $port 被进程 $pid 占用，强制释放...${PLAIN}"
@@ -38,25 +45,27 @@ env_cleaner() {
         fi
     done
 
-    # 5. 【核心重构】物理重置 UI 缓存目录结构
-    # 这一步彻底解决了“清单删除但文件残留”导致的安装报错问题
-    echo -e "${YELLOW}正在执行 UI 物理路径重置...${PLAIN}"
+    # 5. 【核心重构】物理重置 UI 缓存与路径自愈
+    echo -e "${YELLOW}正在执行 UI 物理路径重置与自愈...${PLAIN}"
+    # 彻底抹除 templates 和 static，防止旧版 HTML 碎片干扰新版 UI
     rm -rf "$M_ROOT/master/templates"
     rm -rf "$M_ROOT/master/static"
-    # 重建标准旗舰版目录结构
+    
+    # 重新构建符合 Hub-Next 标准的目录结构
     mkdir -p "$M_ROOT/master/templates/modals"
     mkdir -p "$M_ROOT/master/static"
 
-    # 6. 更新 Python 环境依赖与基础工具
+    # 6. 环境依赖校准
     echo -e "${YELLOW}正在校准 Python 环境依赖...${PLAIN}"
     if ! command -v lsof &> /dev/null; then
         apt-get update && apt-get install -y lsof >/dev/null 2>&1
     fi
-    # 卸载旧冲突库，重装三件套
+    
+    # 物理清除可能导致异步冲突的旧版 SocketIO 库，强制使用 Hub-Next 推荐的轻量三件套
     python3 -m pip uninstall -y python-socketio eventlet python-engineio 2>/dev/null
     python3 -m pip install --upgrade flask websockets psutil --break-system-packages 2>/dev/null
     
-    echo -e "${GREEN}>>> 物理大扫除完成，环境与 UI 结构已就绪。${PLAIN}"
+    echo -e "${GREEN}>>> 物理大扫除完成。Hub-Next 环境已完全纯净，可开始安装。${PLAIN}"
 }
 
 # --- [ Hub-Next Panel 凭据管理中心：看板 + 修改一体化 ] ---
@@ -137,10 +146,8 @@ _apply_and_restart() {
     source "$M_ROOT/.env"
     echo -e "${YELLOW}>>> 正在重启 Hub-Next 系统组件...${PLAIN}"
     
-    # 重启面板服务
-    systemctl restart hub-next-panel 2>/dev/null || systemctl restart multiy-master
-    # 重启 API 服务
-    systemctl restart hub-next-api 2>/dev/null || systemctl restart multiy-api
+    # 重启面板和API服务
+systemctl restart hub-next-panel hub-next-api
     
     echo -e "${GREEN}>>> 配置已生效！${PLAIN}"
     sleep 2
@@ -344,7 +351,7 @@ _download_ui() {
     done
 
     # 6. 部署并启动系统服务
-    _deploy_service "multiy-master" "$M_ROOT/master/app.py"
+    _deploy_service "hub-next-panel" "$M_ROOT/master/app.py"
     
     echo -e "${GREEN}✅ 旗舰版主控部署完成。${PLAIN}"; sleep 2; credential_center
 }
@@ -486,7 +493,7 @@ def update_admin():
                 os.system(f"iptables -I INPUT -p tcp --dport {p} -j ACCEPT > /dev/null 2>&1")
             
             # 物理重启主控服务以应用新配置
-            os.system("systemctl restart multiy-master")
+           os.system("systemctl restart hub-next-panel")
 
         import threading
         threading.Thread(target=maintenance_task).start()
